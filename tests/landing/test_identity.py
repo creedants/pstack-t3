@@ -86,11 +86,15 @@ class LandingTest(LandingTestBase):
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
         self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae>", "main"), "Ann Lee <ann@example.com>")
 
-    def test_repo_status_names_a_credited_author_policy_and_not_any(self):
-        self.init(mode="push", author_policy=None)
-        self.assertNotIn("author policy", self.land("status"))
-        self.init(mode="push", author_policy="credited")
-        self.assertIn("author policy: credited", self.land("status"))
+    def test_repo_status_names_each_author_policy_and_defaults_a_missing_key_to_any(self):
+        for policy in ("any", "configured", "credited"):
+            with self.subTest(policy=policy):
+                self.init(mode="push", author_policy=policy)
+                self.assertIn(f"author policy: {policy}", self.land("status"))
+        with self.raw_db() as db:
+            db.execute("DELETE FROM contract WHERE key = 'authorPolicy'")
+            db.commit()
+        self.assertIn("author policy: any", self.land("status"))
 
     def test_human_mode_bounces_an_entry_with_a_foreign_commit_author_and_opens_no_pr(self):
         with self.fake_gh():
@@ -437,7 +441,7 @@ class LandingTest(LandingTestBase):
         for value in (str(self.work), ".."):
             with self.subTest(value=value):
                 sh("git", "config", "core.worktree", value, cwd=self.work)
-                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_a_relative_core_worktree_that_names_a_missing_directory_stops_status(self):
         self.init()
@@ -451,14 +455,14 @@ class LandingTest(LandingTestBase):
         sh("git", "config", "core.worktree", "../gone", cwd=self.work)
         command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
         subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_the_last_core_worktree_value_decides(self):
         self.init(author_policy=None)
         gone = self.base / "gone"
         sh("git", "config", "--add", "core.worktree", str(gone), cwd=self.work)
         sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(self.work), cwd=self.base)
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
         sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(gone), cwd=self.base)
         self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone)))
 
@@ -478,7 +482,7 @@ class LandingTest(LandingTestBase):
         sh("git", "config", "core.worktree", str(self.work) + "\n", cwd=self.work)
         command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
         subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_a_core_worktree_with_a_carriage_return_is_not_judged_as_the_directory_with_a_newline_there(self):
         self.init()

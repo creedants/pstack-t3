@@ -39,9 +39,9 @@ class LandingTest(LandingTestBase):
         self.assertNotIn("changes in flight", self.land("status"))
         self.assertEqual(self.land("cap", "4"), "repository cap is now 4 changes in flight")
         self.claim("a/D1", "a.txt")
-        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 4.")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 4. author policy: any")
         self.assertEqual(self.land("cap", "0"), "repository cap cleared")
-        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1.")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1. author policy: any")
         self.assertIn("negative", self.land("cap", "-1", ok=False))
 
     def test_ten_concurrent_claims_under_a_cap_of_three_make_exactly_three_leases(self):
@@ -266,7 +266,7 @@ class LandingTest(LandingTestBase):
         self.reserve("docs/", "a.txt,b.txt", "R4")
         self.assertIn("changes in flight: 1 of 2", self.land("status"))
         self.assertEqual(self.claim("docs/D7", "a.txt"), "L1")
-        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 2.")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 2. author policy: any")
         self.assertEqual(self.listed(), ["L1 active docs/D7: a.txt", "S1 armed docs/ by R4: b.txt"])
         self.assertIn("paths reserved for docs/ by ruling R4", self.claim("engine/D3", "b.txt", ok=False))
         self.assertEqual(self.claim("engine/D3", "lib"), "L2")
@@ -529,7 +529,7 @@ class LandingTest(LandingTestBase):
     def test_a_reservation_counts_toward_the_cap_again_after_its_taken_lease_is_released(self):
         self.reservation_counts_again_after_its_lease_ends(
             "release", lambda: self.land("cap", "1"), "repository at its cap: 1 of 1 changes in flight (S1 for docs/)", "engine/D3")
-        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 1.")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1, changes in flight: 1 of 1. author policy: any")
 
     def test_a_reservation_counts_toward_the_cap_again_after_its_taken_lease_expires(self):
         self.reservation_counts_again_after_its_lease_ends(

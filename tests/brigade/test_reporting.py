@@ -335,13 +335,13 @@ class ReportingTest(BrigadeTest, _ReportingRace):
             app = _shown_root(self.project)
             other_root = _shown_root(other)
             expected = "\n".join([
-                f"{app}: local mode onto refs/landing/lane. leases held: 3, changes in flight: 3 of 4.",
+                f"{app}: local mode onto refs/landing/lane. leases held: 3, changes in flight: 3 of 4. author policy: any",
                 "  Docs (reports milestones): in progress: 1, decisions for you: 1",
                 "    thread thread-docs, leases L1 (D1)",
                 "    Q1: Ship the guide?",
                 "  Engine (reports milestones): waiting tickets: 1 (1 blocked)",
                 "    thread thread-engine, leases L2 (D12), L3 (D13)",
-                f"{other_root}: local mode onto refs/landing/lane. changes in flight: 0 of 4.",
+                f"{other_root}: local mode onto refs/landing/lane. changes in flight: 0 of 4. author policy: any",
                 "  Core (reports milestones): nothing on record",
                 "    thread thread-core",
             ])
@@ -758,7 +758,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         self.assertEqual(self.close_run("--dry-run"),
                          (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.\n\n## Spend\n\nnone", ""))
         self.assertEqual(self.brigade("walk").splitlines(), [
-            f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty.",
+            f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty. author policy: any",
             "  Perf (reports milestones): nothing on record",
             "    thread not recorded"])
         self.assertEqual(self.tables(), before)

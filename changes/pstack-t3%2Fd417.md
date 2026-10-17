@@ -1,5 +1,5 @@
 - kind feature
-- The landing contract gains `authorPolicy`, set by `land.py init --author-policy any|configured|credited`, stored as `any` by a new contract, and kept by a rerun that omits the flag.
+- The landing contract gains `authorPolicy`, set by `land.py init --author-policy any|configured|credited`, stored as `any` by a new contract when the flag is omitted, and kept by a rerun that omits the flag.
 - `any` skips the authorship check; `configured` and `credited` check only when the repository has a configured identity, `configured` then bounces an entry with a reviewed commit whose author is not that identity, and `credited` also keeps the `Co-authored-by` trailer and `Based on #<n> by @<login>` exception.
 - A stored contract without the key reads as `any`.
 - A repo status line names the policy when it is `configured` or `credited`.
