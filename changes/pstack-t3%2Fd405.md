@@ -1,6 +1,5 @@
 - kind polish
-- `failures.md` usage-limit detection follows the host Limited state. The backup-seat command stays.
 - `failures.md` drops the version-gated restart continuation sentence, which the host now states.
-- `t3/runtime.md` drops the duplicated worktree-cleanup sentence in Local state and shortens the usage-limit pointer.
+- `t3/runtime.md` drops the duplicated worktree-cleanup sentence in Local state.
 - `t3/runtime.md` pull request watching drops the host wake-rule list it restated.
 - `python3 scripts/build.py` refreshes the generated `skills/pstack-runtime/` copies.
