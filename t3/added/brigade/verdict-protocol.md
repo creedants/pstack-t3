@@ -30,4 +30,4 @@ In round two and later, review `git diff <previous reviewed SHA>...<head>` and c
 
 A new blocker must be in that fix diff or caused by it. Give a concrete reproduction you ran against the reviewed head.
 
-A defect that was present at the previous reviewed head and that the fix neither touches nor makes worse is a non-blocking note with one ticket line the coordinator can file. It is never a blocker.
+A defect that was present at the previous reviewed head and that the fix neither touches nor makes worse is outside this round's diff. It is a non-blocking note with one ticket line the coordinator can file, never a blocker.
