@@ -1446,7 +1446,7 @@ class RunTestsTest(unittest.TestCase):
         self.assertIn("real-process share has no test", result.stderr)
         self.assertNotIn("Ran ", result.stderr)
 
-    def test_ci_runs_eight_part_jobs_and_two_gates(self):
+    def test_ci_runs_twelve_part_jobs_and_two_gates(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         try:
             import yaml
@@ -1456,16 +1456,31 @@ class RunTestsTest(unittest.TestCase):
             self.assertEqual(text.count("if: always()"), 2)
             self.assertIn("if: github.event_name == 'pull_request'", text)
             self.assertIn("python3 scripts/run_tests.py --real-process-share", text)
-            macos = job_body(text.splitlines(keepends=True), "macos_312")
-            self.assertIsNotNone(macos)
-            self.assertNotIn("if:", "".join(macos))
-            self.assertIn("python3 scripts/run_tests.py", "".join(macos))
-            self.assertNotIn("--part", "".join(macos))
-            self.assertNotIn("--real-process-share", "".join(macos))
-            self.assertIn("Generated skills match the sources", "".join(macos))
-            self.assertEqual("".join(macos).count("continue-on-error: true"), 5)
+            self.assertEqual(text.count("continue-on-error: true"), 17)
+            self.assertIsNone(job_body(text.splitlines(keepends=True), "macos_312"))
             for index in range(1, 5):
-                self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 2)
+                self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 3)
+                body = job_body(text.splitlines(keepends=True), f"macos_312_{index}")
+                self.assertIsNotNone(body)
+                joined = "".join(body)
+                self.assertNotIn("if:", joined)
+                self.assertIn(f"name: macOS (3.12, {index}/4)", joined)
+                self.assertIn("macos-latest", joined)
+                self.assertEqual(joined.count(f"python3 scripts/run_tests.py --part {index}/4"), 1)
+                self.assertNotIn("--real-process-share", joined)
+                self.assertIn("grep -E '^Ran [0-9]+ tests? in '", joined)
+                self.assertIn("grep -E '^(OK|FAILED)'", joined)
+                self.assertIn("grep -E '^(FAIL|ERROR): '", joined)
+                self.assertIn('>> "$GITHUB_STEP_SUMMARY"', joined)
+                for other in range(1, 5):
+                    if other != index:
+                        self.assertNotIn(f"--part {other}/4", joined)
+                if index == 1:
+                    self.assertIn("Generated skills match the sources", joined)
+                    self.assertEqual(joined.count("continue-on-error: true"), 5)
+                else:
+                    self.assertNotIn("Generated skills match the sources", joined)
+                    self.assertEqual(joined.count("continue-on-error: true"), 4)
             return
         jobs = yaml.safe_load(text)["jobs"]
         self.assertEqual(list(jobs), [
@@ -1473,7 +1488,7 @@ class RunTestsTest(unittest.TestCase):
             "part_312_1", "part_312_2", "part_312_3", "part_312_4",
             "real_312",
             "test_310", "test_312",
-            "macos_312",
+            "macos_312_1", "macos_312_2", "macos_312_3", "macos_312_4",
         ])
         for version, prefix in (("3.10", "part_310"), ("3.12", "part_312")):
             for index in range(1, 5):
@@ -1531,21 +1546,36 @@ class RunTestsTest(unittest.TestCase):
                              "test -z \"$(git status --porcelain -- skills docs/skills.md docs/cli)\"\n")
         named = [job_id for job_id, job in jobs.items()
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
-        self.assertEqual(named, ["test_310", "test_312", "macos_312"])
-        macos = jobs["macos_312"]
-        self.assertEqual(macos["name"], "macOS (3.12)")
-        self.assertEqual(macos["runs-on"], "macos-latest")
-        self.assertNotIn("if", macos)
-        self.assertEqual(len(macos["steps"]), 5)
-        self.assertEqual([step.get("continue-on-error") for step in macos["steps"]], [True] * 5)
-        setup = next(step for step in macos["steps"] if step.get("uses") == "actions/setup-python@v7")
-        self.assertEqual(setup["with"]["python-version"], "3.12")
-        self.assertIsInstance(setup["with"]["python-version"], str)
-        self.assertTrue(setup["continue-on-error"])
-        test = next(step for step in macos["steps"] if "scripts/run_tests.py" in step.get("run", ""))
-        self.assertNotIn("--part", test["run"])
-        self.assertNotIn("--real-process-share", test["run"])
-        self.assertTrue(test["continue-on-error"])
+        self.assertEqual(named, ["test_310", "test_312", "macos_312_1"])
+        flagged = [job_id for job_id, job in jobs.items()
+                   if any(step.get("continue-on-error") for step in job["steps"])]
+        self.assertEqual(flagged, ["macos_312_1", "macos_312_2", "macos_312_3", "macos_312_4"])
+        self.assertNotIn("macos_312", jobs)
+        for index in range(1, 5):
+            macos = jobs[f"macos_312_{index}"]
+            self.assertEqual(macos["name"], f"macOS (3.12, {index}/4)")
+            self.assertEqual(macos["runs-on"], "macos-latest")
+            self.assertNotIn("if", macos)
+            self.assertNotIn("strategy", macos)
+            self.assertNotIn("needs", macos)
+            self.assertNotIn("env", macos)
+            steps = macos["steps"]
+            self.assertEqual(len(steps), 5 if index == 1 else 4)
+            self.assertEqual([step.get("continue-on-error") for step in steps], [True] * len(steps))
+            self.assertEqual(steps[0].get("uses"), "actions/checkout@v7")
+            self.assertEqual(steps[1].get("uses"), "actions/setup-python@v7")
+            self.assertEqual(steps[1]["with"]["python-version"], "3.12")
+            self.assertIsInstance(steps[1]["with"]["python-version"], str)
+            self.assertEqual(steps[2].get("run"), "pip install pyyaml")
+            self.assertEqual(steps[3].get("name"), f"Test part {index}/4")
+            self.assertEqual(steps[3]["run"], macos_part_run(index))
+            self.assertNotIn("--real-process-share", steps[3]["run"])
+            if index == 1:
+                self.assertEqual(steps[4].get("name"), "Generated skills match the sources")
+                self.assertNotIn("if", steps[4])
+                gate_skill = next(step for step in jobs["test_312"]["steps"]
+                                  if step.get("name") == "Generated skills match the sources")
+                self.assertEqual(steps[4]["run"], gate_skill["run"])
 
     def test_the_browser_step_creates_its_temporary_directory_with_ignore_cleanup_errors(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -1836,6 +1866,22 @@ def indent_gate_scripts(text: str) -> tuple[tuple[str, str], ...]:
             raise AssertionError("cannot find the result block of gate job " + gate)
         scripts.append((prefix, blocks[0]))
     return tuple(scripts)
+
+
+def macos_part_run(index: int) -> str:
+    return (
+        'log="$RUNNER_TEMP/macos-312.txt"\n'
+        ': > "$log"\n'
+        "status=0\n"
+        f'python3 scripts/run_tests.py --part {index}/4 >> "$log" 2>&1 || status=1\n'
+        'cat "$log" || true\n'
+        "{\n"
+        "  grep -E '^Ran [0-9]+ tests? in ' \"$log\" || true\n"
+        "  grep -E '^(OK|FAILED)' \"$log\" || true\n"
+        "  grep -E '^(FAIL|ERROR): ' \"$log\" || true\n"
+        '} >> "$GITHUB_STEP_SUMMARY"\n'
+        'exit "$status"\n'
+    )
 
 
 def job_body(lines: list[str], gate: str) -> list[str] | None:
