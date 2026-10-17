@@ -661,10 +661,10 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         meta["coordinatorProvider"] = coordinator_provider
     if admin:
         meta["role"] = "admin"
-    # The settings file is written before the store is published, so a refusal leaves no store behind and claims no intake.
+    # A refused settings write happens before the store is published, so it leaves no store behind and claims no intake.
     if effective_provider(meta) == "claude":
         # Creation without --context-cap adopts an integer cap the user already set and writes nothing.
-        # Every other creation writes the file.
+        # Creation with --context-cap, and creation with no integer cap in the file, writes it.
         held = existing_cap(meta["projectRoot"]) if context_cap is None else None
         if held is not None:
             meta["contextCap"] = held

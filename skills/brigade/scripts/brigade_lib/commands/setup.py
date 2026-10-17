@@ -163,7 +163,7 @@ def handle(restaurant, args):
 
 
 def setting_changes(restaurant, args):
-    """The restaurant.json changes and the drops every set flag but --thread and --expect makes.
+    """The restaurant.json changes and the drops every set flag but --thread, --expect, --replace, and --stopped makes.
 
     One translation serves both the prospective settings a command validates and the write it makes, so a flag
     can never mean two things.
@@ -250,7 +250,7 @@ def setting_changes(restaurant, args):
 
 
 def prospective_settings(restaurant, args):
-    """restaurant.json as this command would leave it with every flag but --thread and --expect applied."""
+    """The restaurant.json settings this command would leave with every flag but --thread, --expect, --replace, and --stopped applied."""
     changes, drop = setting_changes(restaurant, args)
     prospective = dict(restaurant.meta)
     prospective.update(changes)

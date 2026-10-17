@@ -40,7 +40,7 @@ First, for every dish that still holds an active lease, run the three drop steps
 
 ## Context cap
 
-The context cap is stored in `restaurant.json`, and reads as 300000 when no integer is stored there. When `coordinatorProvider` reads as `claude`, the cap is written to the project's `.claude/settings.local.json` as `autoCompactWindow` only in the cases the paragraphs below name.
+The context cap is stored in `restaurant.json`, and reads as 300000 when no `contextCap` key is stored there. When `coordinatorProvider` reads as `claude`, the cap is written to the project's `.claude/settings.local.json` as `autoCompactWindow` only in the cases the paragraphs below name.
 
 Creating a store with no `--context-cap` adopts an integer `autoCompactWindow` the settings file already holds as the store's cap, and writes nothing to that file. Creation with no such integer writes the 300000 default into it. Creation with `--context-cap N` writes `N`.
 
