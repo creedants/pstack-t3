@@ -242,13 +242,13 @@ def report_threads(text):
     """The children a report's ## Threads section lists, and every line that could not be read.
 
     The children are a tuple of dicts holding `role`, `thread`, and `seat`. The unreadable lines are a
-    tuple of `(line number, reason)` pairs. A fenced block that opens after up to three spaces is
-    skipped, so no line inside one is read. A report with no ## Threads section holds no child. A line
+    tuple of `(line number, reason)` pairs. A line that opens a fence after up to three spaces is
+    skipped, and so is every line until the fence closes, so no fence line is read. A report with no ## Threads section holds no child. A line
     with no text is skipped, and so is a line of the section that is plain prose, that is a line that
     starts, after any leading whitespace, with neither a list marker nor a `#`, holds no backticked thread
     id, and names no lowercase child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number
-    followed by a dot or a closing parenthesis. A non-blank line that is not prose and is not one item of
-    the form - <role> `<thread id>` <seat> is reported by its number. A heading deeper than the section's own or a
+    followed by a dot or a closing parenthesis. A non-blank line that is read, is not prose and is not one
+    item of the form - <role> `<thread id>` <seat> is reported by its number. A heading deeper than the section's own or a
     second ## Threads heading while the first is still open is reported by its number and ends the scan. An
     item whose thread id the table would change is reported by its number too. A role that is well formed
     but is not one of CHILD_ROLES is reported by its number, and named with the command that writes it when
