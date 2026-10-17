@@ -809,10 +809,13 @@ class GeneratedTest(LandingTest):
             return real_popen(*args, **kwargs)
 
         subprocess.Popen = failing_popen
+        real_process = os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
         try:
             out = self.land("land")
         finally:
             subprocess.Popen = real_popen
+            if real_process is not None:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = real_process
         self.assertIn("bounced E1", out)
         self.assertIn("rebuild failed", out)
         self.assertIn("BlockingIOError", out)
