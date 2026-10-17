@@ -297,6 +297,7 @@ Before you delegate a child that needs a chosen branch or a different base, read
 - Read-only children share the current checkout.
 - On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
+- T3 storage cleanup can remove that worktree after the thread ends. See [Local state](#local-state).
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
 
 ## Local command capacity
