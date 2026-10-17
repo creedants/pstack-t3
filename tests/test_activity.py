@@ -3698,7 +3698,7 @@ eNrEvet220iSMPifT4FmT7cIG6RuLpdLNl2jslVlTduSW5L7RrNpiAQljEmCDYCW1SrNmcf4vnN2/+4r
 
 
 class PriorPageTest(OutputCase):
-    def test_a_store_from_before_kinds_keeps_the_prior_data_payload_except_model_colors_and_keeps_no_unplaceable_labels(self):
+    def test_a_store_from_before_kinds_keeps_the_prior_data_payload_except_model_colors_and_legend_and_keeps_no_unplaceable_labels(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         script = Path(directory.name) / "activity.py"
@@ -3707,7 +3707,7 @@ class PriorPageTest(OutputCase):
         self.assertEqual([len(line.split("\t")) for line in (fixture.store / "dishes.tsv").read_text().splitlines()], [15, 15, 15])
         self.assertFalse((fixture.store / "goals.tsv").exists())
         # The style and script differ from the prior build. The data element holds the values the page builds its
-        # strings from, not every drawn string, so this compares those values only, except the lane colors which now come from models.
+        # strings from, not every drawn string, so this compares those values only, except P and the lane colors which now come from models.
         html = fixture.stdout_bytes()
         current = json.loads(DATA.search(html.decode()).group(1))
         prior = json.loads(DATA.search(frozen_bytes(script, fixture).decode()).group(1))
