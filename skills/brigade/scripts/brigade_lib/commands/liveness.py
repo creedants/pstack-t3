@@ -35,9 +35,9 @@ def register_startable(sub):
     sub.add_parser("startable", help="waiting tickets in the order they should start, each with why it can or cannot "
                                      "start now; a low ticket that could otherwise start and does not ride a "
                                      "higher ticket's paths is held back while an urgent or normal ticket can start "
-                                     "now and the workers still idle are at most lowReserve, the restaurant.json "
-                                     "setting that reads as 1 when absent and holds no low ticket back at 0; it "
-                                     "starts nothing")
+                                     "now and the workers still idle are at least one and at most lowReserve, the "
+                                     "restaurant.json setting that reads as 1 when absent and holds no low ticket "
+                                     "back at 0; it starts nothing")
 
 
 def register_hang(sub):
