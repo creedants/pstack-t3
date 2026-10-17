@@ -29,7 +29,7 @@ CLEAN = test_activity.CLEAN
 MOD = test_activity.MOD
 
 BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome")
-# macOS installs Chrome and Chromium as app bundles, which are not on PATH.
+# macOS app bundle executables, listed after the PATH names.
 BUNDLED = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
