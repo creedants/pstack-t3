@@ -247,13 +247,12 @@ def report_threads(text):
     with no text is skipped, and so is a line of the section that is plain prose, that is a line that
     starts, after any leading whitespace, with no list marker, is no heading, holds no backticked thread
     id, and names no child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number
-    followed by a dot or a closing parenthesis. A list item that is not one item of the form - <role>
-    `<thread id>` <seat> is reported
-    by its number. A heading deeper than the section's own or a second ## Threads heading while the first
-    is still open is reported by its number and ends the scan. An item whose thread id the table would
-    change is reported by its number too. A role that is well formed but is not one of CHILD_ROLES is
-    reported by its number, and named with the command that writes it when a role of THREADS_WRITERS
-    names it.
+    followed by a dot or a closing parenthesis. A line that is not prose and is not one item of the form
+    - <role> `<thread id>` <seat> is reported by its number. A heading deeper than the section's own or a
+    second ## Threads heading while the first is still open is reported by its number and ends the scan. An
+    item whose thread id the table would change is reported by its number too. A role that is well formed
+    but is not one of CHILD_ROLES is reported by its number, and named with the command that writes it when
+    a role of THREADS_WRITERS names it.
     """
     children, unreadable = [], []
     level, fence = 0, None
