@@ -365,10 +365,11 @@ def foreign_author(store, entry):
     """Why this entry cannot land on authorship, or None.
 
     The contract's authorPolicy decides the check. any returns None without reading git or the commits.
-    configured and credited run the check only when configured_identity gives a value. configured bounces every
-    reviewed commit whose author is not that identity. credited lands a commit with another author when a line of
-    pr_body, with surrounding whitespace removed, matches CREDIT_LINE and the commit has a Co-authored-by trailer
-    equal to its own author as name <email>, and bounces it otherwise. The reason names the oldest commit that fails.
+    configured and credited run the check only when configured_identity gives a value. configured bounces the entry
+    when a reviewed commit's author is not that identity. credited lands the entry when every commit whose author is
+    not that identity carries a Co-authored-by trailer equal to its author as name <email> and a line of pr_body, with
+    surrounding whitespace removed, matches CREDIT_LINE, and bounces it otherwise. The reason names the oldest commit
+    that fails.
     """
     policy = store.contract.get("authorPolicy", "any")
     if policy == "any":
