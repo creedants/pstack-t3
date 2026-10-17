@@ -1086,13 +1086,13 @@ def excluded_backup_problems(backups, exclude=()):
     ]
 
 
-def backup_option_problems(name, seat, catalog):
-    """Problems for one backups seat, each naming backups.<name>."""
+def backup_option_problems(name, seat, catalog, require_runnable=True):
+    """Problems for one backups seat, each naming backups.<name>. With require_runnable False a seat the catalog lacks is no problem."""
     where = f"backups.{name}: {seat['providerInstanceId']}/{seat['model']}"
     provider = providers_by_id(catalog).get(seat["providerInstanceId"]) if catalog else None
     model = find_model(provider, seat["model"]) if runnable(provider) else None
     if model is None:
-        return [f"{where}: not runnable or not in the catalog"]
+        return [f"{where}: not runnable or not in the catalog"] if require_runnable else []
     known = {option["id"] for option in options_of(model)}
     problems = [
         f"{where}: option {key} is not in the catalog"
@@ -1103,8 +1103,8 @@ def backup_option_problems(name, seat, catalog):
     return problems
 
 
-def backup_problems(backups, catalog, exclude=()):
-    """Problems for the backups key. An excluded seat and a seat the catalog lacks are each one."""
+def backup_problems(backups, catalog, exclude=(), require_runnable=True):
+    """Problems for the backups key. An excluded seat is one, and a seat the catalog lacks is one unless require_runnable is False."""
     problems = []
     for name, seats in backups.items():
         for seat in seats:
@@ -1113,7 +1113,7 @@ def backup_problems(backups, catalog, exclude=()):
             if reason is not None:
                 problems.append(f"{where}: {reason}, and {EXCLUDE_RULE}")
                 continue
-            problems.extend(backup_option_problems(name, seat, catalog))
+            problems.extend(backup_option_problems(name, seat, catalog, require_runnable))
     return problems
 
 
@@ -1479,7 +1479,7 @@ def command_backup(args):
     catalog = for_runtime_mode(catalog, mode)
     backups = config.get("backups", {})
     if args.role in backups:
-        problems = backup_problems({args.role: backups[args.role]}, catalog)
+        problems = backup_problems({args.role: backups[args.role]}, catalog, require_runnable=False)
         if problems:
             raise RolesError("the roles file's backups key has a problem:\n" + "\n".join(problems))
     options = parse_applied_options(args.options) if args.options else {}

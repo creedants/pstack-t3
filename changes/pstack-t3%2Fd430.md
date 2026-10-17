@@ -1,0 +1,4 @@
+- kind fix
+- `t3/scripts/roles.py` `command_backup` runs its backups preflight with `backup_problems(..., require_runnable=False)`, so a backups candidate the catalog lacks is skipped by `backup_seat` and the loop tries the next one instead of exiting 2.
+- `backup_problems` and `backup_option_problems` take `require_runnable` (default True). `validate` still reports an unavailable backups seat, and the preflight still refuses a malformed seat and a seat option the catalog does not offer.
+- `tests/test_roles_cli.py` adds `BackupUnavailableCandidateCliTest`. Its `test_backup_skips_a_first_candidate_the_catalog_lacks_and_relaunches_on_the_second` pins the skip and `test_validate_names_a_backups_seat_the_catalog_lacks` pins validate's report.
