@@ -1,0 +1,4 @@
+- kind fix
+- `tests/landing/test_slot.py` adds `wait_for_pid`, which polls a pid file until its whole text parses as an int and fails with the path and the last text after a bounded timeout
+- every read of a pid-only file in `tests/landing/test_slot.py` goes through `wait_for_pid`
+- `tests/landing/test_slot.py` adds `test_a_pid_file_read_waits_for_the_whole_pid_not_the_files_creation`, which fails when `wait_for_pid` reads the file before its writer fills it
