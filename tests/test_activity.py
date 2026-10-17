@@ -4539,7 +4539,10 @@ class LiveTest(OutputCase):
         self.assertNotIn("127.0.0.1:5000", wrapper)
 
     def test_live_page_help_says_the_no_value_address_does_not_follow_serve(self):
-        self.assertIn("does not follow --serve", MOD["parser"]().format_help())
+        parser = MOD["parser"]()
+        live_page = next(action for action in parser._actions if action.dest == "live_page")
+        self.assertIn("which does not follow --serve.", parser.description)
+        self.assertIn("and does not follow --serve,", live_page.help)
 
     def test_a_broken_store_answers_503_with_the_one_line_message_and_no_page(self):
         fixture = one_running(self.fixture).write()
