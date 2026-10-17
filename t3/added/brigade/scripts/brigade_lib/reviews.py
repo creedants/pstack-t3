@@ -173,10 +173,11 @@ def pass_rate(passed, items):
 def pass_stats(restaurant, last):
     """The first-pass rate overall and per author, and send-back counts by reason, over the last `last` items.
 
-    An item's first pass is its earliest non-member row, and it is a first pass when that row's verdict is
-    `pass`; any other verdict, including pass-with-edits and blocked, is not. An item's author is that row's
-    author. Send-back counts cover every non-member row of the selected items whose verdict is send-back, and
-    a row with no reason counts as unrecorded. Items are newest first by their last verdict.
+    An item's first pass is its first non-member row in table order, and it is a first pass when that row's
+    verdict is `pass`; any other verdict, including pass-with-edits and blocked, is not. An item's author is
+    that row's author. Send-back counts cover every non-member row of the selected items whose verdict is
+    send-back, and a row with no reason, or a reason not in REASONS, counts as unrecorded. Items are newest
+    first by their last verdict.
     """
     with restaurant.read_lock(create=False):
         items = reviewed_items(restaurant.rows("pass.tsv"), last)
