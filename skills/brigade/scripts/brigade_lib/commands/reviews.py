@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.items import announce_archive
 from brigade_lib.reviews import latest_verdict, pass_check, pass_json, record_pass, round_decision, verify_edits, write_threads
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import EDITS_VERDICT, ROUND_BUDGET, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
@@ -149,9 +150,11 @@ def handle_locked(restaurant, args, view):
         return f"{args.dish}: {args.role} {'on record' if added else 'already on record'}"
     if args.command == "pass":
         if args.action == "record":
-            return record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
-                               args.note, args.same_family, args.report, args.member, args.late, args.edits,
-                               args.reviewer_thread)
+            result = record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
+                                 args.note, args.same_family, args.report, args.member, args.late, args.edits,
+                                 args.reviewer_thread)
+            announce_archive(restaurant, args.dish, "review", thread=args.reviewer_thread)
+            return result
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
         if latest is not None:
