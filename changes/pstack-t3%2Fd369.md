@@ -4,3 +4,4 @@
 - `run_build` refuses to start while `SIGCHLD` is ignored. The kernel then reaps children and no zombie pins the group id.
 - A second `SIGINT` during the grace drain cuts the five second wait short. A first `SIGINT` during grace waits the full drain and delivery still happens once.
 - The Darwin probe test names the `ps` child as the only non-leader reap.
+- The sampled-lines test saves the entry disposition as `original`, so it no longer shadows the per-iteration `entry`.

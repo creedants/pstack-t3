@@ -1285,8 +1285,8 @@ class GeneratedTest(LandingTest):
 
     def test_sigint_sampled_lines_never_signal_after_reap(self):
         """Sampled lines never signal after the reap."""
-        entry = signal.getsignal(signal.SIGINT)
-        self.addCleanup(signal.signal, signal.SIGINT, entry)
+        original = signal.getsignal(signal.SIGINT)
+        self.addCleanup(signal.signal, signal.SIGINT, original)
         codes = {land.run_build.__code__}
         for value in vars(land._Build).values():
             if callable(value):
