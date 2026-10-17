@@ -2138,8 +2138,8 @@ class SizeTest(OutputCase):
         data = data_of(document)
         rows = [line for _, lines in data["G"] for line in lines]
         self.assertLess(len(document.encode()), 16000)
-        self.assertEqual((data["n"], len(rows), [line[7] for line in rows], len([each for each in data["I"] if each[5]])), ([250, 250, 0, 0], 6, [1] * 6, 8))
-        self.assertEqual(data["N"], ["244 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+        self.assertEqual((data["n"], len(rows), [line[7] for line in rows], len([each for each in data["I"] if each[5]])), ([250, 250, 0, 0], 12, [1] * 12, 8))
+        self.assertEqual(data["N"], ["238 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
                                      "242 more work items in flight are not listed."])
         guide = GUIDE.read_text()
         self.assertIn("When the document exceeds its size limit, the page can fold finished rows into summaries or omit rows, and it counts the agents and work items those changes cover.", guide)
@@ -2301,11 +2301,11 @@ class FrameTest(OutputCase):
             fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
         page = page_of(fixture)
         fitted, document = MOD["fit"](page, 15999, CLEAN, 1960)
-        # The last fold before the cap renders 16124 bytes, over the 15999-byte budget and over the 1960-pixel frame, so its frame cuts run before the cap.
-        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15864))
+        # The last fold before the cap renders 16091 bytes, over the 15999-byte budget and over the 1960-pixel frame, so its frame cuts run before the cap.
+        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15831))
         shifted, shifted_document = MOD["fit"](page, 16135, CLEAN, 1960)
-        # The reclaimed cut of twenty groups renders at 16169 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
-        self.assertEqual((len(shifted.groups), MOD["height"](shifted), len(shifted_document.encode())), (19, 1888, 15864))
+        # The reclaimed cut of twenty groups renders at 16136 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
+        self.assertEqual((len(shifted.groups), MOD["height"](shifted), len(shifted_document.encode())), (19, 1888, 15831))
 
 
 class TextTest(OutputCase):
@@ -2368,8 +2368,18 @@ class TextTest(OutputCase):
             fixture.thread(worker(number), turns=(("running", 10, None),))
         fixture.write()
         data = data_of(self.document("--max-bytes", "16000"))
-        self.assertEqual((data["I"], [group[0] for group in data["G"]], data["N"][1]), (
-            [["D12345678…", "same", "working", "go", "", 1]] * 8, [0, 1, 2, 3, 4, 5], "2 more work items in flight are not listed."))
+        self.assertEqual((data["I"], [group[0] for group in data["G"]], data["N"][0]), (
+            [["D12345678901234567890-0", "same", "working", "go", "", 1],
+             ["D12345678901234567890-1", "same", "working", "go", "", 1],
+             ["D12345678901234567890-2", "same", "working", "go", "", 1],
+             ["D12345678901234567890-3", "same", "working", "go", "", 1],
+             ["D12345678901234567890-4", "same", "working", "go", "", 1],
+             ["D12345678901234567890-5", "same", "working", "go", "", 1],
+             ["D12345678901234567890-6", "same", "working", "go", "", 1],
+             ["D12345678901234567890-7", "same", "working", "go", "", 1],
+             ["D12345678901234567890-8", "same", "working", "go", "", 0],
+             ["D12345678901234567890-9", "same", "working", "go", "", 0]],
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "2 more work items in flight are not listed."))
 
     def test_a_running_line_names_no_model_of_the_store(self):
         failed_child(self.fixture).write()
@@ -3556,7 +3566,7 @@ class BudgetTest(OutputCase):
     def test_link_cut_by_the_last_fold_is_counted_in_a_note(self):
         fixture = extreme(self.fixture)
         for number, unit in enumerate(fixture.units, start=1):
-            unit["pr"] = "https://example.test/" + "o" * 60 + "/" + "r" * 80 + f"/pull/{number}"
+            unit["pr"] = "https://example.test/" + "o" * 400 + "/" + "r" * 400 + f"/pull/{number}"
         fixture.write()
         data = data_of(self.document())
         cut = sum(not item[4] for item in data["I"])
