@@ -1,0 +1,3 @@
+- kind polish
+- `t3/added/brigade-admin/SKILL.md` `Open an executive admin` step 5 finds the repository's T3 project in `t3_project_list` as `Open a restaurant` step 1 does, and when none lists `<root>` it launches in that step's target project, where step 7 says a thread in another project cannot be read or messaged after launch.
+- The regenerated `skills/brigade-admin/SKILL.md` carries the same sentences.
