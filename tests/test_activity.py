@@ -2257,6 +2257,15 @@ class FrameTest(OutputCase):
         short = page_of(one_running(Fixture(self.root / "short")))
         self.assertEqual(MOD["fit"](short, 15999, CLEAN, 1960), MOD["fit"](short, 15999, CLEAN))
 
+    def test_reclaim_does_not_make_fit_keep_fewer_groups_than_the_base_at_the_byte_budget_boundary(self):
+        fixture = self.fixture
+        for number in range(20):
+            fixture.unit(f"D{number}", "in-progress", "x" * 340, thread=worker(number + 1))
+            fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
+        fitted, document = MOD["fit"](page_of(fixture), 15999, CLEAN, 1960)
+        # The reclaimed cut of twenty groups renders at 16000 bytes, one over the 15999-byte budget, so fit keeps the cut before reclaim.
+        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15695))
+
 
 class TextTest(OutputCase):
     def test_text_lists_running_agents_work_items_failed_agents_and_notes(self):

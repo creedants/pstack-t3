@@ -1893,7 +1893,7 @@ FOLDS = (fold_finished_items, fold_quiet_subagents, *(partial(keep_finished_item
 # html_render shows a frame at most 2000 CSS pixels tall. The margin covers two more lines of footer text than height() counts.
 FRAME_HEIGHT = 2000
 FRAME_MARGIN = 40
-# The number of folds a page over its height takes before framed() cuts it.
+# The number of folds a page over its height takes before frame_cuts() cuts it.
 FRAME_FOLDS = len(FOLDS) - 1
 
 # The height of each part at 390 px wide, in CSS pixels, rounded up from the height measured in headless Chromium.
@@ -1941,7 +1941,7 @@ def flight_column_px(flight):
 
 
 def fixed_height(page, said):
-    """The height of the parts framed() never cuts. They are stats, the Timeline heading, legend, axis, the coordinator's row, and the footer with the notes in said.
+    """The height of the parts frame_cuts() never cuts. They are stats, the Timeline heading, legend, axis, the coordinator's row, and the footer with the notes in said.
     A character of the name counts as two, because the name can hold any character and FOOT_CHARS is for Latin text.
     """
     lines = text_lines(FOOT_TEXT + 2 * len(page.name), FOOT_CHARS) + sum(text_lines(len(note), NOTE_CHARS) for note in said)
@@ -1980,17 +1980,19 @@ def height(page):
     return total + (STRIP_PX + CHIP_PX * len(page.items) if page.items else 0) + ledger_px(page)
 
 
-def framed(page, limit):
-    """The page cut for height. A page whose height() is at most limit is returned as it is.
+def frame_cuts(page, limit):
+    """The page cut for height, as the cut after reclaim and the cut before it.
+    A page whose height() is at most limit is returned as (page, page).
     The name is clipped to NAME_BYTES. At most MAX_STRIP chips stay, those of an item with a group on the page first.
     Rows are tried in three passes, and each row whose parts fit what is left of limit stays. Rows flagged earlier always stay and cost nothing, since height() does not count them.
     The first pass tries every row with a Running now or Queued line, the second every failed row, the third every other row.
     Each pass tries its rows in order of turn, then of group in page order. A row's turn is the number of rows of its group that are tried before it in any pass.
     A group with no row left is cut with its heading. counted() counts the agents and items left out.
-    Unused worst case counted note room is reclaimed, except the attempt line floor, and rejected rows are retried in the same order. The retried result is kept only when its height stays at most limit.
+    Unused worst case counted note room is reclaimed, except the attempt line floor, and rejected rows are retried in the same order.
+    The reclaimed cut is returned with the cut before it as (final, first_cut) when its height stays at most limit, and as (None, first_cut) when it does not.
     """
     if height(page) <= limit:
-        return page
+        return page, page
     page = replace(page, name=clip(page.name, NAME_BYTES))
     # Room for the notes a cut can add, and for the attempt-line note when the page has attempt lines, so the result needs no second pass.
     has_lines = any(item.lines or item.fold.summary or item.fold.lines for item in items_of(page))
@@ -2062,8 +2064,16 @@ def framed(page, limit):
         groups, cuts = build(kept)
         final = cut_items(replace(page, groups=tuple(groups), hidden=counted(page.hidden, cuts, len(page.items) - len(items))), items)
         if height(final) <= limit:
-            return final
-    return first_cut
+            return final, first_cut
+    return None, first_cut
+
+
+def framed(page, limit):
+    """The cut frame_cuts() makes for height. A page whose height() is at most limit is returned as it is.
+    The cut after reclaim is returned when it is at most limit, and the cut before reclaim is returned otherwise.
+    """
+    cut, fallback = frame_cuts(page, limit)
+    return cut if cut is not None else fallback
 
 
 def line_count(page):
@@ -2166,7 +2176,7 @@ def within_budget(page, budget, clean, render, brief=False):
 
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that framed() cuts it. The cut stays when its document is at most budget bytes. On the last fold, an over-budget cut keeps the longest prefix of its attempt lines whose document fits. Before the last fold, an over-budget cut is discarded and the next fold runs, and on the last fold it keeps no attempt line only when no prefix fits even with the summaries bounded to their counts.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose document is at most budget bytes stays, or the first cut at all on the last fold. On the last fold, an over-budget cut keeps the longest prefix of its attempt lines whose document fits. Before the last fold, when both cuts are over budget the next fold runs, and on the last fold no attempt line is kept only when no prefix fits even with the summaries bounded to their counts.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
@@ -2178,10 +2188,16 @@ def fit(page, budget, clean, frame=None):
         if frame is None or height(page) <= frame:
             break
         if done >= FRAME_FOLDS:
-            cut = framed(page, frame)
-            trimmed, document, fits = within_budget(cut, budget, clean, render_html)
-            if fits or last:
-                page = trimmed
+            accepted = False
+            for cut in frame_cuts(page, frame):
+                if cut is None:
+                    continue
+                trimmed, document, fits = within_budget(cut, budget, clean, render_html)
+                if fits or last:
+                    page = trimmed
+                    accepted = True
+                    break
+            if accepted:
                 break
     return page, document
 
