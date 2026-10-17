@@ -31,7 +31,7 @@ def refuse_setting(key, value, why):
 
 
 def effective_cap(meta):
-    """The cap this restaurant enforces. A missing contextCap takes the default, and a present one that is not a whole number is refused."""
+    """The cap this restaurant enforces. A missing contextCap takes 300000, and a present value that is not an integer, or is a boolean, is refused."""
     if "contextCap" not in meta:
         return DEFAULT_CONTEXT_CAP
     value = meta["contextCap"]

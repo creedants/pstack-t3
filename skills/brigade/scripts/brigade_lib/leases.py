@@ -53,7 +53,7 @@ def autofire_of(meta):
 class KindLimits:
     """The per-kind settings restaurant.json holds. caps is {kind: cap} and review is {kind: mode}.
 
-    A kind that is absent has no cap, or no review depth. A present value that does not parse is refused, not read as absent.
+    A kind that is absent has no cap, or no review depth.
     """
     caps: dict
     review: dict
@@ -76,9 +76,9 @@ class Hold:
 def kind_limits(meta):
     """The caps and review depths restaurant.json holds, as a KindLimits.
 
-    A key absent from meta reads as no caps and no review depths. A present value that does not parse is refused
-    with a warning, so a hand-written setting is never replaced by its default in silence. A cap is a whole number
-    of 1 or more and a depth is full or light. An entry whose kind is not in KINDS is skipped.
+    A key absent from meta reads as no caps and no review depths. A present value that does not parse is refused with a
+    warning. A cap is a whole number of 1 or more and a depth is full or light. An entry whose kind is not in KINDS is
+    skipped.
     """
     caps, review = {}, {}
     for key, found in (("caps", caps), ("review", review)):
