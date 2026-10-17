@@ -70,105 +70,23 @@ def config(budget="default", **assigned):
     return {"budget": budget, "roles": assigned, "sources": {name: "test" for name in assigned}}
 
 
-GROK_SEAT = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}
 OPUS_SEAT = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
-CODE_ROLES = (
-    "feature, refactoring", "bug-fix", "perf-issue", "hillclimb",
-    "swarm workers", "reflect tooling",
-)
-HAIKU_READING_ROLES = ("how explorer", "why investigators")
-HAIKU_READING_SEAT = {
-    "providerInstanceId": "claudeAgent",
-    "model": "claude-haiku-5-5",
-    "options": {"effort": "medium"},
-}
-JUDGMENT_ROLES = (
-    "judgment and prose", "hardest tasks", "how explainer", "why synthesizer",
-    "reflect judgment, divergent, synthesizer",
-)
-PANEL_ROLES = ("arena runners", "arena cross-judge pool", "architect runners", "interrogate reviewers")
 
 
 class RolesTest(unittest.TestCase):
-    def test_fixture_defaults_are_grok_for_code_and_opus_for_judgment(self):
-        for name in CODE_ROLES:
-            entry = roles.resolve(config(), CATALOG, [name])["roles"][name]
-            self.assertEqual(entry["seats"], [GROK_SEAT], name)
-            self.assertNotIn("notes", entry, name)
-        for name in HAIKU_READING_ROLES:
-            entry = roles.resolve(config(), CATALOG, [name])["roles"][name]
-            self.assertEqual(entry["seats"], [HAIKU_READING_SEAT], name)
-            self.assertEqual(entry["haikuBrief"], list(roles.HAIKU_BRIEF), name)
-        for name in JUDGMENT_ROLES:
-            entry = roles.resolve(config(), CATALOG, [name])["roles"][name]
-            self.assertEqual(entry["seats"], [OPUS_SEAT], name)
-            self.assertNotIn("notes", entry, name)
-        for name in PANEL_ROLES:
-            entry = roles.resolve(config(), CATALOG, [name])["roles"][name]
-            self.assertEqual(entry["seats"], [OPUS_SEAT, GROK_SEAT], name)
-            self.assertNotIn("notes", entry, name)
-
-    def test_every_role_has_one_default_policy(self):
-        self.assertEqual(set(roles.ROLE_DEFAULTS), set(roles.ROLES))
-        for name in roles.SINGLE_ROLES:
-            policy = roles.ROLE_DEFAULTS[name]
-            self.assertEqual(len(policy), 1)
-        for name in roles.PANEL_ROLES:
-            policy = roles.ROLE_DEFAULTS[name]
-            if name == "verifiers":
-                self.assertIs(policy, roles.AdaptiveDefault.VERIFIERS)
-            elif name == "review backups":
-                self.assertIs(policy, roles.AdaptiveDefault.UNSET)
-            else:
-                self.assertEqual(len(policy), 2)
-
-    def test_setup_examples_match_resolved_fixture_defaults(self):
-        text = (ROOT / "t3/setup.md").read_text()
-        examples = re.findall(r'--set "([^"]+)"', text)
-        self.assertEqual(examples, [
-            "judgment and prose=claudeAgent/claude-opus-5-5?effort=xhigh",
-            "swarm workers=grok/grok-4.7?reasoningEffort=xhigh",
-            "interrogate reviewers=claudeAgent/claude-opus-5-5?effort=xhigh;grok/grok-4.7?reasoningEffort=xhigh",
-        ])
-        for example in examples:
-            name, value = example.split("=", 1)
-            expected = [roles.parse_seat(part) for part in value.split(";")]
-            entry = roles.resolve(config(), CATALOG, [name])["roles"][name]
-            self.assertEqual(entry["seats"], expected, name)
-            self.assertNotIn("notes", entry, name)
-
-    def test_show_prints_the_builtin_bug_fix_seat(self):
-        with tempfile.TemporaryDirectory() as directory:
-            env = {**os.environ, "XDG_CONFIG_HOME": directory}
-            completed = subprocess.run(
-                [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--cwd", directory,
-                 "--catalog", str(ROOT / "tests/fixtures/catalog.json"), "--role", "bug-fix",
-                 "--parent", "claudeAgent/claude-opus-5-5"],
-                env=env, capture_output=True, text=True, check=True)
-        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [GROK_SEAT])
-        self.assertEqual(entry["source"], "default")
-
-    def test_preferred_seat_matching_the_parent_stays_explicit(self):
-        catalog = {**CATALOG, "inheritedProviderInstanceId": "grok", "inheritedModel": "grok-4.7"}
-        entry = roles.resolve(config(), catalog, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [GROK_SEAT])
-        self.assertNotIn("notes", entry)
-
-    def test_skill_tests_default_is_haiku_high(self):
-        entry = roles.resolve(config(), CATALOG, ["skill tests"])["roles"]["skill tests"]
-        self.assertEqual(entry["source"], "default")
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5", "options": {"effort": "high"}}])
-        self.assertEqual(entry["haikuBrief"], list(roles.HAIKU_BRIEF))
-
-    def test_skill_tests_small_budget_lowers_haiku_effort(self):
-        seats = roles.resolve(config("small"), CATALOG, ["skill tests"])["roles"]["skill tests"]["seats"]
-        self.assertEqual(seats, [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5", "options": {"effort": "medium"}}])
-
-    def test_skill_tests_without_a_catalog_reports_catalog_required(self):
-        plain = roles.resolve(config(), None, ["skill tests"])["roles"]["skill tests"]
-        self.assertEqual(plain["seats"], "catalog-required")
-        self.assertIn("call orchestrator_capabilities", plain.get("note", ""))
+    def test_unset_roles_inherit_and_review_backups_stays_unset(self):
+        for catalog in (None, CATALOG):
+            for name in roles.ROLES:
+                with self.subTest(catalog=bool(catalog), role=name):
+                    entry = roles.resolve(config(), catalog, [name])["roles"][name]
+                    if name == "review backups":
+                        self.assertEqual(entry, {"source": "default", "seats": "unset", "note": roles.UNSET_NOTE})
+                    else:
+                        self.assertEqual(entry, {
+                            "source": "default",
+                            "seats": "inherit",
+                            "note": roles.UNSET_ROLE_NOTE,
+                        })
 
     def test_runtime_role_table_lists_the_same_names_as_the_role_list(self):
         text = (ROOT / "t3/runtime.md").read_text()
@@ -177,41 +95,38 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(sorted(names), sorted(roles.ROLES))
         self.assertEqual(len(names), len(set(names)))
         proposals = (ROOT / "t3/setup.md").read_text().split("**(b) Propose roles.**", 1)[1].split("**(c) Confirm.**", 1)[0]
-        self.assertIn("`skill tests`", proposals)
+        self.assertIn("propose a seat per role", proposals)
 
-    def test_setup_proposes_review_backups_only_when_the_user_names_a_panel(self):
+    def test_setup_proposes_seats_from_the_catalog_and_leaves_unset_roles_inherit(self):
         text = (ROOT / "t3/setup.md").read_text()
         proposals = text.split("**(b) Propose roles.**", 1)[1].split("**(c) Confirm.**", 1)[0]
         for phrase in (
-            "`review backups` is optional and has no built-in seats.",
-            "Leave it unset unless the user names a panel.",
-            "When set, a `verifiers` seat whose paid backups are all out runs that panel instead of parking.",
-            "Never propose a Cursor, Codex, or `inherit` seat for it.",
+            "Reason over the live catalog from step 1 and propose a seat per role",
+            "Any role the user leaves unset resolves to `inherit`, unless the `exclude` list refuses the inherited seat, and `review backups` stays unset.",
+            "It has no built-in seats, and it refuses `inherit`, because the parent can be the author.",
+            "Set at least two seats of different model families",
         ):
             self.assertIn(phrase, proposals)
-        self.assertNotIn("opencode", text)
-        self.assertNotIn("opencode", (ROOT / "t3/runtime.md").read_text())
+        self.assertNotIn("built-in Haiku", text)
+        self.assertNotIn("Leave `skill tests`", text)
+
+    def test_show_prints_inherit_for_an_unset_role(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, "XDG_CONFIG_HOME": directory}
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--cwd", directory,
+                 "--catalog", str(ROOT / "tests/fixtures/catalog.json"), "--role", "bug-fix",
+                 "--parent", "claudeAgent/claude-opus-5-5"],
+                env=env, capture_output=True, text=True, check=True)
+        entry = json.loads(completed.stdout)["roles"]["bug-fix"]
+        self.assertEqual(entry["seats"], "inherit")
+        self.assertEqual(entry["note"], roles.UNSET_ROLE_NOTE)
+        self.assertEqual(entry["source"], "default")
 
     def test_review_backups_is_unset_by_default(self):
         for catalog in (None, CATALOG):
             entry = roles.resolve(config(), catalog, ["review backups"])["roles"]["review backups"]
             self.assertEqual(entry, {"source": "default", "seats": "unset", "note": roles.UNSET_NOTE})
-
-    def test_panel_default_is_one_seat_per_runnable_provider_with_parent_inheriting(self):
-        seats = roles.resolve(config(), CATALOG, ["verifiers"])["roles"]["verifiers"]["seats"]
-        self.assertEqual(seats, [
-            "inherit",
-            {"providerInstanceId": "codex", "model": "gpt-6.1-sol"},
-            {"providerInstanceId": "grok", "model": "grok-4.7"},
-        ])
-
-    def test_panel_skips_a_provider_serving_a_family_already_seated(self):
-        cursor = {"providerInstanceId": "cursor", "canRunChildTask": True, "constraints": [],
-                  "models": [{"id": "claude-opus-5-5", "options": None}]}
-        catalog = {**CATALOG, "providers": CATALOG["providers"] + [cursor]}
-        seats = roles.resolve(config(), catalog, ["verifiers"])["roles"]["verifiers"]["seats"]
-        self.assertNotIn({"providerInstanceId": "cursor", "model": "claude-opus-5-5"}, seats)
-        self.assertEqual(len(seats), 3)
 
     def test_null_model_options_are_treated_as_none(self):
         provider = {"providerInstanceId": "pi", "canRunChildTask": True, "constraints": [], "models": [{"id": "pi-1", "options": None}]}
@@ -225,85 +140,27 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(len(problems), 2, problems)
 
     def test_budget_makes_inherit_explicit_so_the_cap_applies(self):
-        seats = roles.resolve(config("small", **{"bug-fix": ["inherit"]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(seats, [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}])
-        entry = roles.resolve(config("small", **{"bug-fix": ["inherit"]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertNotIn("notes", entry)
-        self.assertIn("inherit made explicit", entry["info"][0])
-        plain = roles.resolve(config(), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(plain, [GROK_SEAT])
-        capped = roles.resolve(config("small"), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(capped, [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}}])
+        capped = roles.resolve(config("small", **{"bug-fix": ["inherit"]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]
+        self.assertEqual(capped["seats"], [{
+            "providerInstanceId": "claudeAgent",
+            "model": "claude-opus-5-5",
+            "options": {"effort": "medium"},
+        }])
+        self.assertNotIn("notes", capped)
+        self.assertIn("inherit made explicit", capped["info"][0])
+        plain = roles.resolve(config(**{"bug-fix": ["inherit"]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]
+        self.assertEqual(plain["seats"], ["inherit"])
 
-    def test_unlimited_budget_raises_builtin_seats_to_the_highest_non_special_level(self):
-        grok = roles.resolve(config("unlimited"), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(grok, [GROK_SEAT])
-        opus_max = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "max"}}
-        judgment = roles.resolve(config("unlimited"), CATALOG, ["judgment and prose"])["roles"]["judgment and prose"]["seats"]
-        self.assertEqual(judgment, [opus_max])
-        panel = roles.resolve(config("unlimited"), CATALOG, ["interrogate reviewers"])["roles"]["interrogate reviewers"]["seats"]
-        self.assertEqual(panel, [opus_max, GROK_SEAT])
-        verifiers = roles.resolve(config("unlimited"), CATALOG, ["verifiers"])["roles"]["verifiers"]["seats"]
-        self.assertEqual(verifiers[0], opus_max)
-        self.assertEqual(verifiers[2]["options"]["reasoningEffort"], "xhigh")
-        named = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
-        kept = roles.resolve(config("unlimited", **{"judgment and prose": [named]}), CATALOG, ["judgment and prose"])["roles"]["judgment and prose"]["seats"]
-        self.assertEqual(kept, [named])
-
-    def test_unlimited_with_no_grok_stops_at_max_on_a_codex_parent(self):
-        providers = [provider for provider in CATALOG["providers"] if provider["providerInstanceId"] != "grok"]
-        catalog = {
-            **CATALOG,
-            "providers": providers,
-            "inheritedProviderInstanceId": "codex",
-            "inheritedModel": "gpt-6.1-sol",
-        }
-        codex_max = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "max"}}
-        for name in CODE_ROLES:
-            seats = roles.resolve(config("unlimited"), catalog, [name])["roles"][name]["seats"]
-            self.assertEqual(seats, [codex_max], name)
-        panel = roles.resolve(config("unlimited"), catalog, ["interrogate reviewers"])["roles"]["interrogate reviewers"]["seats"]
-        self.assertEqual(panel[1], codex_max)
-        explicit = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "ultra"}}
-        capped = roles.resolve(config("unlimited", **{"bug-fix": [explicit]}), catalog, ["bug-fix"])["roles"]["bug-fix"]["seats"]
-        self.assertEqual(capped, [codex_max])
-        verifiers = roles.resolve(config("unlimited"), catalog, ["verifiers"])["roles"]["verifiers"]["seats"]
-        self.assertEqual(verifiers[0], codex_max)
-        self.assertNotIn("ultra", json.dumps(verifiers))
-        full = roles.resolve(config("unlimited"), CATALOG, ["verifiers"])["roles"]["verifiers"]["seats"]
-        self.assertEqual(full[1]["options"]["reasoningEffort"], "max")
-
-    def test_show_writes_ultra_under_every_budget_when_it_is_the_only_level(self):
-        only_ultra = {
-            "inheritedProviderInstanceId": "codex",
-            "inheritedModel": "gpt-6.1-sol",
-            "providers": [{
-                "providerInstanceId": "codex", "canRunChildTask": True, "constraints": [],
-                "models": [{"id": "gpt-6.1-sol", "options": [
-                    {"id": "reasoningEffort", "type": "select", "options": [{"id": "ultra"}]},
-                ]}],
-            }],
-        }
+    def test_budget_caps_ultra_to_max_under_unlimited(self):
         ultra = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "ultra"}}
-        codex_max = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "max"}}
-
-        def show(budget, catalog, seat=None):
-            with tempfile.TemporaryDirectory() as directory:
-                roles_file = Path(directory) / "pstack-t3" / "roles.json"
-                roles_file.parent.mkdir()
-                roles_file.write_text(json.dumps({"version": 1, "budget": budget, "roles": {"bug-fix": [seat]} if seat else {}}))
-                completed = subprocess.run(
-                    [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--cwd", directory,
-                     "--catalog", "-", "--parent", "codex/gpt-6.1-sol", "--role", "bug-fix"],
-                    input=json.dumps(catalog), env={**os.environ, "XDG_CONFIG_HOME": directory},
-                    capture_output=True, text=True, check=True)
-            return json.loads(completed.stdout)["roles"]["bug-fix"]["seats"]
-
-        for budget in ("default", "small", "medium", "large", "unlimited"):
-            self.assertEqual(show(budget, only_ultra), [ultra], budget)
-            self.assertEqual(show(budget, only_ultra, ultra), [ultra], budget)
-        self.assertEqual(show("default", CATALOG, ultra), [ultra])
-        self.assertEqual(show("unlimited", CATALOG, ultra), [codex_max])
+        kept = roles.resolve(config(**{"bug-fix": [ultra]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
+        self.assertEqual(kept, [ultra])
+        capped = roles.resolve(config("unlimited", **{"bug-fix": [ultra]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]["seats"]
+        self.assertEqual(capped, [{
+            "providerInstanceId": "codex",
+            "model": "gpt-6.1-sol",
+            "options": {"reasoningEffort": "max"},
+        }])
 
     def test_catalog_stdin_matches_the_file_error_and_accepts_json(self):
         script = [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--role", "bug-fix", "--parent", "claudeAgent/claude-opus-5-5"]
@@ -327,7 +184,7 @@ class RolesTest(unittest.TestCase):
             valid_file = run(str(ROOT / "tests/fixtures/catalog.json"))
             self.assertEqual(valid_file.returncode, 0, valid_file.stderr)
             self.assertEqual(valid_stdin.stdout, valid_file.stdout)
-            self.assertEqual(json.loads(valid_stdin.stdout)["roles"]["bug-fix"]["seats"], [GROK_SEAT])
+            self.assertEqual(json.loads(valid_stdin.stdout)["roles"]["bug-fix"]["seats"], "inherit")
 
             bad = Path(directory) / "bad.json"
             empty = Path(directory) / "empty.json"
@@ -350,54 +207,27 @@ class RolesTest(unittest.TestCase):
     def test_snapshot_parent_comes_from_the_caller_not_the_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
-            snapshot = base / "pstack-t3" / "catalog.json"
-            snapshot.parent.mkdir()
-            snapshot.write_text(json.dumps(CATALOG))
+            config_dir = base / "pstack-t3"
+            config_dir.mkdir()
+            (config_dir / "catalog.json").write_text(json.dumps({
+                **CATALOG,
+                "inheritedProviderInstanceId": "grok",
+                "inheritedModel": "grok-4.7",
+            }))
+            (config_dir / "roles.json").write_text(json.dumps({
+                "version": 1, "budget": "small", "roles": {"bug-fix": ["inherit"]},
+            }))
             env = {**os.environ, "XDG_CONFIG_HOME": str(base)}
-            run = lambda *extra: json.loads(subprocess.run([sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--cwd", directory, "--role", "verifiers", *extra],
-                                                           env=env, capture_output=True, text=True, check=True).stdout)
-            seats = run("--parent", "codex/gpt-6.1-sol")["roles"]["verifiers"]["seats"]
-            self.assertEqual(seats[0], "inherit")
-            self.assertIn({"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}, seats)
-            self.assertNotIn({"providerInstanceId": "codex", "model": "gpt-6.1-sol"}, seats)
-
-    def test_panel_with_one_runnable_provider_is_three_inherit_seats(self):
-        catalog = {**CATALOG, "providers": [p for p in CATALOG["providers"] if p["providerInstanceId"] == "claudeAgent"]}
-        seats = roles.resolve(config(), catalog, ["verifiers"])["roles"]["verifiers"]["seats"]
-        self.assertEqual(seats, ["inherit", "inherit", "inherit"])
-
-    def test_arena_runners_with_one_runnable_provider_keeps_two_fallback_seats(self):
-        catalog = {**CATALOG, "providers": [p for p in CATALOG["providers"] if p["providerInstanceId"] == "claudeAgent"]}
-        entry = roles.resolve(config(), catalog, ["arena runners"])["roles"]["arena runners"]
-        self.assertEqual(entry["seats"], [OPUS_SEAT, OPUS_SEAT])
-        self.assertNotIn("fastMode", entry["seats"][1].get("options", {}))
-        self.assertEqual(entry["notes"], [
-            "arena runners seat 2: wanted grok-4.7, using claudeAgent/claude-opus-5-5 (missing family)",
-            "arena runners: seats 1 and 2 both use claudeAgent/claude-opus-5-5, so the panel lost a distinct model",
-        ])
-
-    def test_without_catalog_panels_are_reported_for_the_agent_to_expand(self):
-        note = (
-            "expand from orchestrator_capabilities: this thread inherits, "
-            "then one seat per runnable provider whose first model is a new model family"
-        )
-        unknown = roles.resolve(config(), None, ["verifiers"])["roles"]["verifiers"]
-        self.assertEqual(unknown["seats"], "default-panel")
-        self.assertEqual(unknown["note"], note)
-        named = roles.resolve(config(), None, ["verifiers"], roles.Parent("grok", "grok-4.7"))["roles"]["verifiers"]
-        self.assertEqual(named["seats"], "default-panel")
-        self.assertEqual(named["note"], note)
-
-    def test_preferred_roles_without_a_catalog_ask_for_one(self):
-        entry = roles.resolve(config(), None, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], "catalog-required")
-        self.assertEqual(entry["note"], "call orchestrator_capabilities and rerun roles.py show --catalog")
-        panel = roles.resolve(config(), None, ["arena runners"])["roles"]["arena runners"]
-        self.assertEqual(panel["seats"], "catalog-required")
-        skill = roles.resolve(config(), None, ["skill tests"])["roles"]["skill tests"]
-        self.assertEqual(skill["seats"], "catalog-required")
-        inherited = roles.resolve(config(**{"bug-fix": ["inherit"]}), None, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(inherited["seats"], ["inherit"])
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "t3/scripts/roles.py"), "show", "--cwd", directory,
+                 "--role", "bug-fix", "--parent", "codex/gpt-6.1-sol"],
+                env=env, capture_output=True, text=True, check=True)
+            seats = json.loads(completed.stdout)["roles"]["bug-fix"]["seats"]
+        self.assertEqual(seats, [{
+            "providerInstanceId": "codex",
+            "model": "gpt-6.1-sol",
+            "options": {"reasoningEffort": "medium"},
+        }])
 
     def test_unrunnable_provider_falls_back_to_inherit_with_a_note(self):
         entry = roles.resolve(config(**{"swarm workers": [{"providerInstanceId": "cursor", "model": "default"}]}), CATALOG, ["swarm workers"])["roles"]["swarm workers"]
@@ -431,12 +261,6 @@ class RolesTest(unittest.TestCase):
         seat = {"providerInstanceId": "codex", "model": "gone", "options": {"reasoningEffort": "low", "serviceTier": "priority"}}
         entry = roles.resolve(config("large", **{"bug-fix": [seat]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]
         self.assertEqual(entry["seats"][0]["options"], {"reasoningEffort": "low", "serviceTier": "priority"})
-
-    def test_panel_when_parent_provider_cannot_run_children(self):
-        catalog = {**CATALOG, "inheritedProviderInstanceId": "cursor", "inheritedModel": "grok-4.7",
-                   "providers": [p for p in CATALOG["providers"] if p["providerInstanceId"] in ("cursor", "grok")]}
-        seats = roles.resolve(config(), catalog, ["verifiers"])["roles"]["verifiers"]["seats"]
-        self.assertEqual(seats, [{"providerInstanceId": "grok", "model": "grok-4.7"}] * 3)
 
     def test_parse_seat(self):
         self.assertEqual(roles.parse_seat("inherit"), "inherit")
@@ -485,134 +309,7 @@ class RolesTest(unittest.TestCase):
             self.assertEqual(target.read_text(), first)
             self.assertEqual(json.loads(first)["roles"]["interrogate reviewers"][1]["model"], "gpt-6.1-sol")
 
-    def test_missing_grok_model_names_the_replacement(self):
-        grok = {
-            "providerInstanceId": "grok", "canRunChildTask": True, "constraints": [],
-            "models": [{"id": "grok-4.5", "options": [{"id": "reasoningEffort", "type": "select", "options": [
-                {"id": "xhigh"}, {"id": "high"}, {"id": "medium"}, {"id": "low"}]}]}],
-        }
-        providers = [grok if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["swarm workers"])["roles"]["swarm workers"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.5", "options": {"reasoningEffort": "xhigh"}}])
-        self.assertEqual(entry["notes"], ["swarm workers seat 1: wanted grok-4.7, using grok/grok-4.5 (missing model)"])
-
-    def test_codex_only_catalog_substitutes_both_panel_seats(self):
-        codex = next(provider for provider in CATALOG["providers"] if provider["providerInstanceId"] == "codex")
-        catalog = {"inheritedProviderInstanceId": "codex", "inheritedModel": "gpt-6.1-sol", "providers": [codex]}
-        entry = roles.resolve(config(), catalog, ["interrogate reviewers"])["roles"]["interrogate reviewers"]
-        seat = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "xhigh"}}
-        self.assertEqual(entry["seats"], [seat, seat])
-        self.assertEqual(entry["notes"], [
-            "interrogate reviewers seat 1: wanted claude-opus-5-5, using codex/gpt-6.1-sol (missing family)",
-            "interrogate reviewers seat 2: wanted grok-4.7, using codex/gpt-6.1-sol (missing family)",
-            "interrogate reviewers: seats 1 and 2 both use codex/gpt-6.1-sol, so the panel lost a distinct model",
-        ])
-
-    def test_no_runnable_model_raises(self):
-        catalog = {"providers": [{"providerInstanceId": "cursor", "canRunChildTask": False,
-                                  "constraints": ["Provider is not authenticated."], "models": [{"id": "default", "options": []}]}]}
-        for name in ("bug-fix", "verifiers"):
-            with self.assertRaises(roles.RolesError) as caught:
-                roles.resolve(config(), catalog, [name])
-            self.assertIn("no provider in the catalog can run child tasks", str(caught.exception))
-
-    def test_custom_runnable_provider_serves_a_preferred_model(self):
-        grok = next(provider for provider in CATALOG["providers"] if provider["providerInstanceId"] == "grok")
-        blocked = {**grok, "canRunChildTask": False, "constraints": ["Provider is not authenticated."]}
-        custom = {
-            "providerInstanceId": "acme", "canRunChildTask": True, "constraints": [],
-            "models": [{"id": "grok-4.7", "options": [
-                {"id": "reasoningEffort", "type": "select", "options": [{"id": "xhigh"}, {"id": "high"}]},
-                {"id": "fastMode", "type": "boolean"},
-            ]}],
-        }
-        providers = [blocked if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
-        providers.append(custom)
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["swarm workers"])["roles"]["swarm workers"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "acme", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh", "fastMode": False}}])
-        self.assertNotIn("notes", entry)
-
-    def test_unauthenticated_only_copy_falls_back_to_the_parent(self):
-        grok = next(provider for provider in CATALOG["providers"] if provider["providerInstanceId"] == "grok")
-        blocked = {**grok, "canRunChildTask": False, "constraints": ["Provider is not authenticated."]}
-        providers = [blocked if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["swarm workers"])["roles"]["swarm workers"]
-        self.assertEqual(entry["seats"], [OPUS_SEAT])
-        self.assertNotIn("fastMode", entry["seats"][0]["options"])
-        self.assertEqual(entry["notes"], ["swarm workers seat 1: wanted grok-4.7, using claudeAgent/claude-opus-5-5 (missing family)"])
-
-    def test_claude_and_codex_catalog_without_grok_does_not_set_fast_mode(self):
-        providers = [provider for provider in CATALOG["providers"] if provider["providerInstanceId"] in ("claudeAgent", "codex")]
-        catalog = {**CATALOG, "providers": providers}
-        entry = roles.resolve(config(), catalog, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [OPUS_SEAT])
-        self.assertNotIn("fastMode", entry["seats"][0]["options"])
-        self.assertIn("missing family", entry["notes"][0])
-        panel = roles.resolve(config(), catalog, ["interrogate reviewers"])["roles"]["interrogate reviewers"]
-        self.assertEqual(panel["seats"][1], OPUS_SEAT)
-        self.assertNotIn("fastMode", panel["seats"][1]["options"])
-
-    def test_exact_model_prefers_the_provider_whose_first_model_is_in_the_family(self):
-        wrapper = {
-            "providerInstanceId": "wrapper", "canRunChildTask": True, "constraints": [],
-            "models": [
-                {"id": "gpt-9", "options": []},
-                {"id": "grok-4.7", "options": [{"id": "reasoningEffort", "type": "select", "options": [{"id": "xhigh"}]}]},
-            ],
-        }
-        grok = next(provider for provider in CATALOG["providers"] if provider["providerInstanceId"] == "grok")
-        providers = [wrapper] + [provider for provider in CATALOG["providers"] if provider["providerInstanceId"] != "grok"] + [grok]
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["swarm workers"])["roles"]["swarm workers"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}])
-        self.assertNotIn("notes", entry)
-
-    def test_exact_model_keeps_catalog_order_when_no_first_model_is_in_the_family(self):
-        def carrier(provider_id, first_model):
-            return {
-                "providerInstanceId": provider_id, "canRunChildTask": True, "constraints": [],
-                "models": [
-                    {"id": first_model, "options": []},
-                    {"id": "grok-4.7", "options": [{"id": "reasoningEffort", "type": "select", "options": [{"id": "xhigh"}]}]},
-                ],
-            }
-        providers = [carrier("first", "gpt-9"), carrier("second", "claude-haiku-9")]
-        providers.extend(provider for provider in CATALOG["providers"] if provider["providerInstanceId"] != "grok")
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["swarm workers"])["roles"]["swarm workers"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "first", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}])
-        self.assertNotIn("notes", entry)
-
-    def test_preferred_seat_notes_a_lower_declared_effort(self):
-        grok = {
-            "providerInstanceId": "grok", "canRunChildTask": True, "constraints": [],
-            "models": [{"id": "grok-4.7", "options": [{"id": "reasoningEffort", "type": "select", "options": [
-                {"id": "high"}, {"id": "medium"}, {"id": "low"}]}]}],
-        }
-        providers = [grok if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
-        for budget in ("default", "unlimited"):
-            with self.subTest(budget=budget):
-                entry = roles.resolve(config(budget), {**CATALOG, "providers": providers}, ["bug-fix"])["roles"]["bug-fix"]
-                self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "high"}}])
-                self.assertEqual(entry["notes"], ["bug-fix seat 1: wanted xhigh, using high"])
-
-    def test_preferred_seat_adds_no_effort_option_when_the_model_declares_none(self):
-        grok = {"providerInstanceId": "grok", "canRunChildTask": True, "constraints": [], "models": [{"id": "grok-4.7", "options": []}]}
-        providers = [grok if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7"}])
-        self.assertNotIn("notes", entry)
-
-    def test_extra_high_spelling_satisfies_the_builtin_ceiling(self):
-        grok = {
-            "providerInstanceId": "grok", "canRunChildTask": True, "constraints": [],
-            "models": [{"id": "grok-4.7", "options": [{"id": "reasoningEffort", "type": "select", "options": [
-                {"id": "high"}, {"id": "extra-high"}]}]}],
-        }
-        providers = [grok if provider["providerInstanceId"] == "grok" else provider for provider in CATALOG["providers"]]
-        entry = roles.resolve(config(), {**CATALOG, "providers": providers}, ["bug-fix"])["roles"]["bug-fix"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "extra-high"}}])
-        self.assertNotIn("notes", entry)
-
-    def test_explicit_codex_seat_wins_over_the_builtin(self):
+    def test_a_configured_seat_is_used_as_configured(self):
         seat = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}}
         entry = roles.resolve(config("large", **{"bug-fix": [seat]}), CATALOG, ["bug-fix"])["roles"]["bug-fix"]
         self.assertEqual(entry["seats"], [seat])
@@ -638,17 +335,15 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(json.dumps(catalog), before_catalog)
         self.assertEqual(json.dumps(roles.ROLES), before_roles)
         self.assertEqual(json.dumps(cfg), before_cfg)
-        self.assertEqual([seat.model_id for seat in (roles.OPUS, roles.GROK)], ["claude-opus-5-5", "grok-4.7"])
 
-    def test_runtime_describes_the_builtin_policy(self):
+    def test_runtime_describes_the_unset_role_policy(self):
         text = (ROOT / "t3/runtime.md").read_text()
-        self.assertIn("catalog-required", text)
+        self.assertIn("There are no built-in model picks.", text)
         self.assertIn("Do not reconstruct role defaults", text)
-        self.assertNotIn("Expand it yourself", text)
         self.assertIn("`gpt-6.1-sol` is `gpt`", text)
         self.assertNotIn('"model": "gpt-6.1-sol"', text)
         defaults = text.split("### Built-in defaults", 1)[1].split("### Budget", 1)[0]
-        self.assertIn('`verifiers` is three `"inherit"` seats', defaults)
+        self.assertIn('resolves to `"inherit"`', defaults)
         self.assertIn("roles.py show` owns this mapping", defaults)
 
     def test_setup_stops_before_writing_when_watch_is_absent(self):
@@ -661,40 +356,25 @@ class RolesTest(unittest.TestCase):
         self.assertIn("A deferred `watch_pull_request` counts as present", text)
         self.assertIn("dummy PR", text)
 
-    def test_skill_tests_returns_haiku_when_both_haiku_versions_exist(self):
-        thinking = [{"id": "thinking", "type": "boolean"}]
-        effort = [{"id": "effort", "type": "select", "options": [{"id": "medium", "isDefault": True}, {"id": "high"}]}]
-        haiku_4 = {"id": "claude-haiku-4-5", "options": thinking}
-        haiku_5 = {"id": "claude-haiku-5-5", "options": effort}
-        catalog = {
-            "inheritedProviderInstanceId": "grok",
-            "inheritedModel": "grok-4.7",
-            "providers": [{
-                "providerInstanceId": "claudeAgent", "canRunChildTask": True, "constraints": [],
-                "models": [haiku_4, haiku_5],
-            }],
-        }
-        entry = roles.resolve(config(), catalog, ["skill tests"])["roles"]["skill tests"]
-        self.assertEqual(entry["seats"], [{"providerInstanceId": "claudeAgent", "model": "claude-haiku-5-5", "options": {"effort": "high"}}])
-
     def test_configured_haiku_seat_loads_on_any_role(self):
         seat = {"providerInstanceId": "claudeAgent", "model": "anthropic/claude-haiku-5-5"}
         roles.check_shape({"roles": {"swarm workers": [seat]}}, "roles.json")
 
-    def test_missing_model_skips_excluded_haiku_45(self):
+    def test_missing_model_falls_back_to_the_first_model_the_exclude_list_allows(self):
         catalog = {
             "inheritedProviderInstanceId": "grok",
             "inheritedModel": "grok-4.7",
             "providers": [{
                 "providerInstanceId": "cursor", "canRunChildTask": True, "constraints": [],
                 "models": [
-                    {"id": "claude-haiku-5-5", "options": [{"id": "effort", "type": "select", "options": [{"id": "high"}]}]},
                     {"id": "claude-haiku-4-5", "options": []},
+                    {"id": "claude-haiku-5-5", "options": [{"id": "effort", "type": "select", "options": [{"id": "high"}]}]},
                 ],
             }],
         }
         entry = roles.resolve(
-            config(**{"bug-fix": [{"providerInstanceId": "cursor", "model": "claude-gone"}]}),
+            {**config(**{"bug-fix": [{"providerInstanceId": "cursor", "model": "claude-gone"}]}),
+             "exclude": roles.parse_exclude([{"model": "*claude-haiku-4-5*"}], "test")},
             catalog,
             ["bug-fix"],
         )["roles"]["bug-fix"]
@@ -713,33 +393,6 @@ class RolesTest(unittest.TestCase):
         }
         entry = roles.resolve(config(**{"how explorer": ["inherit"]}), catalog, ["how explorer"])["roles"]["how explorer"]
         self.assertEqual(entry["seats"], ["inherit"])
-        self.assertEqual(entry["haikuBrief"], list(roles.HAIKU_BRIEF))
-
-    def test_direct_resolve_keeps_exclusion_notes_when_cursor_is_ignored(self):
-        # check_shape rejects two skill tests seats at the CLI, so this calls resolve directly.
-        cfg = {
-            "budget": "default",
-            "roles": {"skill tests": [
-                {"providerInstanceId": "grok", "model": "grok-4.7-build-fast"},
-                {"providerInstanceId": "cursor", "model": "claude-haiku-5-5"},
-            ]},
-            "sources": {"skill tests": "fixture-config"},
-        }
-        entry = roles.resolve(
-            cfg, CATALOG, ["skill tests"],
-            providers={"claudeAgent", "grok"}, launches_seats=True,
-        )["roles"]["skill tests"]
-        self.assertEqual(entry["seats"], [{
-            "providerInstanceId": "claudeAgent",
-            "model": "claude-haiku-5-5",
-            "options": {"effort": "high"},
-        }])
-        self.assertEqual(entry["notes"], [
-            "skipped configured seat grok/grok-4.7-build-fast: "
-            "grok-4.7-build-fast is a fast Grok variant, and "
-            "pstack never runs a fast Grok model or Claude Haiku 4.5 as a seat or a worker",
-        ])
-        self.assertEqual(entry["source"], "fixture-config")
         self.assertEqual(entry["haikuBrief"], list(roles.HAIKU_BRIEF))
 
 
@@ -2197,9 +1850,8 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
     def test_haiku_section_send_a_seat_launching_test_through_launches_seats(self):
         section = runtime_doc_section("roles.md", "## Claude Haiku 5.5")
         self.assertIn('`roles.py show --role "skill tests" --launches-seats`', section)
-        self.assertIn("never cursor", section)
-        self.assertIn("cannot launch seats", section)
-        self.assertIn("sends `target.options` as a JSON string", section)
+        self.assertIn("That form refuses a configured seat that runs on the cursor driver", section)
+        self.assertIn("A configured non-cursor seat is not limited by `--launches-seats`.", section)
         self.assertIn(roles.HAIKU_BRIEF[0], (ROOT / "t3/scripts/roles.py").read_text())
         author = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()
         self.assertIn("--launches-seats", author)
@@ -2350,46 +2002,33 @@ class StalledChildDocTest(unittest.TestCase):
                    if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/overrides" / name).read_text()]
         self.assertEqual(missing, [])
 
-    def test_failure_handling_relaunches_a_usage_limit_on_the_backup_ladder(self):
+    def test_failure_handling_relaunches_a_usage_limit_from_the_backups_key(self):
         section = runtime_section("### Failure handling", "\n### ") + runtime_doc_section("failures.md", "## Usage limit")
         self.assertIn("roles.py backup", section)
         for decision in ("relaunch", "panel", "park", "not-usage-limit"):
             self.assertIn(f"`{decision}`", section)
-        parks = "When every backup family is an author family, the command parks."
-        panel = "For a `verifiers` seat with `review backups` set, the command prints `panel` instead."
         for phrase in (
+            "The candidates are the role's seats in the `backups` key, in order.",
+            "A candidate is skipped when its provider is the failed provider, is already out, is not runnable or not in the catalog, the `exclude` list refuses it, or, for a review role, its model family wrote the diff.",
+            "`review backups` has no backup.",
+            "When no candidate is left, the command parks.",
+            "It prints the original seat when its provider is back, and otherwise the first usable `backups` seat.",
             "The command prints `relaunch`, `panel`, `park`, or `not-usage-limit`.",
-            panel,
+            "For a `verifiers` seat with `review backups` set, the command prints `panel` instead.",
             "a stable `clientRequestId` ending in `-panel-<n>`",
             "Wait until every member is terminal, even after two pass.",
             'runs this command with `--role "review backups"`, which parks it, and it counts as no pass.',
             "A member that fails otherwise respawns once.",
             "Land only if no reviewer reproduces a blocker and at least two of the panel pass.",
             "With `review backups` unset, or fewer than two usable seats, the command prints `park`.",
+            "each code delegate's model",
+            "`--resume` reads no error text.",
+            "roles.py backup --cwd",
+            "```bash",
+            "A panel never seats the failed provider, seats the configured `review backups` seats it keeps, and parks when fewer than two usable seats remain. A panel reports when it drops a seat whose family is already seated.",
         ):
             self.assertIn(phrase, section)
-        self.assertLess(section.index(parks), section.index(panel))
-        self.assertIn("Backup never selects Codex or Cursor.", section)
-        self.assertIn("Codex stays the default reviewer.", section)
-        self.assertIn("A limit on `claudeAgent` parks a worker.", section)
-        self.assertIn("`cursor/claude-opus-5-5`", section)
-        self.assertIn("each code delegate's model", section)
-        self.assertIn("`--resume` reads no error text.", section)
-        self.assertIn("`grok-4.7` on `grok`", section)
-        self.assertIn("--resume", section)
-        self.assertIn("roles.py backup --cwd", section)
-        self.assertIn("```bash", section)
-        self.assertNotIn("A Claude worker parks.", section)
-        self.assertIn("A panel never seats the failed provider, seats the configured `review backups` seats it keeps, and parks when fewer than two usable seats remain. A panel reports when it drops a seat whose family is already seated.", section)
-        sentences = re.split(r"(?<=\.)\s+", section)
-
-        def named_roles(sentence):
-            return {name for name in re.findall(r"`([^`]+)`", sentence) if name in roles.ROLES}
-
-        sonnet = next(sentence for sentence in sentences if "claude-sonnet-5-5" in sentence)
-        reviewers = next(sentence for sentence in sentences if "skipping every author's family" in sentence)
-        self.assertEqual(named_roles(sonnet), roles.LIGHT_ROLES)
-        self.assertEqual(named_roles(reviewers), roles.REVIEW_ROLES)
+        self.assertLess(section.index("The candidates are the role's seats"), section.index("For a `verifiers` seat with"))
         failed = section.split("- A child fails", 1)[1].split("\n- ", 1)[0]
         self.assertIn("When the failure carries a provider error, follow the next bullet before that respawn.", failed)
         self.assertLess(section.index("provider error"), section.index("roles.py backup"))
@@ -2464,8 +2103,7 @@ class SeatLaunchDocTest(unittest.TestCase):
         section = self.runtime.split("## Top-level threads", 1)[1].split("\n## ", 1)[0]
         self.assertIn(
             "`modelSelection` is the seat with `providerInstanceId` renamed to `instanceId`, "
-            "`model` copied, and `options` copied unchanged as the same object, "
-            "including a boolean such as `{\"fastMode\": false}`.",
+            "`model` copied, and `options` copied unchanged as the same object.",
             section,
         )
         self.assertIn('"options": {"effort": "xhigh"}', section)
@@ -2481,84 +2119,37 @@ class SeatLaunchDocTest(unittest.TestCase):
         )
 
 
-class FastGrokDocTest(unittest.TestCase):
-    def test_fast_grok_section_quotes_the_code_rule(self):
+class ExcludedSeatsDocTest(unittest.TestCase):
+    def test_excluded_seats_section_quotes_the_code_rule(self):
         section = runtime_doc_section("roles.md", "## Excluded seats")
-        self.assertIn(roles.EXCLUDED_RULE + ".", section)
+        self.assertIn(roles.EXCLUDE_RULE, section)
         for phrase in (
-            "`grok-4.7-build-fast`",
-            "`grok-build` has no `fast` token",
-            "A pickable model is one that is not excluded",
-            '"fastMode": false',
-            "No mode and no budget sets it to `true`.",
-            "`validate` lists each one and exits 1.",
-            '"seats": "catalog-required"',
-            "Without a catalog, a role whose seats include `inherit`, and the `verifiers` default panel, "
-            'report `"seats": "catalog-required"` when `--parent` names an excluded id.',
+            "`grok-*-fast`",
+            '`{"model": "grok-4.7", "options": {"fastMode": true}}`',
+            "the cursor driver cannot launch seats",
+            "`validate` lists each refused seat and exits 1.",
+            "`show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`",
+            "`inherit replaced by <provider>/<model>`",
         ):
             self.assertIn(phrase, section)
         source = (ROOT / "t3/scripts/roles.py").read_text()
         self.assertIn(roles.HAIKU_BRIEF[0], source)
         self.assertIn(roles.HAIKU_BRIEF[1], source)
 
-    def test_fast_grok_notes_match_roles_py(self):
+    def test_excluded_seat_notes_match_roles_py(self):
         section = runtime_doc_section("roles.md", "## Excluded seats")
         source = (ROOT / "t3/scripts/roles.py").read_text()
-        for phrase in (
-            "inherit replaced by",
-            "inherit made explicit as",
-            "so fastMode stays false",
-            "skipped configured seat",
-            "skipped inherit of",
-            "refusing to write, even with --force",
-        ):
+        for phrase in ("inherit replaced by", "skipped configured seat"):
             self.assertIn(phrase, section)
             self.assertIn(phrase, source)
-
-    def test_no_source_sets_fast_mode_true(self):
-        pattern = re.compile(r'"fastMode":\s*true')
-        retired = (
-            "sets `fastMode` only when",
-            "Light mode never sets `fastMode`",
-            "Add `fastMode` only when",
-        )
-        found = []
-        for path in sorted((ROOT / "t3").rglob("*.md")):
-            for number, line in enumerate(path.read_text().splitlines(), 1):
-                if pattern.search(line) or any(phrase in line for phrase in retired):
-                    found.append(f"{path.relative_to(ROOT)}:{number}")
-        self.assertEqual(found, [])
-
-    def test_roles_sites_say_pickable_not_first_listed(self):
-        roles_text = runtime_section("## Roles")
-        self.assertNotIn("first listed model", roles_text)
-        fallback = runtime_section("### Fallback", "\n### ")
-        self.assertIn(
-            "Use the same provider's first pickable model. When it has none, `show` refuses the seat.",
-            fallback,
-        )
-        for start, end in (
-            ("### Built-in defaults", "\n### "),
-            ("### Fallback", "\n### "),
-            ("## Modes", "\n## "),
-        ):
-            self.assertIn("[Excluded seats](#excluded-seats)", runtime_section(start, end))
-
-    def test_verifiers_skip_an_uninheritable_parent(self):
-        defaults = runtime_section("### Built-in defaults", "### Excluded seats")
-        self.assertIn('A thread on an excluded model gets no `"inherit"` seat', defaults)
-        self.assertIn('`verifiers` is three `"inherit"` seats', defaults)
-
-    def test_modes_never_set_fast_mode_true(self):
-        section = runtime_section("### Resolve and carry the mode", "\n### ")
-        self.assertIn("No mode sets `fastMode` to `true`.", section)
+        self.assertIn("refusing to write, even with --force", source)
 
 
 class SetupFastGrokDocTest(unittest.TestCase):
-    def test_setup_never_writes_a_fast_grok_seat(self):
+    def test_setup_describes_the_exclude_key_for_a_fast_grok_id(self):
         text = (ROOT / "t3/setup.md").read_text()
-        self.assertIn("Never write a fast Grok id such as `grok-4.7-build-fast`", text)
-        self.assertIn("`write` refuses both, even with `--force`, and `validate` reports both.", text)
+        self.assertIn("The `exclude` key refuses a model.", text)
+        self.assertIn('Add an object entry such as `{"model": "grok-4.7-build-fast"}` to refuse a fast Grok id', text)
         self.assertIn("(../pstack-runtime/SKILL.md#excluded-seats)", text)
         self.assertNotIn("Add `fastMode` only when", text)
 

@@ -25,13 +25,13 @@ Infer the need from the message and the conversation. A named situation, such as
 
 Check the state that changes the answer, and mention it only when it does:
 
-- No `.pstack/t3-roles.json`, and no `~/.config/pstack-t3/roles.json` or `$XDG_CONFIG_HOME/pstack-t3/roles.json`, means `$setup-pstack` hasn't run for this user, so every role uses its default model. [Built-in defaults](../pstack-runtime/SKILL.md#built-in-defaults) lists them.
+- No `.pstack/t3-roles.json`, and no `~/.config/pstack-t3/roles.json` or `$XDG_CONFIG_HOME/pstack-t3/roles.json`, means `$setup-pstack` hasn't run for this user, so every role except `review backups` resolves to `inherit` and runs on the chat's model, and `review backups` stays unset. [Built-in defaults](../pstack-runtime/SKILL.md#built-in-defaults) states the rule.
 - No `verify-*` skill or other app harness in the project means agents have no scripted way to drive the app. Mention `$create-verification-skill` when the question is about proving a change works.
 
 When no roles file exists and it matters, ask whether the user wants to pick a model for each role and a reasoning budget now. It matters when the user is new, the question is about setup or cost, or the answer depends on which models run. Ask at most once per chat. If the need is also unclear, ask both questions together. Offer two choices:
 
 - Now: give them `$setup-pstack` to type, and answer their question too.
-- Later: answer their question, and add one line saying every role keeps its default model until they run `$setup-pstack`.
+- Later: answer their question, and add one line saying every role except `review backups` runs on the chat's model until they run `$setup-pstack`, and `review backups` stays unset.
 
 ## Get set up
 

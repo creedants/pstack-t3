@@ -12,7 +12,9 @@ roles.py <command>
 
 Resolve pstack-t3 roles into T3 delegate_task targets.
 
-Roles map a pstack role name to a list of seats. A seat is "inherit" or a target {"providerInstanceId", "model", "options"} drawn from the catalog that T3's orchestrator_capabilities tool returns.
+Roles map a pstack role name to a list of seats. A seat is "inherit" or a target {"providerInstanceId", "model", "options"} drawn from the catalog that T3's orchestrator_capabilities tool returns. An unset role resolves to "inherit", except "review backups", which resolves to "unset".
+
+Two optional keys tune the file. "exclude" is a list of rules that refuse a seat by model-id glob, by declared option, by the provider instance id, by the role name, or by a combination of them. "backups" maps a role to the seats roles.py backup tries, in order, after a usage limit.
 
 `<command>` is one of `show`, `validate`, `write`, `mode`, `check-brief`, `backup`.
 
@@ -70,7 +72,7 @@ roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT]
 | `--project` |  |  |  | write the project file instead of the user file |
 | `--keep` |  |  |  | accepted and ignored |
 | `--replace` |  |  |  | rewrite roles, budget, and mode from the flags and write \<file>.bak first when the file exists |
-| `--force` |  |  |  | write despite the problems validate lists, except an excluded seat |
+| `--force` |  |  |  | write despite the problems validate lists, except a seat the exclude list matches on its own form |
 | `--allow-opencode ALLOW_OPENCODE` (repeatable) |  |  |  | Add this full OpenCode model id to the allow list in the file being written. |
 | `--deny-opencode DENY_OPENCODE` (repeatable) |  |  |  | Remove this full OpenCode model id from the allow list in the file being written. |
 
