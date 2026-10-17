@@ -1,0 +1,2 @@
+- kind polish
+- `fire` refuses a path missing from the checkout with `<path> is not in the checkout. Drop it from --paths`. Two missing paths use `<a> and <b> are not in the checkout. Drop them from --paths`. Three or more use Oxford comma with `are`.

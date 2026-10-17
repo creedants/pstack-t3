@@ -24,6 +24,7 @@ from brigade_lib import seam
 from brigade_lib.layout import _layout, _one
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
+from brigade_lib.tickets import tracked_paths
 
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
 
@@ -236,6 +237,33 @@ def _claim_norm(raw):
     return made
 
 
+def _check_checkout(project_root, raw_list):
+    tracked = tracked_paths(project_root)
+    if tracked is None:
+        raise BrigadeError("could not read the git index")
+    missing = []
+    seen = set()
+    for raw in raw_list:
+        made = _claim_norm(raw)
+        if made == "":
+            continue
+        display = made if made is not None else raw.strip().replace("\\", "/")
+        if not display:
+            continue
+        if made is not None and (made in tracked.files or made in tracked.directories):
+            continue
+        if display not in seen:
+            seen.add(display)
+            missing.append(display)
+    if not missing:
+        return
+    if len(missing) == 1:
+        raise BrigadeError(f"{missing[0]} is not in the checkout. Drop it from --paths")
+    if len(missing) == 2:
+        raise BrigadeError(f"{missing[0]} and {missing[1]} are not in the checkout. Drop them from --paths")
+    raise BrigadeError(f"{', '.join(missing[:-1])}, and {missing[-1]} are not in the checkout. Drop them from --paths")
+
+
 def claim_paths(project_root, paths, branch, doc_item=False):
     if not paths:
         return Claim("", ())
@@ -250,6 +278,7 @@ def claim_paths(project_root, paths, branch, doc_item=False):
         lay = None
     if lay is None:
         return Claim(with_fragment(paths, branch), ())
+    _check_checkout(project_root, raw_list)
     seen = set()
     for raw in raw_list:
         made = _claim_norm(raw)
