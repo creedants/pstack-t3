@@ -2013,6 +2013,7 @@ def framed(page, limit):
             if row.earlier:
                 kept.add((at, index))
                 headed.add(at)
+    left -= GROUP_PX * len(headed)
     for at, group in enumerate(page.groups):
         visible = [index for index, row in enumerate(group.rows) if not row.earlier]
         ranked = sorted(visible, key=lambda index: (tier(group.rows[index]), index))

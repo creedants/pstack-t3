@@ -2211,6 +2211,16 @@ class FrameTest(OutputCase):
         self.assertEqual(cut.hidden, MOD["Hidden"](dropped_items=1, dropped_agents=2, cut_agents=1))
         self.assertEqual((MOD["height"](cut), cut.fold), (607, 0))
 
+    def test_framed_charges_the_heading_of_a_group_that_holds_an_earlier_row_so_the_cut_fits_the_limit(self):
+        built = page(
+            group(item("A"), replace(row("a0"), earlier=True), row("a1"), row("a2")),
+            group(item("B"), replace(row("b0"), earlier=True), row("b1"), row("b2")),
+            group(item("C"), row("c1"), row("c2"), row("c3")),
+            group(item("D"), row("d1"), row("d2"), row("d3")))
+        self.assertEqual(MOD["height"](built), 713)
+        # Deleting `left -= GROUP_PX * len(headed)` makes the cut 715 against 712.
+        self.assertLessEqual(MOD["height"](MOD["framed"](built, 712)), 712)
+
     def test_the_frame_keeps_room_for_each_strip_group(self):
         goal = MOD["Goal"]("G1", "Ship")
         chip = MOD["Item"]("D1", "one", "working", "go", "", True, "", 1, "feature", "G1")
