@@ -1,5 +1,5 @@
 - kind polish
-- `docs/capacity.md`, `docs/live-runs.md`, `docs/token-usage.md`, and `docs/multi-coordinator.md` carry a provenance label on the sections about the pstack-t3 maintainers' own machine, store, and runs, and say what to measure or run on your own setup instead.
+- `docs/capacity.md`, `docs/live-runs.md`, `docs/token-usage.md`, and `docs/multi-coordinator.md` mark the pstack-t3 maintainers' own machine, store, and runs with a provenance label, and say what to measure or run on your own setup instead.
 - `docs/multi-coordinator.md` no longer tells a coordinator to delete a standing order that restates the landing mode. It reports the duplicate, says the landing contract wins, and leaves the rule unless the user says to remove it.
 - `docs/multi-coordinator.md` attributes the 40 idle agents and 5.9 GiB of free memory to the `capacity.md` host.
 - `t3/added/pstack-author-skill/SKILL.md` gates editing `t3/overrides` and running `scripts/build.py` on working inside a pstack-t3 checkout, and names the project and personal paths for a skill written outside it.

@@ -4,7 +4,7 @@ This is the design for running two or more brigade coordinators on one repositor
 
 In this document a coordinator is one standing coordinator thread and its store directory, and a work item is one unit of work handed to a worker. brigade's commands and files use kitchen names, and this document keeps those names only for commands and files, such as `fire`, `ticket add`, `dishes.tsv`, and `restaurant.json`. Two coordinators are siblings when their `restaurant.json` files name the same `projectRoot`.
 
-**Sample records.** The design below applies to any repository. The counts, caps, and lease times quoted in [Method](#method) and [What happens today](#what-happens-today) come from the pstack-t3 maintainers' own coordinator store and their own runs. They are not facts about your repository. Measure those counts in your own store and your own run before you rely on them.
+**Sample records.** The design below applies to any repository. The counts, caps, and lease times quoted in [Method](#method) and [What happens today](#what-happens-today) come from the pstack-t3 maintainers' own setup, not yours. They are not facts about your repository. Measure those counts in your own store and your own run before you rely on them.
 
 ## Summary
 
@@ -27,7 +27,7 @@ Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. Changes 1 to 11 
 
 ## Method
 
-**Sample record.** The counts below come from the pstack-t3 maintainers' own coordinator store, not yours. Measure your own work items, leases, and hold times.
+**Sample record.** The counts below come from the pstack-t3 maintainers' own store and landing database, not yours. Measure your own work items and leases.
 
 Two sources fed the audit.
 
