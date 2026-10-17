@@ -1658,6 +1658,8 @@ STUB = """
 const nodes = [];
 const make = tag => ({
   tagName: tag.toUpperCase(), kids: [], style: {}, attrs: {}, className: '', own: '',
+  get id() { return this.attrs.id || ''; },
+  set id(value) { this.attrs.id = String(value); },
   appendChild(kid) { this.kids.push(kid); return kid; },
   setAttribute(name, value) { this.attrs[name] = String(value); },
   getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; },
@@ -1692,6 +1694,7 @@ REPORT = """
 console.log(JSON.stringify({
   texts: nodes.map(node => node.own).filter(Boolean),
   links: nodes.filter(node => node.href).map(node => [node.tagName, node.href, node.target, node.rel]),
+  ids: nodes.map(node => node.attrs.id).filter(Boolean),
   classes: nodes.map(node => node.className),
   titles: nodes.filter(node => node.title).map(node => node.title),
   bars: nodes.filter(node => node.className.startsWith('b ')).map(node => [node.style.left, node.style.width]),
@@ -2043,10 +2046,10 @@ class EmitTest(OutputCase):
                 self.assertEqual(MOD["render_text"](drawn_page, tagged).split("\n"), [tagged(line) for line in lines])
                 self.assertEqual((lines[0][:19], len(lines) > 2), ("Agent activity for ", True))
 
-    def test_each_word_of_the_named_page_is_in_the_document_and_each_but_the_coordinators_model_is_in_the_text(self):
+    def test_each_word_of_the_named_page_is_in_the_document_and_each_but_a_running_or_queued_agents_model_is_in_the_text(self):
         fixture = named(self.fixture).write()
         document, text = self.document(), self.out("--text")
-        self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD"]))
+        self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD", "FIRSTWORD", "SECONDWORD", "THIRDWORD"]))
 
     def test_run_gives_both_forms_the_filter_of_the_run(self):
         """ODD, and the store's directory straight after a letter, are private text only to a filter that knows what this run read."""
@@ -2068,8 +2071,8 @@ class EmitTest(OutputCase):
         self.assertEqual([text for text in drawn_strings if any(word in text for word in WORDS) and text not in data], [])
         self.assertEqual([word for word in WORDS if not any(word in text for text in drawn_strings)], [])
         self.assertEqual(built["texts"][built["texts"].index("Running now") + 1:built["texts"].index("Timeline")], [
-            "IDWORD", "worker", "worker-FIRSTWORD", "40m", "IDWORD", "PARENTWORD helper", "child-SECONDWORD", " · under ", "worker", "30m",
-            "Queued", "IDWORD", "LABELWORD reader", "leaf-THIRDWORD", " · under ", "PARENTWORD helper", "20m"])
+            "IDWORD", "worker", "40m", "IDWORD", "PARENTWORD helper", " · under ", "worker", "30m",
+            "Queued", "IDWORD", "LABELWORD reader", " · under ", "PARENTWORD helper", "20m"])
 
 
 class SizeTest(OutputCase):
@@ -2296,9 +2299,9 @@ class FrameTest(OutputCase):
         for number in range(20):
             fixture.unit(f"D{number}", "in-progress", "x" * 340, thread=worker(number + 1))
             fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
-        fitted, document = MOD["fit"](page_of(fixture), 15999, CLEAN, 1960)
-        # The reclaimed cut of twenty groups renders at 16000 bytes, one over the 15999-byte budget, so fit keeps the cut before reclaim.
-        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15695))
+        fitted, document = MOD["fit"](page_of(fixture), 16135, CLEAN, 1960)
+        # The reclaimed cut of twenty groups renders at 16136 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
+        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15831))
 
 
 class TextTest(OutputCase):
@@ -2308,8 +2311,8 @@ class TextTest(OutputCase):
             "Agent activity for kit, last 3h",
             "2 running now, 2 agents, 4 sub-agents, 1 failed",
             "Running now",
-            "  D7 worker   model-a   running for 42m",
-            "  D7 architect runner 2   model-b   running for 6m   under worker",
+            "  D7 worker   running for 42m",
+            "  D7 architect runner 2   running for 6m   under worker",
             "Work items",
             f"  D7   in review   Agent activity page   1 agent, 3 sub-agents, 74m at work   {PR7}",
             "  D5   merged   Old work   1 agent, 5m at work",
@@ -2363,6 +2366,11 @@ class TextTest(OutputCase):
         data = data_of(self.document("--max-bytes", "16000"))
         self.assertEqual((data["I"], [group[0] for group in data["G"]], data["N"][1]), (
             [["D12345678…", "same", "working", "go", "", 1]] * 8, [0, 1, 2, 3, 4, 5], "2 more work items in flight are not listed."))
+
+    def test_a_running_line_names_no_model_of_the_store(self):
+        failed_child(self.fixture).write()
+        lines = self.out("--text").split("\n")
+        self.assertEqual([line for line in lines[lines.index("Running now") + 1:lines.index("Work items")] if "model-a" in line or "model-b" in line], [])
 
     def render(self, build):
         build(self.fixture).write()
@@ -2464,10 +2472,10 @@ class RendererTest(OutputCase):
             self.assertIn(text, texts)
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
         self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")],
-                         ["D7", "worker", "model-a", "42m", "D7", "architect runner 2", "model-b", " · under ", "worker", "6m"])
+                         ["D7", "worker", "42m", "D7", "architect runner 2", " · under ", "worker", "6m"])
         self.assertRegex(texts[-5], r"^As of \d+:\d\d [AP]M for $")
         self.assertEqual(texts[-4:-2], ["kit", ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running intervals. Outlined bars include queued intervals. Faded bars include stopped intervals."])
-        self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", PR7, "_blank", "noopener"]])
+        self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", "#g1", None, None]])
         classes = built["classes"]
         self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "mark pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
                          [1, 1, 2, 1, 3, 2, 1, 3, 2, 1, 1])
@@ -2549,7 +2557,7 @@ class RendererTest(OutputCase):
         built = self.render(self.document())
         texts, classes = built["texts"], built["classes"]
         self.assertEqual([text for text in texts if text in ("Running now", "Queued", "Timeline")], ["Queued", "Timeline"])
-        self.assertEqual(texts[texts.index("Queued") + 1:texts.index("Timeline")], ["D7", "worker", "model-a", "5m", "D7", "spec_review", "model-a", " · under ", "worker", "2m"])
+        self.assertEqual(texts[texts.index("Queued") + 1:texts.index("Timeline")], ["D7", "worker", "5m", "D7", "spec_review", " · under ", "worker", "2m"])
         self.assertEqual([classes.count(name) for name in ("mark", "mark pulse", "b q", "b run", "stat live")], [2, 0, 2, 0, 1])
         self.assertEqual((texts[0], built["titles"][3:]), ("0", ["queued · 0s", "worker", "model-a", "queued · 0s", "spec_review", "model-a"]))
 
@@ -2579,7 +2587,7 @@ class RendererTest(OutputCase):
         one_running(self.fixture).write()
         texts = self.render(self.document(), spoil=True)["texts"]
         self.assertEqual(texts[0], "This copy differs from what the tool wrote. Run the command again.")
-        self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")], ["D7", "worker", "model-a", "42m"])
+        self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")], ["D7", "worker", "42m"])
 
     def test_renderer_draws_a_folded_page_and_an_empty_one_with_no_error(self):
         for build, heading in ((busy, "Running now"), (empty, "Timeline")):
@@ -2587,6 +2595,40 @@ class RendererTest(OutputCase):
                 fixture = self.fixture = Fixture(self.fixture.root / build.__name__)
                 build(fixture).write()
                 self.assertIn(heading, self.render(self.document())["texts"])
+
+    def test_an_item_with_a_timeline_group_keeps_no_summary_in_the_in_flight_strip_and_links_its_id_to_the_group(self):
+        failed_child(self.fixture).write()
+        document = self.document()
+        built = self.render(document)
+        data = data_of(document)
+        at = [index for index, item in enumerate(data["I"]) if item[0] == "D7"][0]
+        self.assertIn("g" + str(at), built["ids"])
+        self.assertIn(["A", "#g" + str(at), None, None], built["links"])
+        # The Timeline header is the only place D7's summary stays; its anchored chip drops it.
+        self.assertEqual(built["texts"].count("Agent activity page"), 1)
+
+    def test_running_now_names_no_model_of_the_store(self):
+        failed_child(self.fixture).write()
+        document = self.document()
+        built = self.render(document)
+        open_list = built["texts"][built["texts"].index("Running now") + 1:built["texts"].index("Timeline")]
+        self.assertEqual([text for text in open_list if text in set(data_of(document)["M"])], [])
+
+    def test_the_timeline_draws_the_same_for_a_store_whose_goal_name_changes(self):
+        fixture = one_running(self.fixture).write()
+        write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open", "First goal", "purpose", "done", "1", "")])
+        widen_items(fixture, {"D7": ("feature", "G1")})
+        first = self.render(self.document())
+        write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open", "Second goal", "purpose", "done", "1", "")])
+        second = self.render(self.document())
+
+        def timeline(built):
+            texts = built["texts"]
+            end = next(index for index, text in enumerate(texts) if text.startswith("As of "))
+            return texts[texts.index("Timeline"):end]
+
+        self.assertNotIn("First goal", timeline(first))
+        self.assertEqual(timeline(first), timeline(second))
 
 def skill_section():
     return ("\n" + VIEWS.read_text()).split("\n## Agent activity\n", 1)[1].split("\n## ", 1)[0]
@@ -2795,7 +2837,7 @@ class PrivacyTest(OutputCase):
                 data = data_of(document)
                 self.assertEqual((data["c"], [item[:2] for item in data["I"] if "left" in item[0]], [line[1] for index, lines in data["G"] for line in lines if "left" in data["I"][index][0]]),
                                  ("kit", [["left_homemarker", "see now"]], ["worker", "right_homemarker"]))
-                self.assertEqual(text.split("\n")[4:6], ["  left_homemarker worker   left_homemarker   running for 9m", "  right_homemarker   running for 8m   under worker"])
+                self.assertEqual(text.split("\n")[4:6], ["  left_homemarker worker   running for 9m", "  running for 8m   under worker"])
                 self.assertIn("  left_homemarker   working   see now   1 agent, 1 sub-agent, 17m at work", text.split("\n"))
 
     def test_out_file_named_in_a_summary_is_not_in_the_file_it_names(self):
@@ -2836,11 +2878,11 @@ class OrdinaryWordsTest(OutputCase):
             "Agent activity for private auditor, last 3h",
             "3 running now, 2 agents, 4 sub-agents, 1 failed",
             "Running now",
-            "  code src   review   running for 10m   under worker",
-            "  queue worker   code   running for 30m",
-            "  queue queue   queue   running for 20m",
+            "  code src   running for 10m   under worker",
+            "  queue worker   running for 30m",
+            "  queue queue   running for 20m",
             "Queued",
-            "  451237 review   src   queued for 5m",
+            "  451237 review   queued for 5m",
             "Work items",
             "  451237   passed review   451237 private auditor   1 sub-agent, 0s at work",
             "  code   in review   code review of the queue   1 agent, 2 sub-agents, 21m at work",
@@ -2869,8 +2911,8 @@ class OrdinaryWordsTest(OutputCase):
         fixture = ordinary(self.fixture).write()
         texts = RendererTest.render(self, self.document())["texts"]
         self.assertEqual(texts[texts.index("Running now") + 1:texts.index("Timeline")], [
-            "code", "src", "review", " · under ", "worker", "10m", "queue", "worker", "code", "30m", "queue", "queue", "queue", "20m",
-            "Queued", "451237", "review", "src", "5m"])
+            "code", "src", " · under ", "worker", "10m", "queue", "worker", "30m", "queue", "queue", "20m",
+            "Queued", "451237", "review", "5m"])
 
     def test_identifier_that_is_an_ordinary_word_is_not_in_the_filter_and_every_other_identifier_of_the_fixture_is(self):
         fixture = ordinary(self.fixture)
@@ -2915,13 +2957,13 @@ class SlashCommandTest(OutputCase):
             ["/code-review", ["worker", "/code-review", "Run /review then /loop and /code-review"]], ["/loop", ["worker", "/loop"]], ["/review", ["worker", "/review"]]])
         self.assertEqual(text[2:10], [
             "Running now",
-            "  /code-review worker   model-a   running for 37m",
-            "  /code-review /code-review   model-a   running for 17m   under worker",
-            "  /code-review Run /review then /loop and /code-review   model-a   running for 8m   under worker",
-            "  /loop worker   model-a   running for 38m",
-            "  /loop /loop   model-a   running for 18m   under worker",
-            "  /review worker   model-a   running for 39m",
-            "  /review /review   model-a   running for 19m   under worker"])
+            "  /code-review worker   running for 37m",
+            "  /code-review /code-review   running for 17m   under worker",
+            "  /code-review Run /review then /loop and /code-review   running for 8m   under worker",
+            "  /loop worker   running for 38m",
+            "  /loop /loop   running for 18m   under worker",
+            "  /review worker   running for 39m",
+            "  /review /review   running for 19m   under worker"])
         self.assertEqual([line.split("   ")[:3] for line in text[text.index("Work items") + 1:text.index("Work items") + 5]], [
             ["  /code-review", "working", "Run /code-review on the queue"], ["  /loop", "working", "Run /loop on the queue"], ["  /review", "working", "Run /review on the queue"],
             ["  D9", "in review", "Run /review then /loop and /code-review today"]])
@@ -2954,7 +2996,7 @@ class SlashCommandTest(OutputCase):
         data = data_of(document)
         self.assertEqual(["checkoutmarker" in output.lower() for output in (document, text)], [False, False])
         self.assertEqual((sorted(item[:2] for item in data["I"]), [line[1] for line in data["G"][0][1]]), ([["D7", "Run /review in and and today"], ["work item", "second item"]], ["worker", "helper 1", "/loop"]))
-        self.assertIn("  D7 /loop   model-a   running for 10m   under worker", text.split("\n"))
+        self.assertIn("  D7 /loop   running for 10m   under worker", text.split("\n"))
         self.assertIn("  D7   working   Run /review in and and today   1 agent, 2 sub-agents, ", text)
 
     def test_filter_of_a_run_whose_store_directory_and_project_root_are_one_segment_removes_both_and_keeps_a_slash_command(self):
@@ -2989,7 +3031,7 @@ class PlantedTest(OutputCase):
         self.assertEqual([text for text in (*written, *lines) if value.lower() in text.lower()], [])
         self.assertEqual((data["c"], data["I"][0][:2], data["M"], data["G"][1][1][0][1]), ("kit", ["D7", "see now"], ["model-a", "m"], "helper second"))
         self.assertEqual((lines[0], [line for line in lines if line.startswith(("  D7 ", "  helper second "))]), (
-            "Agent activity for kit, last 3h", ["  D7 worker   m   running for 10m", "  helper second   model-a   running for 9m", "  D7   working   see now   1 agent, 10m at work"]))
+            "Agent activity for kit, last 3h", ["  D7 worker   running for 10m", "  helper second   running for 9m", "  D7   working   see now   1 agent, 10m at work"]))
         return data
 
     def test_whole_request_name_of_a_delegated_task_is_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_pull_request_link_and_another_rows_written_title_that_hold_it_are_not_shown(self):
@@ -3015,7 +3057,7 @@ class PlantedTest(OutputCase):
         self.assertEqual((data["I"][0][:2], [line[1] for line in data["G"][1][1]]), (
             ["D1", "Run /code-review on the queue for kit-d7-audit-task-2"], ["code review", "queue", "d7 audit task", "/code-review kit-d7-audit-task-2"]))
         self.assertEqual([line for line in lines if "queue" in line or "task-2" in line], [
-            "  queue   model-a   running for 8m", "  /code-review kit-d7-audit-task-2   model-a   running for 5m",
+            "  queue   running for 8m", "  /code-review kit-d7-audit-task-2   running for 5m",
             "  D1   working   Run /code-review on the queue for kit-d7-audit-task-2   1 agent, 10m at work"])
 
     def test_absolute_path_whose_first_segment_starts_with_a_hyphen_a_plus_sign_or_a_second_slash_and_a_recorded_project_root_of_2_or_3_characters_are_removed_from_the_stores_name_a_work_item_id_a_summary_and_a_model_and_a_written_title_that_holds_one_is_not_shown(self):
@@ -3060,7 +3102,7 @@ class PlantedTest(OutputCase):
         self.assertEqual((data["c"], data["I"][0][:2], data["M"], [line[1] for line in data["G"][1][1]]), (
             "kit xa-_", ["D7 a-_b", "see xa-_ and a-_2 with a-__ or pre-a-_ now"], ["model-a", "m a-_b"], ["read xa-_y here", "a _"]))
         self.assertEqual((lines[0], [line for line in lines if line.startswith(("  D7 ", "  read "))]), (
-            "Agent activity for kit xa-_, last 3h", ["  D7 a-_b worker   m a-_b   running for 10m", "  read xa-_y here   model-a   running for 9m",
+            "Agent activity for kit xa-_, last 3h", ["  D7 a-_b worker   running for 10m", "  read xa-_y here   running for 9m",
                                                     "  D7 a-_b   working   see xa-_ and a-_2 with a-__ or pre-a-_ now   1 agent, 10m at work"]))
 
 
@@ -3384,7 +3426,7 @@ class QueuedTest(OutputCase):
                     "Agent activity for kit, last 3h",
                     "0 running now, 1 agent, 0 sub-agents, 0 failed",
                     "Queued",
-                    "  D7 worker   model-a   queued for 5m",
+                    "  D7 worker   queued for 5m",
                     "Work items",
                     "  D7   working   Activity page   1 agent, 0s at work",
                     ""]))
@@ -3396,7 +3438,7 @@ class QueuedTest(OutputCase):
         fixture.turns[1:] = [(worker(1), "running", fixture.stamp(10), None), (worker(1), "queued", fixture.stamp(5), None)]
         fixture.write()
         lines = self.out("--text").split("\n")
-        self.assertEqual(lines[1:5], ["1 running now, 1 agent, 0 sub-agents, 0 failed", "Running now", "  D7 worker   model-a   running for 10m", "Work items"])
+        self.assertEqual(lines[1:5], ["1 running now, 1 agent, 0 sub-agents, 0 failed", "Running now", "  D7 worker   running for 10m", "Work items"])
         data = data_of(self.document())
         self.assertEqual((data["n"], data["G"][0][1][0][4:]), ([1, 1, 0, 0], [0, "10m", [944, 56, 1, 972, 28, 5], 1, "10m"]))
 
@@ -3406,8 +3448,8 @@ class QueuedTest(OutputCase):
         fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("queued", 2, None))
         fixture.write()
         lines = self.out("--text").split("\n")
-        self.assertEqual(lines[1:6], ["1 running now, 1 agent, 1 sub-agent, 0 failed", "Running now", "  D7 worker   model-a   running for 5m", "Queued",
-                                      "  D7 spec_review   model-a   queued for 2m   under worker"])
+        self.assertEqual(lines[1:6], ["1 running now, 1 agent, 1 sub-agent, 0 failed", "Running now", "  D7 worker   running for 5m", "Queued",
+                                      "  D7 spec_review   queued for 2m   under worker"])
 
 
 class BudgetTest(OutputCase):
@@ -3437,12 +3479,12 @@ class BudgetTest(OutputCase):
         under = fixture.stdout_bytes("--text", "--max-bytes", str(len(whole) - 1))
         self.assertLess(len(under), 16000)
         self.assertLessEqual(len(fixture.stdout_bytes("--text")), 16000)
-        self.assertEqual(len(whole), 125520)
+        self.assertEqual(len(whole), 125510)
         self.assertEqual(under.decode().split("\n"), [
             "Agent activity for name name name name name name nam…, last 3h",
             "1 running now, 1 agent, 1 sub-agent, 1 failed",
             "Running now",
-            "  D7 worker   model-a   running for 42m",
+            "  D7 worker   running for 42m",
             "Work items",
             "  D7   working   word word word word word word wor…   1 agent, 1 sub-agent, 73m at work",
             "  D6   landing   Queue fix   no activity in this window   " + PR6,
@@ -3519,12 +3561,12 @@ class BudgetTest(OutputCase):
         whole = data_of(self.document("--max-bytes", "500000"))
         self.assertEqual(([item[4] for item in whole["I"] if not item[4]], [note for note in whole["N"] if "pull request" in note]), ([], []))
 
-    def test_text_form_of_a_page_with_a_30000_character_model_of_m_and_request_name_helper_task_is_125520_bytes_within_2_seconds(self):
+    def test_text_form_of_a_page_with_a_30000_character_model_of_m_and_request_name_helper_task_is_125510_bytes_within_2_seconds(self):
         fixture = self.long_values()
         started = time.perf_counter()
         whole = fixture.stdout_bytes("--text", "--max-bytes", "500000")
         elapsed = time.perf_counter() - started
-        self.assertEqual(len(whole), 125520)
+        self.assertEqual(len(whole), 125510)
         self.assertNotIn(b"helper-task", whole)
         self.assertLess(elapsed, 2.0, elapsed)
 
@@ -3559,7 +3601,7 @@ eNrEvet220iSMPifT4FmT7cIG6RuLpdLNl2jslVlTduSW5L7RrNpiAQljEmCDYCW1SrNmcf4vnN2/+4r
 
 
 class PriorPageTest(OutputCase):
-    def test_a_store_from_before_kinds_matches_the_old_page(self):
+    def test_a_store_from_before_kinds_keeps_the_prior_data_payload_and_keeps_no_unplaceable_labels(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         script = Path(directory.name) / "activity.py"
@@ -3567,8 +3609,10 @@ class PriorPageTest(OutputCase):
         fixture = one_running(self.fixture).write()
         self.assertEqual([len(line.split("\t")) for line in (fixture.store / "dishes.tsv").read_text().splitlines()], [15, 15, 15])
         self.assertFalse((fixture.store / "goals.tsv").exists())
-        for args in ((), ("--text",)):
-            self.assertEqual(fixture.stdout_bytes(*args), frozen_bytes(script, fixture, *args))
+        # Running now no longer names the model, so the two documents differ there. The data element is what the whole
+        # page is drawn from, and a store from before kinds draws the same one as the prior build.
+        html = fixture.stdout_bytes()
+        self.assertEqual(DATA.search(html.decode()).group(1), DATA.search(frozen_bytes(script, fixture).decode()).group(1))
 
         second = one_running(Fixture(self.root / "outside")).write()
         (second.store / "goals.tsv").write_text(
@@ -3578,7 +3622,7 @@ class PriorPageTest(OutputCase):
         header, *rows = table.read_text().splitlines()
         table.write_text("\n".join([header, *("\t".join([row, "nope", "G9"]) for row in rows)]) + "\n")
         html, text = second.stdout_bytes(), second.stdout_bytes("--text")
-        self.assertEqual((html, text), (frozen_bytes(script, second), frozen_bytes(script, second, "--text")))
+        self.assertEqual(DATA.search(html.decode()).group(1), DATA.search(frozen_bytes(script, second).decode()).group(1))
         for output in (html, text):
             self.assertNotIn(b"Unassigned", output)
             self.assertNotIn(b"Unused goal name", output)
@@ -3666,15 +3710,12 @@ class GoalStripTest(OutputCase):
         self.assertEqual(seen, [0, 1, 2, 3, 4])
         lines = text.splitlines()
         self.assertEqual(lines[lines.index("Work items") + 1:lines.index("Notes")], [
-            "  Ship the parser   1 working",
-            "  Ship the parser",
+            "  Ship the parser · 1 working",
             "    D1   working   Parser work   no activity in this window",
-            "  Retire the queue   2 landing",
-            "  Retire the queue",
+            "  Retire the queue · 2 landing",
             "    D2   landing   Queue one   no activity in this window",
             "    D3   landing   Queue two   no activity in this window",
-            "  Unassigned   1 in review, 1 blocked",
-            "  Unassigned",
+            "  Unassigned · 1 in review, 1 blocked",
             "    D4   blocked   Loose one   no activity in this window",
             "    D5   in review   Loose two   no activity in this window",
         ])
@@ -3685,27 +3726,36 @@ class GoalStripTest(OutputCase):
             self.assertNotIn(absent, html)
             self.assertNotIn(absent, text)
         drawn = painted(self, html)["texts"]
-        self.assertEqual(drawn[-22:], [
-            "Ship the parser · 1 working", "Ship the parser", "D1", "Parser work", "working",
-            "Retire the queue · 2 landing", "Retire the queue", "D2", "Queue one", "landing", "D3", "Queue two", "landing",
-            "Unassigned · 1 in review, 1 blocked", "Unassigned", "D4", "Loose one", "blocked", "D5", "Loose two", "in review",
+        self.assertEqual(drawn[-19:], [
+            "Ship the parser · 1 working", "D1", "Parser work", "working",
+            "Retire the queue · 2 landing", "D2", "Queue one", "landing", "D3", "Queue two", "landing",
+            "Unassigned · 1 in review, 1 blocked", "D4", "Loose one", "blocked", "D5", "Loose two", "in review",
             "Work items in flight",
         ])
         for ident in ("D1", "D2", "D3", "D4", "D5"):
             self.assertEqual(drawn.count(ident), 1)
 
+    def test_a_goal_name_is_printed_once_in_the_work_items_in_flight_section(self):
+        fixture = one_running(self.fixture).write()
+        write_goals(fixture, [("G1", "2026-10-10T11:00:00.000Z", "open", "Ship the parser", "purpose", "done", "1", "")])
+        widen_items(fixture, {"D7": ("feature", "G1")})
+        html, text = self.document(), self.out("--text")
+        drawn = painted(self, html)["texts"]
+        self.assertEqual([part for part in drawn if "Ship the parser" in part], ["Ship the parser · 1 working"])
+        self.assertEqual([line for line in text.splitlines() if "Ship the parser" in line], ["  Ship the parser · 1 working"])
+
     def test_a_kind_outside_the_five_shows_no_tag(self):
         fixture = one_running(self.fixture).write()
-        widen_items(fixture, {"D7": ("feature", ""), "D6": ("nope", "")})
+        widen_items(fixture, {"D7": ("nope", ""), "D6": ("feature", "")})
         html, text = self.document(), self.out("--text")
         self.assertNotIn("nope", html)
         self.assertNotIn("nope", text)
         data = data_of(html)
-        self.assertEqual([(item[0], item[6]) for item in data["I"]], [("D6", ""), ("D7", "feature")])
+        self.assertEqual([(item[0], item[6]) for item in data["I"]], [("D6", "feature"), ("D7", "")])
         item_lines = [line for line in text.splitlines() if "   D6   " in line or "   D7   " in line]
         self.assertEqual(item_lines, [
-            "    feature   D7   working   Agent activity page   1 agent, 63m at work   " + PR7,
-            "    D6   landing   Queue fix   no activity in this window   " + PR6,
+            "    D7   working   Agent activity page   1 agent, 63m at work   " + PR7,
+            "    feature   D6   landing   Queue fix   no activity in this window   " + PR6,
         ])
         drawn = painted(self, html)["texts"]
         self.assertEqual(drawn.count("feature"), 1)
@@ -3732,8 +3782,7 @@ class GoalStripTest(OutputCase):
         widen_items(fixture, {"D1": ("feature", "G1")})
         lines = self.out("--text").splitlines()
         self.assertEqual(lines[lines.index("Work items") + 1:], [
-            "  Ship the parser   1 merged",
-            "  Ship the parser",
+            "  Ship the parser · 1 merged",
             "    feature   D1   merged   Finished parser   1 agent, 10m at work",
         ])
         html = self.document()
@@ -3753,11 +3802,9 @@ class GoalStripTest(OutputCase):
         widen_items(fixture, {"D1": ("feature", "G1")})
         lines = self.out("--text").splitlines()
         self.assertEqual(lines[lines.index("Work items") + 1:], [
-            "  Ship the parser   1 merged",
-            "  Ship the parser",
+            "  Ship the parser · 1 merged",
             "    feature   D1   merged   Finished parser   1 agent, 10m at work",
-            "  Unassigned   1 working",
-            "  Unassigned",
+            "  Unassigned · 1 working",
             "    D2   working   Open shelf   no activity in this window",
         ])
         html = self.document()
@@ -3777,7 +3824,8 @@ class LedgerTest(OutputCase):
         self.assertEqual(fixture.stdout_bytes("--text"), text)
         for document in (absent, present):
             self.assertNotIn(b".ldg", document)
-            self.assertNotIn(b"D.L", document)
+            # RENDERER reads D.L to anchor a chip, so the ledger hook is the token that must be absent.
+            self.assertNotIn(b"byCurrent", document)
 
     def test_timeline_header_wraps_its_attempt_lines_instead_of_squeezing_the_id_and_title_to_no_width(self):
         """The attempt block's 100% basis fills the header's line, so the header needs a wrap to give the id, title, and chip a line of their own."""
@@ -3855,18 +3903,18 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes()
         text_bytes = fixture.stdout_bytes("--text")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (15974, 417))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (15988, 407))
         self.assertLessEqual(len(html_bytes), 16000)
         self.assertLessEqual(len(text_bytes), 16000)
         html, text = self.document(), self.out("--text")
         self.assertEqual(data_of(html)["N"], [
-            "411 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "410 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
         self.assertEqual(summary, "attempts 1-499: 499 workers, all open")
         # The byte cut drops the oldest attempt lines, so the folded payload keeps the newest of its own lines.
-        self.assertEqual(payload, [phrase(number) for number in range(412, 500)])
+        self.assertEqual(payload, [phrase(number) for number in range(411, 500)])
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
@@ -3882,16 +3930,16 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes("--max-bytes", "20000")
         text_bytes = fixture.stdout_bytes("--text", "--max-bytes", "20000")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (19968, 417))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (19982, 407))
         self.assertLessEqual(len(html_bytes), 20000)
         self.assertLessEqual(len(text_bytes), 20000)
         html, text = self.document("--max-bytes", "20000"), self.out("--text", "--max-bytes", "20000")
         self.assertEqual(data_of(html)["N"], [
-            "326 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "325 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
-        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(327, 500)]))
+        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(326, 500)]))
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
@@ -4045,7 +4093,7 @@ class LedgerTest(OutputCase):
         lines = self.out("--text").split("\n")
         at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
         self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
-        self.assertIn("  D7 earlier worker   model-a   running for ", "\n".join(lines))
+        self.assertIn("  D7 earlier worker   running for ", "\n".join(lines))
         document = self.document()
         data = data_of(document)
         self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
