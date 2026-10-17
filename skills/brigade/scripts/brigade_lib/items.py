@@ -318,7 +318,8 @@ def _can_cover_catalog(parts, catalog):
 # The catalog is the store's sharedDocs, so no path is built into the tool.
 # The changelog fragment that with fragment appends is not part of the check.
 # When git ls files fails, every catalog file entry and file directory prefix still matches by prefix.
-# When git ls files fails, a lease path that is exactly one skill directory counts as that path plus slash SKILL dot md.
+# When git ls files fails, a lease path that is a direct child of a skill root counts as that path plus slash SKILL dot md.
+# When git ls files fails, a lease path equal to a skill root counts as that root with trailing slash.
 # When git ls files fails, a wider path that covers a skill root counts as that root with trailing slash.
 # When git ls files fails, a path inside a file directory prefix or a wider path that covers it counts as that prefix with trailing slash.
 def _walk_opaque(directory, prefix):
