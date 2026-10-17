@@ -22,7 +22,7 @@ The roles file may carry `"exclude"`, a list of rules that refuse a seat. An ent
 
 A seat the exclude list refuses is refused in each place a seat is chosen: a configured role seat, a backup candidate, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
 
-- `show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`. When no configured seat is left, every other role resolves to `"inherit"`, settled per the next bullet. A `review backups` role with no configured seat left reports `"seats": []` with a catalog.
+- `show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`. A role other than `review backups` that is left with no configured seat resolves to `"inherit"`, settled per the next bullet. A `review backups` role with no configured seat left reports `"seats": []` with a catalog.
 - An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the list allows, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
 - `roles.py backup` skips a refused backup seat.
 - `validate` lists each refused seat and exits 1. `write` refuses a seat the rule matches on its own form, even with `--force`.

@@ -30,7 +30,7 @@ pstack never hard-codes a model. Each step names a role, and `roles.py` resolves
 
 | Role kind | Unset behavior |
 | --- | --- |
-| Every role except `review backups` (`bug-fix`, `judgment and prose`, `swarm workers`, `skill tests`, `verifiers`, `arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers`, ...) | `inherit`, so the child runs on this thread's model, unless the `exclude` list refuses that seat and the role takes the replacement model. |
+| Every role except `review backups` (`bug-fix`, `judgment and prose`, `swarm workers`, `skill tests`, `verifiers`, `arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers`, ...) | `inherit`, so the child runs on this thread's model, unless the `exclude` list refuses that seat and the role takes the replacement model or is refused. |
 | `review backups` | `unset`. Set it to let `roles.py backup` seat a review panel when a verifier's backups are out. Unset, a verifier parks. |
 
 `$setup-pstack` writes your own choices to `~/.config/pstack-t3/roles.json`. A repository can override roles in `.pstack/t3-roles.json`. A reasoning budget (`small` to `unlimited`) sets each seat's effort. A seat whose model you cannot run falls back, and the report names each replacement.
