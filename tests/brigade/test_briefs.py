@@ -413,7 +413,11 @@ class BriefsTest(BrigadeTest):
         self.assertIn("one bare provider/model token with nothing after it and no backticks around it", threads)
         self.assertIn("no reasoning level, no note, and no effort word after the seat", threads)
         self.assertIn("The role is one of code delegate, claims check, and architect runner, named literally", threads)
-        self.assertIn("such as a how explainer", threads)
+        self.assertIn("List only code delegate, claims check, and architect runner under ## Threads", threads)
+        self.assertIn("Put every other child under ## Notes", threads)
+        self.assertIn("Name a child run inside the worker's own harness in the report body instead, never in the section.", threads)
+        self.assertNotIn("such as a how explainer", threads)
+        self.assertNotIn("Name any other child", threads)
         self.assertIn("List only T3 threads started with `delegate_task` or `t3_thread_launch`", threads)
 
     def test_template_example_thread_item_parses_as_one_child_with_no_unreadable_line(self):
