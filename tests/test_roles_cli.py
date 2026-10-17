@@ -909,7 +909,7 @@ class ModeCliTest(unittest.TestCase):
             document = json.loads(repo.user.read_text())
         self.assertEqual(document, {"version": 1, "roles": {}, "budget": "default", "mode": "light"})
 
-    def test_a_non_roles_object_is_refused_by_default_and_replaced_by_replace(self):
+    def test_a_roles_value_that_is_not_an_object_is_refused_by_default_and_replaced_by_replace(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.user.parent.mkdir(parents=True)
