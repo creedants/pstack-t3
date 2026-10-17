@@ -16,6 +16,9 @@ from brigade_lib.store import HELD_LOCKS
 ALWAYS = "tests.test_pstack_t3"
 WORKFLOW_MODULE = "tests.test_run_tests"
 PIN_CHARS = 40
+_ENTRYPOINTS = ("t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py")
+_HELPERS = ("tests/brigade/support.py", "tests/landing/support.py")
+_PY310 = "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10"
 
 
 @dataclass(frozen=True)
@@ -214,48 +217,117 @@ def _pin_literals(mod):
 
 def _import_targets(mod):
     found = set()
-    for sub in mod.body:
+    for sub in ast.walk(mod):
         if isinstance(sub, ast.Import):
             for one in sub.names:
-                found.add(one.name)
+                found.add((0, one.name, ""))
         elif isinstance(sub, ast.ImportFrom):
             base = sub.module or ""
+            level = sub.level or 0
             for one in sub.names:
                 if one.name == "*":
-                    continue
-                if base:
-                    found.add(base + "." + one.name)
+                    found.add((level, base, "*"))
                 else:
-                    found.add(one.name)
+                    found.add((level, base, one.name))
     return found
 
 
-def _resolve_import(name, loader_path, root):
-    parts = name.split(".")
-    cands = []
-    if loader_path:
-        parent = posixpath.dirname(loader_path)
-        for depth in range(len(parts)):
-            tail = "/".join(parts[depth:]) + ".py"
-            if parent:
-                cands.append(parent + "/" + tail)
-            cands.append("/".join(parts[depth:]) + ".py")
-    else:
-        cands.append("/".join(parts) + ".py")
-    cands.append("/".join(parts) + "/__init__.py")
-    for tail in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py"):
-        for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
-            cands.append(prefix + "/" + tail if "/" in tail else prefix + "/" + tail)
+def _found_files(root, cands):
+    seen = []
     for cand in cands:
         if not cand or cand.startswith("/") or ".." in cand.split("/"):
             continue
         full = Path(str(root)) / cand
         try:
             if full.is_file():
-                return cand
+                if cand not in seen:
+                    seen.append(cand)
         except OSError:
             continue
-    return None
+    return tuple(seen)
+
+
+def _resolve_import(edge, loader_path, root):
+    if isinstance(edge, str):
+        parts = edge.split(".")
+        cands = []
+        if loader_path:
+            parent = posixpath.dirname(_norm(loader_path))
+            for depth in range(len(parts)):
+                tail = "/".join(parts[depth:]) + ".py"
+                if parent:
+                    cands.append(parent + "/" + tail)
+                cands.append("/".join(parts[depth:]) + ".py")
+            base_parts = parts[:-1]
+            if base_parts:
+                if parent:
+                    cands.append(parent + "/" + "/".join(base_parts) + ".py")
+                cands.append("/".join(base_parts) + ".py")
+        else:
+            cands.append("/".join(parts) + ".py")
+        cands.append("/".join(parts) + "/__init__.py")
+        for tail in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py"):
+            for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
+                cands.append(prefix + "/" + tail)
+        return _found_files(root, cands)
+    level, module, symbol = edge
+    if symbol == "*":
+        symbol = ""
+    module_parts = module.split(".") if module else []
+    if level and level > 0:
+        parent = posixpath.dirname(_norm(loader_path) if loader_path else "")
+        parts = parent.split("/") if parent else []
+        if level - 1 > len(parts):
+            return ()
+        base_dir = "/".join(parts[:len(parts) - (level - 1)]) if level - 1 else parent
+        cands = []
+        if module_parts:
+            mod_rel = "/".join(module_parts)
+            if base_dir:
+                cands.append(base_dir + "/" + mod_rel + ".py")
+                cands.append(base_dir + "/" + mod_rel + "/__init__.py")
+            else:
+                cands.append(mod_rel + ".py")
+                cands.append(mod_rel + "/__init__.py")
+        if symbol:
+            sym_rel = "/".join(module_parts + [symbol]) if module_parts else symbol
+            if base_dir:
+                cands.append(base_dir + "/" + sym_rel + ".py")
+                cands.append(base_dir + "/" + sym_rel + "/__init__.py")
+            else:
+                cands.append(sym_rel + ".py")
+                cands.append(sym_rel + "/__init__.py")
+        return _found_files(root, cands)
+    parent = posixpath.dirname(_norm(loader_path) if loader_path else "")
+    cands = []
+    rels = []
+    if module_parts:
+        mod_rel = "/".join(module_parts)
+        rels.append(mod_rel + ".py")
+        rels.append(mod_rel + "/__init__.py")
+    if symbol:
+        sym_rel = "/".join(module_parts + [symbol]) if module_parts else symbol
+        rels.append(sym_rel + ".py")
+        rels.append(sym_rel + "/__init__.py")
+    if not rels and module_parts:
+        mod_rel = "/".join(module_parts)
+        rels = [mod_rel + ".py", mod_rel + "/__init__.py"]
+    for tail in rels:
+        if parent:
+            cands.append(parent + "/" + tail)
+        cands.append(tail)
+    for tail in rels:
+        for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
+            cands.append(prefix + "/" + tail)
+    return _found_files(root, cands)
+
+
+def _loads_of(mod, singles):
+    found = set(_load_refs(mod, singles))
+    for value in singles.values():
+        if value and value.endswith(".py") and _looks_repo(value):
+            found.add(value)
+    return found
 
 
 def _canonicals(norm, lay):
@@ -301,6 +373,21 @@ def _index(root):
     except Exception:
         lay = None
     files = _test_files(base)
+    helper_entry = set()
+    for helper_rel in _HELPERS:
+        try:
+            helper_text = (base / helper_rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        try:
+            helper_mod = ast.parse(helper_text, helper_rel)
+        except SyntaxError:
+            continue
+        helper_singles = _singles(helper_mod)
+        for ref in _loads_of(helper_mod, helper_singles):
+            norm = _norm(ref)
+            if norm in _ENTRYPOINTS:
+                helper_entry.add(norm)
     loads = {}
     pins = {}
     direct = {}
@@ -319,7 +406,7 @@ def _index(root):
         except SyntaxError:
             continue
         singles = _singles(mod)
-        refs = _load_refs(mod, singles)
+        refs = _loads_of(mod, singles)
         if refs:
             loads[name] = refs
         lits = _pin_literals(mod)
@@ -329,13 +416,24 @@ def _index(root):
         targets = _import_targets(mod)
         resolved = set()
         for target in targets:
-            got = _resolve_import(target, rel, base)
-            if got:
+            for got in _resolve_import(target, rel, base):
                 resolved.add(got)
         if resolved:
             direct[name] = resolved
+    combined = {}
+    for name in set(list(loads) + list(direct)):
+        own = set(loads.get(name, ()))
+        helpers_hit = False
+        for ref in direct.get(name, ()):
+            if _norm(ref) in _HELPERS:
+                helpers_hit = True
+                break
+        if helpers_hit:
+            own = own | helper_entry
+        if own:
+            combined[name] = own
     table = {}
-    for name, refs in loads.items():
+    for name, refs in combined.items():
         for ref in refs:
             norm = _norm(ref)
             if not norm or not _looks_repo(norm):
@@ -363,11 +461,9 @@ def _index(root):
             except SyntaxError:
                 continue
             for target in _import_targets(lmod):
-                got = _resolve_import(target, norm, base)
-                if not got:
-                    continue
-                for canon in _canonicals(_norm(got), lay):
-                    table.setdefault(canon, set()).add(name)
+                for got in _resolve_import(target, norm, base):
+                    for canon in _canonicals(_norm(got), lay):
+                        table.setdefault(canon, set()).add(name)
     if pins:
         outside = []
         for path in sorted(base.rglob("*")):
@@ -409,6 +505,8 @@ def _index(root):
             if len(classes) != 1:
                 continue
             key = next(iter(classes))
+            if set(key) & frozenset(_ENTRYPOINTS):
+                continue
             if key[0].startswith("t3/"):
                 for canon in key:
                     table.setdefault(canon, set()).update(tests)
@@ -456,6 +554,15 @@ def _select(root, paths):
             continue
         if norm.startswith("changes/"):
             continue
+        if norm.startswith("tests/") and norm.endswith(".py"):
+            stem = norm[:-3]
+            if "/test_" in "/" + stem or PurePosixPath(norm).name.startswith("test_"):
+                modules.add(stem.replace("/", "."))
+                for canon in _canonicals(norm, lay):
+                    hit = index.table.get(canon)
+                    if hit:
+                        modules.update(hit)
+                continue
         found = None
         for canon in _canonicals(norm, lay):
             hit = index.table.get(canon)
@@ -477,11 +584,19 @@ def _paragraph(result, land):
     if isinstance(result, _Full):
         names = ", ".join(f"`{name}`" for name in result.unmapped)
         return (f"No affected mapping for {names}. "
-                f"Run the full suite as `python3 {land_text} slot --slots 2 -- python3 scripts/run_tests.py -j 8`.")
+                f"Run the full suite in the foreground as `python3 {land_text} slot --slots 2 -- python3 scripts/run_tests.py -j 8`. "
+                f"Run the same suite on Python 3.10 in the foreground as `python3 {land_text} slot --slots 2 -- {_PY310} scripts/run_tests.py -j 8`. "
+                f"Run `python3 {land_text} slot -- python3 scripts/build.py` and leave no regeneration diff. "
+                f"Run `python3 {land_text} slot -- python3 scripts/check.py`. "
+                f"Keep each build and test in a foreground slot.")
     names = ", ".join(f"`{name}`" for name in result.names)
     joined = " ".join(result.names)
     return (f"Affected test modules are {names}. "
-            f"Run them as `python3 {land_text} slot -- python3 -m unittest {joined}`.")
+            f"Run them in the foreground as `python3 {land_text} slot -- python3 -m unittest {joined}`. "
+            f"Run the same modules on Python 3.10 in the foreground as `python3 {land_text} slot -- {_PY310} -m unittest {joined}`. "
+            f"Run `python3 {land_text} slot -- python3 scripts/build.py` and leave no regeneration diff. "
+            f"Run `python3 {land_text} slot -- python3 scripts/check.py`. "
+            f"Keep each build and test in a foreground slot.")
 
 
 def verify_text(root, paths, land):

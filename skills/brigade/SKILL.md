@@ -101,7 +101,7 @@ L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases an
 
 Read [script.md](script.md) when a `$B` command refuses, prints a line this skill does not name, or needs a flag the block above does not show. `$B <command> --help` prints every flag.
 
-Run affected to print the verify paragraph for a path change. It scans the tree and names the modules or the full suite.
+Run affected to print the verify paragraph for a path change. It scans the tree and names the modules or the full suite. Use the picked modules for worker verification. Leave the full suite to CI and the merge queue unless affected reports an unmapped path.
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](script.md#brief-fields).
 
