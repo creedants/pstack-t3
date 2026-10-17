@@ -108,8 +108,8 @@ def register_pass(sub):
     a.add_argument("--sha", required=True)
     a.add_argument("--json", action="store_true", help="print verdict, author, verifier, note, and crossFamily of the latest row")
     a = t.add_parser("stats", help="print the first-pass rate overall and per author, and send-back counts by "
-                                  "reason, over the last N items with a verdict; a send-back row whose reason is "
-                                  "empty or is not one of the reasons above counts as unrecorded")
+                                  f"reason, over the last N items with a verdict; a send-back row whose reason is "
+                                  f"empty or is not one of {', '.join(REASONS)} counts as unrecorded")
     a.add_argument("--last", type=non_negative_int, default=20,
                    help="how many items to cover, counting back from the most recently reviewed; default 20")
 

@@ -460,7 +460,7 @@ brigade.py [flags] pass check --sha SHA [--json] dish
 brigade.py [flags] pass stats [--last LAST]
 ```
 
-print the first-pass rate overall and per author, and send-back counts by reason, over the last N items with a verdict; a send-back row whose reason is empty or is not one of the reasons above counts as unrecorded
+print the first-pass rate overall and per author, and send-back counts by reason, over the last N items with a verdict; a send-back row whose reason is empty or is not one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other counts as unrecorded
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
