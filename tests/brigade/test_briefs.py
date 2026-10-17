@@ -825,7 +825,7 @@ class BriefsTest(BrigadeTest):
             "## Decisions for you", "", "- Q1: Drop Windows 7 support? Options: yes, no. Default if no answer: no.",
             "", "## Spend", "", "goal not recorded  wall 0m (6 open)  rounds 4  send-backs 1  threads not recorded"])
         self.assertEqual(self.brigade("walk").splitlines(), [
-            f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty.",
+            f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty. author policy: any",
             f"  Perf (reports milestones): {self.OLD_COUNTS}",
             "    thread not recorded",
             "    Q1: Drop Windows 7 support?"])

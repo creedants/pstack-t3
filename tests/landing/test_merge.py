@@ -1060,11 +1060,11 @@ class LandingTest(LandingTestBase):
             self.assertEqual(out, f"landed E1 (r/D1)\nqueue paused: {pause}")
             self.assertEqual(self.origin_log(), ["w1", "outside", "init"])
             self.assertEqual(self.land("status", "E1"), f"E1 landed (r/D1, w1). landed as {merged[:12]}. https://github.com/o/r/pull/9")
-            self.assertEqual(self.land("status"), f"merge mode onto refs/remotes/origin/main. landed: 1. Paused: {pause}")
+            self.assertEqual(self.land("status"), f"merge mode onto refs/remotes/origin/main. landed: 1. Paused: {pause} author policy: any")
             self.assertEqual(self.land("land"), f"queue paused: {pause}")
             self.assertEqual(self.land("resume"), "queue resumed")
             self.assertEqual(self.land("land"), "nothing to land")
-            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 1.")
+            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 1. author policy: any")
 
     def test_merge_mode_pauses_and_leaves_the_entry_awaiting_merge_when_git_cannot_read_its_merge_commit_then_reports_the_other_tree_after_resume(self):
         with self.fake_gh():
@@ -1081,7 +1081,7 @@ class LandingTest(LandingTestBase):
                 self.assertEqual(self.land("status", "E1"), "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9. "
                                                             "merge requested by the queue")
                 self.assertEqual(self.land("status"),
-                                 f"merge mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1. Paused: {pause}")
+                                 f"merge mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1. Paused: {pause} author policy: any")
                 self.assertEqual(self.on_origin("rev-parse", "landing/e1"), candidate)
                 self.assertEqual(self.land("resume"), "queue resumed")
                 self.assertEqual(self.land("land"), f"queue paused: {pause}")
@@ -1105,7 +1105,7 @@ class LandingTest(LandingTestBase):
                 self.assertEqual(self.listed(), ["L1 submitted r/D1: a.txt"])
             self.assertEqual(self.land("resume"), "queue resumed")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
-            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 1.")
+            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 1. author policy: any")
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def test_merge_mode_pauses_when_the_remote_does_not_serve_the_reported_merge_commit(self):
@@ -1239,7 +1239,7 @@ class LandingTest(LandingTestBase):
             self.land("land")
             (self.base / "state-query-fails").write_text("")
             self.assertEqual(self.land("land"), "nothing to land")
-            self.assertEqual(self.land("status"), "human mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1.")
+            self.assertEqual(self.land("status"), "human mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1. author policy: any")
 
     def test_merge_mode_pauses_without_merging_a_head_that_replaced_the_candidate_after_a_base_branch_was_modified_refusal_then_lands_the_restored_candidate(self):
         with self.fake_gh():
@@ -1259,7 +1259,7 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.land("status", "E1"), "E1 awaiting-merge (r/D1, w1). https://github.com/o/r/pull/9. "
                                                         f"PR head changed to {rogue[:12]} outside the queue")
             self.assertEqual(self.land("status"),
-                             f"merge mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1. Paused: {pause}")
+                             f"merge mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1. Paused: {pause} author policy: any")
             self.assertEqual(self.land("land"), f"queue paused: {pause}")
             sh("git", "push", "-q", "--force", "origin", f"{candidate}:refs/heads/landing/e1", cwd=self.work)
             self.post_check(9, "passed")
@@ -1321,7 +1321,7 @@ class LandingTest(LandingTestBase):
                 self.pinned(10, "--squash"),
                 self.pinned(10, "--squash"),
             ])
-            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 2.")
+            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. landed: 2. author policy: any")
 
     def test_merge_mode_waits_without_a_pause_after_four_base_branch_was_modified_refusals_in_one_run_and_lands_in_the_next(self):
         with self.fake_gh():
@@ -1331,7 +1331,7 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertEqual(self.merge_calls(), [self.pinned(9, "--auto", "--squash")]
                              + [self.pinned(9, "--squash")] * 4)
-            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1.")
+            self.assertEqual(self.land("status"), "merge mode onto refs/remotes/origin/main. awaiting-merge: 1, leases held: 1. author policy: any")
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
 
     def test_merge_mode_under_rebase_opens_the_second_entry_in_the_run_that_lands_the_first(self):

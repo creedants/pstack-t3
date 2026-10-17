@@ -441,7 +441,7 @@ class LandingTest(LandingTestBase):
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
         with mock.patch.dict(os.environ, {"PATH": f"{wrapper}:{os.environ['PATH']}"}):
             self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER, ok=False)
-        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1.")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1. author policy: any")
 
     def test_a_policy_rejection_pauses_the_queue_after_one_check_run(self):
         self.land("init", "--trunk", "main", "--mode", "auto", "--check", f"echo run >> {self.base}/runs")

@@ -21,7 +21,7 @@ Land many agents' work on one repository through one queue.
 ## land.py init
 
 ```text
-land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--cap CAP] [--generated PATHS] [--rebuild COMMAND]
+land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--cap CAP] [--generated PATHS] [--rebuild COMMAND]
 ```
 
 write the repository's landing contract
@@ -36,7 +36,8 @@ write the repository's landing contract
 | `--setup SETUP` |  |  |  | command run before checks in the clean integration worktree, such as npm ci. Omitted, a rerun keeps the stored setup and a first init stores none |
 | `--batch BATCH` |  |  |  | entries checked together; a failed batch lands one at a time. Omitted, a rerun keeps the stored batch and a first init stores 1 |
 | `--timeout TIMEOUT` |  |  |  | seconds before a check is killed. Omitted, a rerun keeps the stored timeout and a first init stores 1800 |
-| `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository whenever it is set. omitted in merge mode, a first init stores the one allowed method, or merge when gh cannot say, and a rerun keeps the stored method while the repository allows it |
+| `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository when gh can report the allowed methods, whenever it is set. omitted in merge mode, a first init stores the only allowed method, or prefers merge then squash when several are allowed, or merge when gh cannot say, and a rerun keeps the stored method while the repository allows it |
+| `--author-policy AUTHOR_POLICY` |  | `any`, `configured`, `credited` |  | how the queue judges a reviewed commit's author. any skips the check. configured and credited check only when the repository has a configured identity: configured requires that author, and credited also lands an entry whose commits by another author each carry a Co-authored-by trailer equal to that commit's author as name \<email> and whose body has a line that reads Based on #\<n> by @\<login>, optionally with a trailing period. Omitted, a rerun keeps the stored policy or stores any when the contract has none, and a first init stores any. An unknown --author-policy value is refused before the contract changes |
 | `--cap CAP` |  |  |  | most changes in flight on the repository at once; 0 clears it |
 | `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
 | `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |

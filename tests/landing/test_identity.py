@@ -17,6 +17,85 @@ from .support import (
 
 
 class LandingTest(LandingTestBase):
+    def init(self, mode="auto", batch=1, author_policy="credited", ok=True, **extra):
+        """The helper defaults the policy to credited for tests that name none. None omits the flag."""
+        args = ["init", "--trunk", extra.get("trunk", "main"), "--mode", mode, "--check", "./check.sh", "--batch", str(batch)]
+        if "merge_method" in extra:
+            args += ["--merge-method", extra["merge_method"]]
+        if "base" in extra:
+            args += ["--base", extra["base"]]
+        if "generated" in extra:
+            args += ["--generated", extra["generated"]]
+        if "rebuild" in extra:
+            args += ["--rebuild", extra["rebuild"]]
+        if author_policy is not None:
+            args += ["--author-policy", author_policy]
+        return self.land(*args, ok=ok)
+
+    def stored_author_policy(self):
+        """The JSON text under the contract key authorPolicy, or None when the key is absent."""
+        with self.raw_db() as db:
+            row = db.execute("SELECT value FROM contract WHERE key = 'authorPolicy'").fetchone()
+        return row and row[0]
+
+    def queue_one_by(self, author, *message, author_policy="credited"):
+        """Init push mode with this policy, then queue one commit by this author. Returns the reviewed commit id."""
+        self.init(mode="push", author_policy=author_policy)
+        self.configure_owner()
+        self.worker("w1", {"a.txt": "agent\n"})
+        sh("git", "commit", "-q", "--amend", "--author", author, *message, cwd=self.base / "w1")
+        sha = sh("git", "rev-parse", "HEAD", cwd=self.base / "w1")
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        return sha
+
+    def test_author_policy_any_lands_a_foreign_commit_with_no_credit_line(self):
+        self.queue_one_by("Ann Lee <ann@example.com>", "-m", "port", author_policy=None)
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae>", "main"), "Ann Lee <ann@example.com>")
+
+    def test_author_policy_configured_bounces_a_foreign_commit_that_carries_a_credit_line_and_a_trailer(self):
+        sha = self.queue_one_by("Ann Lee <ann@example.com>", "-m", "port", "-m", "Based on #12 by @ann-lee",
+                                "-m", "Co-authored-by: Ann Lee <ann@example.com>", author_policy="configured")
+        self.assertEqual(self.land("land"), self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_a_new_contract_stores_author_policy_any(self):
+        self.init(mode="push", author_policy=None)
+        self.assertEqual(self.stored_author_policy(), '"any"')
+
+    def test_a_rerun_without_the_flag_keeps_a_stored_author_policy(self):
+        self.init(mode="push", author_policy="credited")
+        self.init(mode="push", author_policy=None)
+        self.assertEqual(self.stored_author_policy(), '"credited"')
+        sha = self.queue_one_by("Ann Lee <ann@example.com>", "-m", "port", author_policy=None)
+        self.assertEqual(self.land("land"), self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+        self.assertEqual(self.origin_log(), ["init"])
+
+    def test_an_unknown_author_policy_is_refused_and_leaves_the_contract_unchanged(self):
+        self.init(mode="push")
+        before = self.queue_rows()
+        self.init(mode="push", author_policy="bogus", ok=False)
+        self.assertEqual(self.queue_rows(), before)
+
+    def test_a_stored_contract_without_the_author_policy_key_reads_as_any(self):
+        self.queue_one_by("Ann Lee <ann@example.com>", "-m", "port", author_policy="credited")
+        with self.raw_db() as db:
+            db.execute("DELETE FROM contract WHERE key = 'authorPolicy'")
+            db.commit()
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+        self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae>", "main"), "Ann Lee <ann@example.com>")
+
+    def test_repo_status_names_each_author_policy_and_defaults_a_missing_key_to_any(self):
+        for policy in ("any", "configured", "credited"):
+            with self.subTest(policy=policy):
+                self.init(mode="push", author_policy=policy)
+                self.assertIn(f"author policy: {policy}", self.land("status"))
+        with self.raw_db() as db:
+            db.execute("DELETE FROM contract WHERE key = 'authorPolicy'")
+            db.commit()
+        self.assertIn("author policy: any", self.land("status"))
+
     def test_human_mode_bounces_an_entry_with_a_foreign_commit_author_and_opens_no_pr(self):
         with self.fake_gh():
             self.init(mode="human")
@@ -217,7 +296,8 @@ class LandingTest(LandingTestBase):
 
     def test_status_shows_the_identity_pause_after_the_counts(self):
         reason = self.land_one_then_pause_as_audit()
-        self.assertEqual(self.land("status"), f"push mode onto refs/remotes/origin/main. landed: 1, queued: 1, leases held: 1. Paused: {reason}")
+        self.assertEqual(self.land("status"),
+                         f"push mode onto refs/remotes/origin/main. landed: 1, queued: 1, leases held: 1. Paused: {reason} author policy: credited")
 
     def test_resume_after_an_identity_pause_lets_land_run_and_store_the_new_pair_and_a_change_back_pauses_against_the_new_pair(self):
         self.land_one_then_pause_as_audit()
@@ -290,8 +370,8 @@ class LandingTest(LandingTestBase):
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
         with self.raw_db() as db:
             keys = [key for key, in db.execute("SELECT key FROM contract ORDER BY key")]
-        self.assertEqual(keys, ["batch", "checks", "commonDir", "generated", "mergeMethod", "mode", "paused", "rebuild", "remote", "repo",
-                                "setup", "timeout", "tip", "trunk"])
+        self.assertEqual(keys, ["authorPolicy", "batch", "checks", "commonDir", "generated", "mergeMethod", "mode", "paused", "rebuild", "remote",
+                                "repo", "setup", "timeout", "tip", "trunk"])
         self.configure_owner()
         self.worker("w2", {"b.txt": "agent\n"})
         sh("git", "commit", "-q", "--amend", "--author", "Owner <owner@example.com>", "-m", "w2", cwd=self.base / "w2")
@@ -357,11 +437,11 @@ class LandingTest(LandingTestBase):
         self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone, quoted)))
 
     def test_a_core_worktree_that_names_the_checkout_does_not_stop_status(self):
-        self.init()
+        self.init(author_policy=None)
         for value in (str(self.work), ".."):
             with self.subTest(value=value):
                 sh("git", "config", "core.worktree", value, cwd=self.work)
-                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_a_relative_core_worktree_that_names_a_missing_directory_stops_status(self):
         self.init()
@@ -371,18 +451,18 @@ class LandingTest(LandingTestBase):
                 self.assertEqual(self.run_land(self.work, "status", cwd=repo), (1, "", self.stray_worktree_line("../gone")))
 
     def test_the_printed_command_run_in_the_checkout_removes_a_relative_core_worktree(self):
-        self.init()
+        self.init(author_policy=None)
         sh("git", "config", "core.worktree", "../gone", cwd=self.work)
         command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
         subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_the_last_core_worktree_value_decides(self):
-        self.init()
+        self.init(author_policy=None)
         gone = self.base / "gone"
         sh("git", "config", "--add", "core.worktree", str(gone), cwd=self.work)
         sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(self.work), cwd=self.base)
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
         sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(gone), cwd=self.base)
         self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone)))
 
@@ -398,11 +478,11 @@ class LandingTest(LandingTestBase):
             self.assertEqual(db.execute("SELECT id FROM lease").fetchall(), [])
 
     def test_the_printed_command_removes_a_core_worktree_that_is_the_checkout_path_and_a_newline(self):
-        self.init()
+        self.init(author_policy=None)
         sh("git", "config", "core.worktree", str(self.work) + "\n", cwd=self.work)
         command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
         subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty.\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_a_core_worktree_with_a_carriage_return_is_not_judged_as_the_directory_with_a_newline_there(self):
         self.init()
