@@ -1,0 +1,5 @@
+- kind feature
+- An optional `lowReserve` key in `restaurant.json` sets the low-priority worker reserve, a whole number of 0 or more, where 0 holds no low ticket back and an absent key reads as 1.
+- The reserve holds a low ticket back only while an urgent or normal ticket can start now, so a higher ticket blocked by a lease, a decision, an unknown path, a paused goal, or a spend control no longer holds it.
+- `set --low-reserve` records the value, and `""` clears it.
+- A present `lowReserve` that is not a whole number of 0 or more is refused with a message naming the key, the file, and the value.

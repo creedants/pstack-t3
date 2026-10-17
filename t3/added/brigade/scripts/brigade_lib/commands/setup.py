@@ -24,7 +24,7 @@ from brigade_lib import seam
 from brigade_lib.compact import effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
-from brigade_lib.store import AUTOFIRE, MODES, REPORTING, SCRATCH_KEY, is_admin, open_restaurant, sibling_lines, siblings, scratch_parent_text
+from brigade_lib.store import AUTOFIRE, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, is_admin, low_reserve_of, open_restaurant, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
 from brigade_lib.tickets import cap_pairs, intake_list, review_pairs, set_intake
 
 COMMANDS = ("open", "set")
@@ -75,6 +75,9 @@ def register_set(sub):
     p.add_argument("--scratch-dir", metavar="DIR",
                    help="the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside "
                         "/tmp; \"\" clears the setting")
+    p.add_argument("--low-reserve", metavar="N",
+                   help="the most workers still idle when a low ticket is held back while an urgent or normal "
+                        "ticket can start; 0 holds no low ticket back; \"\" clears it to 1")
     p.add_argument("--context-cap", default=None,
                    help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
@@ -89,12 +92,13 @@ def register(sub):
 def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
-    The reader predicates decide all four settings, so a value accepted here is a value a reader accepts. A missing
+    The reader predicates decide all five settings, so a value accepted here is a value a reader accepts. A missing
     key keeps its default.
     """
     effective_cap(meta)
     effective_provider(meta)
     kind_limits(meta)
+    low_reserve_of(meta)
 
 
 def handle_open(args, root):
@@ -222,6 +226,11 @@ def handle_locked(restaurant, args, view):
             changes[SCRATCH_KEY] = scratch
         else:
             drop.append(SCRATCH_KEY)
+    if args.low_reserve is not None:
+        if args.low_reserve == "":
+            drop.append(LOW_RESERVE_KEY)
+        else:
+            changes[LOW_RESERVE_KEY] = parse_low_reserve(args.low_reserve)
     if args.context_cap is not None:
         if args.context_cap == "":
             drop.append("contextCap")
