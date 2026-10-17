@@ -1,0 +1,9 @@
+- kind fix
+- restore_aside hands the proven backup at its private name to place_proven, which calls proved with path and fd right after a successful same filesystem move. The EXDEV copy route does not check the live entry against a held descriptor of the completed copy
+- proved returns Published when its pathname lookup matches the device and inode numbers of the descriptor it is given. Otherwise it reports that the moved entry could not be confirmed
+- place_proven returns the placement refusal when place refuses and returns the proof refusal when proved fails without touching the live occupant
+- retire runs only after a cross filesystem copy is placed. It requires a PrivateName argument
+- park and retire require a PrivateName argument. PrivateName construction requires its parent directory name to start with `.pstack-t3-`
+- same filesystem moves keep hard links and extended attributes and modes and FIFO type and relative symlink targets
+- a same user process that swaps the backup in the instant before the move can leave its entry at the live path after the check refuses it. That window stays
+- base place_copy stays for EXDEV only with shutil in a SCRAP holder then place
