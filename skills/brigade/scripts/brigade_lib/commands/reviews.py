@@ -63,7 +63,7 @@ def register_pass(sub):
         "That section starts with the heading `## Threads` on a line of its own. A line of it that is inside a "
         "fenced block that opens after up to three spaces is not read. Every other non-blank line of it is "
         "skipped when it is plain prose, that is when it starts, after any leading whitespace, with neither a "
-        "list marker nor a `#`, holds no backticked thread id, and names no child role. A list marker is a "
+        "list marker nor a `#`, holds no backticked thread id, and names no lowercase child role. A list marker is a "
         "hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a closing parenthesis.\n"
         "\n"
         "This example uses made-up ids. A report whose worker used two children holds the heading `## Threads` and "
