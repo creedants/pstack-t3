@@ -1,0 +1,6 @@
+- kind upkeep
+- `t3/setup.md` and its generated copy `skills/setup-pstack/SKILL.md` name T3 Code 0.1.0 or later in the setup gate message, replacing the nightly `0.0.46-nightly.20261005.2702`.
+- `scripts/check.py` requires the phrase `T3 Code 0.1.0 or later` on `setup-pstack/SKILL.md` in place of the nightly id.
+- `README.md` states the setup minimum as T3 Code 0.1.0 or later.
+- `docs/guide.md` names T3 Code `0.1.0` or later as the requirement and drops its sentence about nightlies.
+- `tests/test_check.py` and `tests/test_pstack_t3.py` assert the new minimum.

@@ -654,7 +654,7 @@ class RolesTest(unittest.TestCase):
     def test_setup_stops_before_writing_when_watch_is_absent(self):
         text = (ROOT / "t3/setup.md").read_text()
         self.assertIn(
-            'Say "Setup cannot finish. T3 Code 0.0.46-nightly.20261005.2702 or later is required because this host does not expose watch_pull_request."',
+            'Say "Setup cannot finish. T3 Code 0.1.0 or later is required because this host does not expose watch_pull_request."',
             text,
         )
         self.assertIn("stop setup before writing roles or a saved catalog", text)
@@ -1414,13 +1414,13 @@ class BuildTest(unittest.TestCase):
             (skill / "SKILL.md").write_text("---\nname: setup-pstack\ndescription: d\n---\n\nNo watch here.\n")
             findings = check.check_tree(directory)
             self.assertIn("setup-pstack/SKILL.md: missing watch_pull_request", findings)
-            self.assertIn("setup-pstack/SKILL.md: missing 0.0.46-nightly.20261005.2702", findings)
+            self.assertIn("setup-pstack/SKILL.md: missing T3 Code 0.1.0 or later", findings)
             (skill / "SKILL.md").write_text(
                 "---\nname: setup-pstack\ndescription: d\n---\n\n"
-                "Call `watch_pull_request`. T3 Code 0.0.46-nightly.20261005.2702 or later.\n"
+                "Call `watch_pull_request`. T3 Code 0.1.0 or later.\n"
             )
             findings = check.check_tree(directory)
-        self.assertFalse(any("missing watch_pull_request" in finding or "missing 0.0.46" in finding for finding in findings))
+        self.assertFalse(any("missing watch_pull_request" in finding or "missing T3 Code 0.1.0 or later" in finding for finding in findings))
 
     def test_check_rejects_the_cursor_xhigh_slug(self):
         with tempfile.TemporaryDirectory() as directory:
