@@ -1045,6 +1045,26 @@ class RunTestsTest(unittest.TestCase):
         self.assert_stopped_and_none_lost(self.result_file("remove", AT_EXIT),
                                           r"cannot be found at its path\. \[Errno 2\] [^\n]*results\.jsonl'")
 
+    def test_permission_error_for_an_empty_group_does_not_hide_a_result_file_error(self):
+        self.write("test_result_file.py", RESULT_FILE.format(body=AT_EXIT.format(act="remove")))
+        wrapper = (
+            "import errno, os, runpy, sys\n"
+            "killpg = os.killpg\n"
+            "def macos_killpg(pgid, sig):\n"
+            "    try:\n"
+            "        killpg(pgid, sig)\n"
+            "    except ProcessLookupError:\n"
+            "        raise PermissionError(errno.EPERM, 'simulated macOS empty group')\n"
+            "os.killpg = macos_killpg\n"
+            "sys.argv = sys.argv[1:]\n"
+            "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+        )
+        result = self.finish(self.start(before=("-c", wrapper)))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("\nERROR: shard 1 of test_result_file\n", result.stderr)
+        self.assertEqual(RAN.search(result.stderr).group(1), "1")
+        self.assert_stopped_and_none_lost(result.stderr, r"cannot be found at its path\. \[Errno 2\] [^\n]*results\.jsonl'")
+
     def test_an_exit_handler_that_replaces_the_result_file_and_each_file_beside_it_with_a_copy_exits_1_with_an_error_for_its_shard_and_no_lost_test(self):
         self.assert_stopped_and_none_lost(self.result_file("replace", AT_EXIT), "was replaced by another file at its path")
 
