@@ -1500,6 +1500,21 @@ class FoldTest(ActivityCase):
         self.assertEqual(list(drawn(again)), ["D7", "D1", "D6", "D8", "D9", None])
         self.assertEqual((again.hidden.dropped_items, again.hidden.dropped_agents, again.fold), (4, 11, 2))
 
+    def test_synthesized_summary_rows_keep_the_earlier_flag_through_the_budget_transforms(self):
+        lanes = [replace(row("earlier worker"), earlier=True), replace(row("a", depth=1), earlier=True), replace(row("b", depth=1), earlier=True)]
+        folded = MOD["fold_quiet_subagents"](page(group(item("D7"), *lanes)))
+        self.assertEqual([(each.label, each.earlier) for each in folded.groups[0].rows], [("earlier worker", True), ("2 sub-agents", True)])
+        mixed = MOD["fold_quiet_subagents"](page(group(item("D7"), *lanes[:2], row("c", depth=1))))
+        self.assertEqual([(each.label, each.earlier) for each in mixed.groups[0].rows], [("earlier worker", True), ("2 sub-agents", False)])
+        for grown in (folded, mixed):
+            for transform in (MOD["cap_everything"], lambda grown: MOD["framed"](grown, 1)):
+                carried = transform(grown)
+                left = [each for one in carried.groups for each in one.rows]
+                for each in [each for one in grown.groups for each in one.rows if each.earlier]:
+                    self.assertIn(each, left)
+        finished = MOD["fold_finished_items"](page(group(item("D7", in_flight=False), *lanes)))
+        self.assertEqual([(each.label, each.earlier) for each in finished.groups[0].rows], [("3 agents", True)])
+
     def test_folds_3_to_10_keep_24_16_12_8_6_4_2_and_0_finished_units_and_count_each_dropped_unit_once(self):
         folded = page(group(item("D99"), row("worker")), *[group(item(f"D{number}", in_flight=False), row("2 agents", stands_for=2)) for number in range(30)])
         left = []
@@ -1642,8 +1657,10 @@ PR6 = "https://example.test/o/r/pull/6"
 STUB = """
 const nodes = [];
 const make = tag => ({
-  tagName: tag.toUpperCase(), kids: [], style: {}, className: '', own: '',
+  tagName: tag.toUpperCase(), kids: [], style: {}, attrs: {}, className: '', own: '',
   appendChild(kid) { this.kids.push(kid); return kid; },
+  setAttribute(name, value) { this.attrs[name] = String(value); },
+  getAttribute(name) { return name in this.attrs ? this.attrs[name] : null; },
   insertBefore(node, ref) {
     const from = this.kids.indexOf(node);
     if (from >= 0) this.kids.splice(from, 1);
@@ -2413,7 +2430,7 @@ class RendererTest(OutputCase):
                          ["D1 " + HOSTILE_DRAWN, HOSTILE_DRAWN, HOSTILE_DRAWN, "model " + HOSTILE_DRAWN, HOSTILE_DRAWN])
         self.assertEqual(built["titles"], ["done · 60s", HOSTILE_DRAWN, "model " + HOSTILE_DRAWN])
 
-    def test_item_block_lists_ledger_rows_in_attempt_order_with_role_seat_and_open_or_ended(self):
+    def test_item_block_lists_current_ledger_rows_in_attempt_order_and_folds_earlier_attempts_into_one_summary(self):
         fixture = one_running(self.fixture).write()
         stamp = fixture.stamp(10)
         write_threads(fixture, [
@@ -2421,35 +2438,37 @@ class RendererTest(OutputCase):
             {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "seat": "", "start": stamp, "end": ""},
             {"at": stamp, "dish": "D7", "attempt": "2", "role": "fix worker", "thread": worker(2), "seat": "", "start": stamp, "end": ""},
         ])
-        phrases = [
-            "attempt 1 · worker · open",
+        current = [
             "attempt 2 · verifier · grok/grok-4 · ended",
             "attempt 2 · fix worker · open",
         ]
+        summary = "attempt 1: 1 worker, all open"
         document = self.document()
         texts = self.render(document)["texts"]
         self.assertNotIn("This copy differs from what the tool wrote. Run the command again.", texts)
-        self.assertEqual([text for text in texts if text.startswith("attempt ")], phrases)
+        self.assertEqual([text for text in texts if text.startswith("attempt ")], [summary, "attempt 1 · worker · open", *current])
         lines = self.out("--text").split("\n")
         at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
-        self.assertEqual(lines[at + 1:at + 4], ["    " + phrase for phrase in phrases])
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
         for ident in (worker(1), worker(2), worker(3)):
             self.assertNotIn(ident, document)
             self.assertNotIn(ident, "\n".join(lines))
 
-    def test_worker_with_an_end_stamp_says_ended_and_a_verifier_with_an_empty_end_says_open(self):
+    def test_worker_with_an_end_stamp_says_ended_and_a_verifier_with_an_empty_end_says_open_and_an_earlier_attempts_worker_folds_into_one_summary_line(self):
         fixture = one_running(self.fixture).write()
+        fixture.write_store()
         stamp = fixture.stamp(10)
         write_threads(fixture, [
             {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
             {"at": stamp, "dish": "D7", "attempt": "2", "role": "verifier", "thread": worker(2), "start": "", "end": ""},
         ])
-        phrases = ["attempt 1 · worker · ended", "attempt 2 · verifier · open"]
+        summary = "attempt 1: 1 worker, all ended"
+        current = ["attempt 2 · verifier · open"]
         texts = self.render(self.document())["texts"]
-        self.assertEqual([text for text in texts if text.startswith("attempt ")], phrases)
+        self.assertEqual([text for text in texts if text.startswith("attempt ")], [summary, "attempt 1 · worker · ended", *current])
         lines = self.out("--text").split("\n")
         at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
-        self.assertEqual(lines[at + 1:at + 3], ["    " + phrase for phrase in phrases])
+        self.assertEqual(lines[at + 1:at + 3], ["    " + summary, "    " + current[0]])
 
     def test_hostile_seat_is_escaped_in_the_document_and_drawn_as_text(self):
         fixture = one_running(self.fixture).write()
@@ -3718,6 +3737,7 @@ class LedgerTest(OutputCase):
     def test_opaque_ledger_private_token_in_the_thread_and_the_seat_is_absent_from_both_forms(self):
         token = "opaque=ledger-private-token"
         fixture = one_running(self.fixture).write()
+        fixture.write_store()
         stamp = fixture.stamp(10)
         write_threads(fixture, [
             {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": token, "seat": token, "start": stamp, "end": ""},
@@ -3738,16 +3758,14 @@ class LedgerTest(OutputCase):
             {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": "opaque=ledger-sort-2", "start": stamp, "end": ""},
             {"at": stamp, "dish": "D7", "attempt": "9" * 5000, "role": "worker", "thread": "opaque=ledger-sort-long", "start": stamp, "end": ""},
         ])
-        phrases = [
-            "attempt 2 · worker · open",
-            "attempt 10 · worker · open",
-            "attempt 999999999… · worker · open",
-        ]
         lines = self.out("--text").split("\n")
         at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
-        self.assertEqual(lines[at + 1:at + 4], ["    " + phrase for phrase in phrases])
+        self.assertEqual(lines[at + 1:at + 3], ["    attempts 2, 10: 2 workers, all open", "    attempt 999999999… · worker · open"])
         shown = [line for _, rows in data_of(self.document()).get("L", []) for line in rows]
-        self.assertEqual(shown, phrases)
+        self.assertEqual(shown, ["attempt 999999999… · worker · open"])
+        folded = data_of(self.document()).get("E", [])
+        self.assertEqual([summary for _, summary, _ in folded], ["attempts 2, 10: 2 workers, all open"])
+        self.assertEqual([line for _, _, rows in folded for line in rows], ["attempt 2 · worker · open", "attempt 10 · worker · open"])
 
     def test_five_hundred_ledger_rows_stay_within_max_bytes_and_the_note_counts_the_lines_left_out(self):
         fixture = one_running(self.fixture).write()
@@ -3769,50 +3787,86 @@ class LedgerTest(OutputCase):
         def phrase(number):
             return f"attempt {number} · worker · grok/grok-4 · open"
 
-        def html_phrases(document):
+        def html_current(document):
             return [line for _, lines in data_of(document).get("L", []) for line in lines]
 
-        def text_phrases(text):
+        def html_fold(document):
+            folded = data_of(document).get("E", [])
+            return [(summary, rows) for _, summary, rows in folded]
+
+        def text_current(text):
             return [line[4:] for line in text.split("\n") if line.startswith("    attempt ")]
+
+        def text_summary(text):
+            return [line[4:] for line in text.split("\n") if line.startswith("    attempts ")]
 
         html_bytes = fixture.stdout_bytes()
         text_bytes = fixture.stdout_bytes("--text")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (15991, 15967))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (15969, 417))
         self.assertLessEqual(len(html_bytes), 16000)
         self.assertLessEqual(len(text_bytes), 16000)
         html, text = self.document(), self.out("--text")
         self.assertEqual(data_of(html)["N"], [
-            "1 more agent is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
-            "358 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "409 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
-        self.assertEqual(html_phrases(html), [phrase(number) for number in range(1, 143)])
-        self.assertEqual((html_phrases(html)[0], html_phrases(html)[-1]), (phrase(1), phrase(142)))
-        self.assertIn("  181 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", text)
-        self.assertEqual(text_phrases(text), [phrase(number) for number in range(1, 320)])
-        self.assertEqual((text_phrases(text)[0], text_phrases(text)[-1]), (phrase(1), phrase(319)))
+        self.assertEqual(html_current(html), [phrase(500)])
+        summary, payload = html_fold(html)[0]
+        self.assertEqual(summary, "attempts 1-499: 499 workers, all open")
+        self.assertEqual(payload, [phrase(number) for number in range(1, 91)])
+        self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
+        self.assertEqual(text_current(text), [phrase(500)])
 
         wide_html, wide_text = self.document("--max-bytes", "500000"), self.out("--text", "--max-bytes", "500000")
-        wide = [phrase(number) for number in range(1, 501)]
-        self.assertEqual(html_phrases(wide_html), wide)
-        self.assertEqual(text_phrases(wide_text), wide)
+        self.assertEqual(html_current(wide_html), [phrase(500)])
+        summary, payload = html_fold(wide_html)[0]
+        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(1, 500)]))
+        self.assertEqual(text_summary(wide_text), ["attempts 1-499: 499 workers, all open"])
+        self.assertEqual(text_current(wide_text), [phrase(500)])
         for output in (wide_html, wide_text):
             self.assertNotIn("attempt line is not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", output)
             self.assertNotIn("attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", output)
 
         html_bytes = fixture.stdout_bytes("--max-bytes", "20000")
         text_bytes = fixture.stdout_bytes("--text", "--max-bytes", "20000")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (19989, 19984))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (19955, 417))
         self.assertLessEqual(len(html_bytes), 20000)
         self.assertLessEqual(len(text_bytes), 20000)
         html, text = self.document("--max-bytes", "20000"), self.out("--text", "--max-bytes", "20000")
         self.assertEqual(data_of(html)["N"], [
-            "272 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "324 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
-        self.assertEqual(html_phrases(html), [phrase(number) for number in range(1, 229)])
-        self.assertEqual((html_phrases(html)[0], html_phrases(html)[-1]), (phrase(1), phrase(228)))
-        self.assertIn("  99 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.", text)
-        self.assertEqual(text_phrases(text), [phrase(number) for number in range(1, 402)])
-        self.assertEqual((text_phrases(text)[0], text_phrases(text)[-1]), (phrase(1), phrase(401)))
+        self.assertEqual(html_current(html), [phrase(500)])
+        summary, payload = html_fold(html)[0]
+        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(1, 176)]))
+        self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
+        self.assertEqual(text_current(text), [phrase(500)])
+
+    def test_three_thousand_sparse_attempts_fit_the_byte_budget_with_the_true_count_in_both_forms(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {
+                "at": stamp,
+                "dish": "D7",
+                "attempt": str(2 * number + 1),
+                "role": "worker",
+                "thread": f"opaque=sparse-{number}",
+                "seat": "",
+                "start": stamp,
+                "end": stamp,
+            }
+            for number in range(3000)
+        ])
+        for args in ((), ("--text",)):
+            self.assertLessEqual(len(fixture.stdout_bytes(*args, "--max-bytes", "16000")), 16000)
+        document = self.document("--max-bytes", "16000")
+        folded = data_of(document).get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], "2999 attempts: 2999 workers, all ended")
+        text = self.out("--text", "--max-bytes", "16000")
+        self.assertIn("2999 attempts: 2999 workers, all ended", text)
+        running = [line for line in text.split("\n") if "running for" in line]
+        self.assertTrue(any("D7 worker" in line for line in running), running)
 
     def test_ordinary_ledger_secret_token_in_the_thread_and_the_seat_is_absent_from_both_forms(self):
         token = "ledger-secret-token"
@@ -3824,12 +3878,12 @@ class LedgerTest(OutputCase):
         self.assertNotIn(token, text)
         self.assertIn("attempt 1 · worker · open", text)
 
-    def test_ordinary_ledgertoken_in_the_thread_attempt_role_and_seat_is_absent_from_both_forms(self):
+    def test_ordinary_ledgertoken_in_the_thread_role_and_seat_is_absent_from_both_forms(self):
         fixture = one_running(self.fixture).write()
         stamp = fixture.stamp(10)
         token, other = "ledgertoken", "ledger-secret-token"
         row = {"at": stamp, "dish": "D7", "start": stamp, "end": ""}
-        write_threads(fixture, [{**row, "attempt": token, "role": token, "thread": token, "seat": token}, {**row, "attempt": "1", "role": "worker", "thread": other, "seat": other}])
+        write_threads(fixture, [{**row, "attempt": "1", "role": token, "thread": token, "seat": token}, {**row, "attempt": "1", "role": "worker", "thread": other, "seat": other}])
         document, text = self.document(), self.out("--text")
         self.assertIn("attempt 1 · worker · open", text)
         self.assertEqual([token in document, token in text, other in document, other in text], [False, False, False, False])
@@ -3840,8 +3894,8 @@ class LedgerTest(OutputCase):
         rows = (("10", "ten", "opaque=ten"), (" 2 ", "spaced", "opaque=spaced"), ("2", "two", "opaque=two"))
         write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": attempt, "role": role, "thread": thread, "start": stamp, "end": ""} for attempt, role, thread in rows])
         text, document = self.out("--text"), self.document()
-        order = [line.strip() for line in text.split("\n") if line.strip().startswith("attempt ")]
-        self.assertEqual(order, ["attempt 2 · two · open", "attempt 10 · ten · open", "attempt 2 · spaced · open"])
+        order = [line.strip() for line in text.split("\n") if line.strip().startswith("attempt")]
+        self.assertEqual(order, ["attempts 2, 10: 1 ten, 1 two, all open", "attempt 2 · spaced · open"])
         self.assertNotIn("opaque=", document)
         self.assertNotIn("opaque=", text)
 
@@ -3869,6 +3923,352 @@ class LedgerTest(OutputCase):
         rank = MOD["attempt_rank"]
         self.assertEqual((rank("007"), rank("9" * 18)), ((0, 7), (0, int("9" * 18))))
         self.assertEqual((rank("9" * 19), rank(""), rank("٢")), ((1, "9" * 19), (1, ""), (1, "٢")))
+
+    def test_earlier_attempt_lines_leave_the_current_list_and_no_thread_id_reaches_the_page(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "claims check", "thread": "opaque=three-1-claims", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "code delegate", "thread": "opaque=three-2-code", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "claims check", "thread": "opaque=three-3-claims", "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempts 1-2: 2 workers, 1 code delegate, 1 claims check, all ended"
+        current = ["attempt 3 · worker · open", "attempt 3 · claims check · open"]
+        payload = ["attempt 1 · worker · ended", "attempt 1 · claims check · ended", "attempt 2 · worker · ended", "attempt 2 · code delegate · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        self.assertTrue(data.get("R"))
+        self.assertEqual(sum(len(idxs) for _, idxs in data["R"]), 2)
+        self.assertIn(summary, document)
+        for phrase in (*current, *payload):
+            self.assertIn(phrase, document)
+        self.assertNotIn("opaque=", document)
+        self.assertNotIn("opaque=", "\n".join(lines))
+        for ident in (worker(1), worker(2), worker(3)):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_live_earlier_worker_stays_visible_with_its_ledger_row_current(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("running", 6.5, None),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempt 2: 1 worker, all ended"
+        current = ["attempt 1 · worker · open", "attempt 3 · worker · open"]
+        payload = ["attempt 2 · worker · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        self.assertIn("  D7 earlier worker   model-a   running for ", "\n".join(lines))
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker")])
+        self.assertEqual(sum(1 for line in lanes if line[1] == "earlier worker"), 2)
+        for ident in (worker(1), worker(2), worker(3)):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_live_descendant_of_a_completed_earlier_worker_keeps_its_ancestor_chain_visible(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        child = delegated(worker(1), "helper-task")
+        fixture.thread(child, title="helper", parent=worker(1), turns=(("running", 6.5, None),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempt 2: 1 worker, all ended"
+        current = ["attempt 1 · worker · ended", "attempt 3 · worker · open"]
+        payload = ["attempt 2 · worker · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        running = [line for line in lines if "running for" in line]
+        self.assertTrue(any("D7 helper" in line and "under earlier worker" in line for line in running), running)
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker")])
+        self.assertIn("helper", [line[1] for line in lanes])
+        for ident in (worker(1), worker(2), worker(3), child):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_live_depth_three_row_keeps_its_depth_two_parent_visible(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        first = delegated(worker(1), "level-one-task")
+        fixture.thread(first, title="helper one", parent=worker(1), turns=(("completed", 50, 40),))
+        second = delegated(first, "level-two-task")
+        fixture.thread(second, title="helper two", parent=first, turns=(("completed", 45, 35),))
+        third = delegated(second, "level-three-task")
+        fixture.thread(third, title="helper three", parent=second, turns=(("running", 6.5, None),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempt 2: 1 worker, all ended"
+        current = ["attempt 1 · worker · ended", "attempt 3 · worker · open"]
+        payload = ["attempt 2 · worker · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        running = [line for line in lines if "running for" in line]
+        self.assertTrue(any("D7 helper three" in line for line in running), running)
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker")])
+        self.assertIn("helper one", [line[1] for line in lanes])
+        self.assertIn("helper two", [line[1] for line in lanes])
+        self.assertIn("helper three", [line[1] for line in lanes])
+        self.assertEqual(sum(1 for line in lanes if line[1] == "earlier worker"), 2)
+        for ident in (worker(1), worker(2), worker(3), first, second, third):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_earlier_worker_without_a_ledger_row_is_counted_once_by_lane_label(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "claims check", "thread": "opaque=missing-1-claims", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "code delegate", "thread": "opaque=missing-2-code", "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "claims check", "thread": "opaque=missing-3-claims", "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempts 1-2: 1 worker, 1 code delegate, 1 claims check, 1 earlier worker, all ended"
+        current = ["attempt 3 · worker · open", "attempt 3 · claims check · open"]
+        payload = ["attempt 1 · claims check · ended", "attempt 2 · worker · ended", "attempt 2 · code delegate · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 4], ["    " + summary, *["    " + phrase for phrase in current]])
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker"), (0, "earlier worker")])
+        self.assertNotIn("opaque=", document)
+        self.assertNotIn("opaque=", "\n".join(lines))
+
+    def test_two_completed_children_with_one_ledger_row_count_two_code_delegates(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        first = delegated(worker(1), "first-part")
+        fixture.thread(first, title="code delegate", parent=worker(1), turns=(("completed", 50, 40),))
+        second = delegated(worker(1), "second-part")
+        fixture.thread(second, title="code delegate", parent=worker(1), turns=(("completed", 45, 35),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "code delegate", "thread": first, "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempts 1-2: 2 workers, 2 code delegates, all ended"
+        current = ["attempt 3 · worker · open"]
+        payload = ["attempt 1 · worker · ended", "attempt 1 · code delegate · ended", "attempt 2 · worker · ended"]
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1:at + 3], ["    " + summary, *["    " + phrase for phrase in current]])
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], current)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], payload)
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(sorted(covered), [(0, "earlier worker"), (0, "earlier worker"), (1, "code delegate"), (1, "code delegate")])
+        for ident in (worker(1), worker(2), worker(3), first, second):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_byte_budget_quiet_fold_keeps_every_earlier_family_inside_the_attempt_fold(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        for number in range(100):
+            child = delegated(worker(1), f"code-delegate-{number}")
+            fixture.thread(child, title="code delegate", parent=worker(1), turns=(("completed", 50, 40),))
+        fixture.write_store()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [
+            {"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": worker(1), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "2", "role": "worker", "thread": worker(2), "start": stamp, "end": stamp},
+            {"at": stamp, "dish": "D7", "attempt": "3", "role": "worker", "thread": worker(3), "start": stamp, "end": ""},
+        ])
+        fixture.write()
+        summary = "attempts 1-2: 2 workers, 100 code delegates, all ended"
+        document = self.document("--max-bytes", "16000")
+        data = data_of(document)
+        self.assertEqual([fold[1] for fold in data.get("E", [])], [summary])
+        lanes = data["G"][0][1]
+        covered = {index for _, idxs in data["R"] for index in idxs}
+        self.assertEqual(sorted(lanes[index][1] for index in covered), ["100 sub-agents", "earlier worker", "earlier worker"])
+        self.assertEqual([lanes[index][1] for index in range(len(lanes)) if index not in covered], ["worker"])
+        text = self.out("--text", "--max-bytes", "16000")
+        self.assertIn("    " + summary, text)
+        lines = text.split("\n")
+        for heading in ("Running now", "Queued", "Failed"):
+            if heading in lines:
+                block = lines[lines.index(heading) + 1:]
+                block = block[:next((at for at, line in enumerate(block) if line and not line.startswith(" ")), len(block))]
+                for line in block:
+                    self.assertNotIn("code delegate", line)
+                    self.assertNotIn("sub-agents", line)
+                    self.assertNotIn("earlier worker", line)
+
+    def test_store_without_a_thread_table_folds_earlier_lanes_with_counts_and_state_only(self):
+        fixture = self.fixture
+        fixture.coordinator()
+        fixture.unit("D7", "in-progress", "Activity page", thread=worker(3), pr="https://example.test/o/r/pull/7")
+        fixture.retired("D7", worker(1))
+        fixture.retired("D7", worker(2))
+        fixture.thread(worker(3), title="D7 worker", turns=(("running", 4.5, None),))
+        fixture.thread(worker(1), turns=(("completed", 90, 80),))
+        fixture.thread(worker(2), turns=(("completed", 70, 60),))
+        fixture.write()
+        summary = "2 earlier workers, all ended"
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1], "    " + summary)
+        document = self.document()
+        data = data_of(document)
+        self.assertNotIn("L", data)
+        folded = data.get("E", [])
+        self.assertEqual(len(folded), 1)
+        self.assertEqual(folded[0][1], summary)
+        self.assertEqual(folded[0][2], [])
+        lanes = data["G"][0][1]
+        covered = [(lanes[index][0], lanes[index][1]) for _, idxs in data["R"] for index in idxs]
+        self.assertEqual(covered, [(0, "earlier worker"), (0, "earlier worker")])
+        for ident in (worker(1), worker(2), worker(3)):
+            self.assertNotIn(ident, document)
+            self.assertNotIn(ident, "\n".join(lines))
+
+    def test_single_attempt_with_no_earlier_family_has_no_fold(self):
+        fixture = one_running(self.fixture).write()
+        stamp = fixture.stamp(10)
+        write_threads(fixture, [{"at": stamp, "dish": "D7", "attempt": "1", "role": "worker", "thread": "opaque=single-worker", "start": stamp, "end": ""}])
+        lines = self.out("--text").split("\n")
+        at = lines.index(next(line for line in lines if line.startswith("  D7   ")))
+        self.assertEqual(lines[at + 1], "    attempt 1 · worker · open")
+        document = self.document()
+        data = data_of(document)
+        self.assertEqual([line for _, rows in data.get("L", []) for line in rows], ["attempt 1 · worker · open"])
+        self.assertNotIn("attempts", document)
+        self.assertNotIn('"E":', document)
+        self.assertNotIn('"R":', document)
+        self.assertNotIn("opaque=", document)
+
+    def test_roles_match_the_store_role_tuple_or_display_order_drifs(self):
+        import ast
+        text = (SCRIPT.parent / "brigade_lib" / "store.py").read_text()
+        line = next(line for line in text.split("\n") if line.startswith("THREAD_ROLES = "))
+        store_roles = ast.literal_eval(line.split("=", 1)[1].strip())
+        self.assertEqual(MOD["ROLES"], store_roles)
+        self.assertEqual(MOD["ROLES"], ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner"))
+
 
 
 class LiveTest(OutputCase):
@@ -4102,6 +4502,30 @@ class LiveTest(OutputCase):
         self.assertIn("Expand all", wrapper)
         self.assertIn("Collapse all", wrapper)
         self.assertIn("30000", wrapper)
+
+    def test_live_page_with_no_value_polls_default_loopback(self):
+        fixture = one_running(self.fixture).write()
+        wrapper = self.out("--live-page")
+        token = (fixture.store / "activity-token").read_text().strip()
+        self.assertIn(f"http://127.0.0.1:48731/activity/{token}", wrapper)
+
+    def test_live_page_with_https_origin_polls_that_origin(self):
+        fixture = one_running(self.fixture).write()
+        origin = "https://home.example.ts.net:48731"
+        wrapper = self.out("--live-page", origin)
+        token = (fixture.store / "activity-token").read_text().strip()
+        self.assertIn(f"{origin}/activity/{token}", wrapper)
+        self.assertNotIn("http://127.0.0.1:48731", wrapper)
+
+    def test_live_page_with_path_query_or_non_http_scheme_is_refused_with_the_origin_rule(self):
+        refused = "activity: --live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
+        for origin in ("https://home.example.ts.net:48731/activity", "https://home.example.ts.net:48731?x=1", "ftp://home.example.ts.net:48731"):
+            with self.subTest(origin=origin):
+                self.assertEqual(self.fails(1, "--live-page", origin), refused)
+
+    def test_live_page_with_empty_port_is_refused_with_the_origin_rule(self):
+        refused = "activity: --live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
+        self.assertEqual(self.fails(1, "--live-page", "https://home.example.ts.net:"), refused)
 
     def test_a_broken_store_answers_503_with_the_one_line_message_and_no_page(self):
         fixture = one_running(self.fixture).write()
