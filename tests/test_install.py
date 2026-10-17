@@ -3231,6 +3231,7 @@ class OwnershipTest(unittest.TestCase):
                     )
                     self.assertEqual(swarm.read_bytes(), b"occupant\x00\xff")
                     self.assert_displaced(saved, kind)
+                    self.assert_displaced(backup, kind)
                     self.assertEqual(read_legacy(self.home)["backups"], rows)
                     self.assert_no_copy_left(swarm)
                     self.assertEqual(list(swarm.parent.glob(".pstack-t3-stranger-*")), [])
