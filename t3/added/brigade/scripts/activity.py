@@ -65,7 +65,7 @@ A pull request link is printed only as https://host/owner/repository/pull/number
 A work item on the page whose nonblank pull request value cannot be converted to such an address, or whose address the filter would change, has no link and is counted in a note.
 Different work items can print the same id, summary, state, and link. Each work item that is in flight or has an agent in the window is still listed or counted as its own work item.
 
---serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the live server for html_render at the given address plus /activity/<token>. The address defaults to http://127.0.0.1:48731. It accepts an origin such as https://home.example.ts.net:48731. The token lives in activity-token under the store directory.
+--serve runs a local HTTP server on 127.0.0.1 for this store's page and prints its token address. --live-page prints the wrapper that polls the live server for html_render at the given address plus /activity/<token>. The address defaults to the fixed http://127.0.0.1:48731, which does not follow --serve. It accepts an origin such as https://home.example.ts.net:48731. The token lives in activity-token under the store directory.
 """
 
 import argparse
@@ -459,7 +459,7 @@ def parser():
     top.add_argument("--serve", nargs="?", const=DEFAULT_PORT, default=None, type=int, metavar="PORT",
                      help="run a local HTTP server on 127.0.0.1 for this store's page, rebuilt at most every 10 seconds; PORT defaults to 48731 and 0 picks an ephemeral port. The wrapper sends its token to whatever listens on the port, so on a machine with other local users, do not leave a rendered wrapper polling while the server is stopped")
     top.add_argument("--live-page", nargs="?", const="", default=None, metavar="ORIGIN",
-                     help="print the self-contained HTML wrapper that polls the live server every 30 seconds for html_render at the given address plus /activity/<token>; with no value the address is http://127.0.0.1:48731, with an http:// or https:// origin with a host and no userinfo, path, query, or fragment such as https://home.example.ts.net:48731 it polls that origin; a value with whitespace, a backslash, ?, or #, or with a port that does not parse, is refused; the wrapper holds the token, so never share or commit it")
+                     help="print the self-contained HTML wrapper that polls the live server every 30 seconds for html_render at the given address plus /activity/<token>; with no value the address is the fixed http://127.0.0.1:48731 and does not follow --serve, with an http:// or https:// origin with a host and no userinfo, path, query, or fragment such as https://home.example.ts.net:48731 it polls that origin; a value with whitespace, a backslash, ?, or #, or with a port that does not parse, is refused; the wrapper holds the token, so never share or commit it")
     return top
 
 

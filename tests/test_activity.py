@@ -4531,6 +4531,16 @@ class LiveTest(OutputCase):
         refused = "activity: --live-page takes an http:// or https:// origin with no userinfo, path, query, or fragment; pass one such as https://home.example.ts.net:48731, or omit it to use http://127.0.0.1:48731"
         self.assertEqual(self.fails(1, "--live-page", "https://home.example.ts.net:"), refused)
 
+    def test_live_page_with_no_value_ignores_serve_and_still_names_48731(self):
+        fixture = one_running(self.fixture).write()
+        wrapper = self.out("--serve", "5000", "--live-page")
+        token = (fixture.store / "activity-token").read_text().strip()
+        self.assertIn(f"http://127.0.0.1:48731/activity/{token}", wrapper)
+        self.assertNotIn("127.0.0.1:5000", wrapper)
+
+    def test_live_page_help_says_the_no_value_address_does_not_follow_serve(self):
+        self.assertIn("does not follow --serve", MOD["parser"]().format_help())
+
     def test_a_broken_store_answers_503_with_the_one_line_message_and_no_page(self):
         fixture = one_running(self.fixture).write()
         (fixture.store / "restaurant.json").unlink()
