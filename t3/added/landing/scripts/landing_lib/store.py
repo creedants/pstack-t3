@@ -177,6 +177,9 @@ Identity = namedtuple("Identity", "name email")
 CREDIT_LINE = re.compile(r"Based on #[0-9]+ by @[A-Za-z0-9-]+\.?")
 
 
+AUTHOR_POLICIES = ("any", "configured", "credited")
+
+
 BRIGADE_ROOT = "BRIGADE_STORE"
 
 
@@ -361,23 +364,33 @@ def pr_body(store, entry):
 def foreign_author(store, entry):
     """Why this entry cannot land on authorship, or None.
 
-    The check runs when configured_identity gives a value. A reviewed commit passes when its author name and
-    email equal the configured ones. A commit with another author passes when both of these hold. A line of
-    pr_body, with surrounding whitespace removed, matches CREDIT_LINE. The commit has a Co-authored-by trailer
-    equal to its own author as name <email>. The reason names the oldest commit that fails.
+    The contract's authorPolicy decides the check. any returns None without reading git or the commits.
+    configured and credited run the check only when configured_identity gives a value. configured bounces every
+    reviewed commit whose author is not that identity. credited lands a commit with another author when a line of
+    pr_body, with surrounding whitespace removed, matches CREDIT_LINE and the commit has a Co-authored-by trailer
+    equal to its own author as name <email>, and bounces it otherwise. The reason names the oldest commit that fails.
     """
+    policy = store.contract.get("authorPolicy", "any")
+    if policy == "any":
+        return None
     identity = configured_identity(store.repo)
     if identity is None:
         return None
     foreign = [(sha, author, credits) for sha, author, credits in entry_commits(store.repo, entry) if author != identity]
     if not foreign:
         return None
-    credited = any(CREDIT_LINE.fullmatch(line.strip()) for line in pr_body(store, entry).splitlines())
+    credited = policy == "credited" and any(CREDIT_LINE.fullmatch(line.strip()) for line in pr_body(store, entry).splitlines())
     for sha, author, credits in foreign:
         if not (credited and f"{author.name} <{author.email}>" in credits):
             return (f"commit {sha[:12]} has author {seam.one_line(f'{author.name} <{author.email}>')}, not the configured "
                     f"{seam.one_line(f'{identity.name} <{identity.email}>')}; recommit it as the configured author")
     return None
+
+
+def author_policy_note(contract):
+    """The author policy a repo status line names, or "" when the contract holds none or any."""
+    policy = contract.get("authorPolicy")
+    return f"author policy: {policy}" if policy in AUTHOR_POLICIES and policy != "any" else ""
 
 
 IDENTITY_PAUSE = "the configured git identity is now "

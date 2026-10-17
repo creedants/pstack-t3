@@ -96,9 +96,16 @@ def parser():
     p.add_argument("--timeout", type=int, default=None,
                    help="seconds before a check is killed. Omitted, a rerun keeps the stored timeout and a first init stores 1800")
     p.add_argument("--merge-method", choices=MERGE_METHODS, default=None,
-                   help="merge mode: how the queue merges its PRs, checked against the repository whenever it is set. "
+                   help="merge mode: how the queue merges its PRs, checked against the repository when gh can report the "
+                        "allowed methods, whenever it is set. "
                         "omitted in merge mode, a first init stores the one allowed method, or merge when gh cannot say, "
                         "and a rerun keeps the stored method while the repository allows it")
+    p.add_argument("--author-policy", choices=AUTHOR_POLICIES, default=None,
+                   help="how the queue judges a reviewed commit's author. any skips the check. configured and credited "
+                        "check only when the repository has a configured identity: configured requires that author, and "
+                        "credited also lands a commit by another author that carries a Co-authored-by trailer equal to "
+                        "it and a Based on #<n> by @<login> line in the body. Omitted, a rerun keeps the stored policy "
+                        "and a first init stores any")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
     p.add_argument("--generated", metavar="PATHS", default=None,
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
@@ -229,7 +236,7 @@ def run(argv):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
-                    args.merge_method, args.cap, args.generated, args.rebuild), 0
+                    args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy), 0
     if args.command == "times":
         return landing_times(args.repo, args.last, args.holder, args.json), 0
     with Store.for_repo(args.repo) as store:
@@ -282,8 +289,10 @@ def run(argv):
         line = status(store, args.id)
         if not args.id:
             note = generated_note(store.contract.get("generated") or [], store.contract.get("rebuild"))
-            if note:
-                line = f"{line} {note}"
+            policy_note = author_policy_note(store.contract)
+            text = " ".join(part for part in (note, policy_note) if part)
+            if text:
+                line = f"{line} {text}"
         return line, 0
 
 

@@ -1,0 +1,7 @@
+- kind feature
+- The landing contract gains `authorPolicy`, set by `land.py init --author-policy any|configured|credited`, stored as `any` by a new contract, and kept by a rerun that omits the flag.
+- `any` skips the authorship check, `configured` bounces every reviewed commit whose author is not the configured identity, and `credited` keeps the configured-identity gate, the `Co-authored-by` trailer, and the `Based on #<n> by @<login>` line.
+- A stored contract without the key reads as `any`.
+- A repo status line names the policy when it is `configured` or `credited`.
+- `t3/added/landing/SKILL.md` scopes the merge-method preference to a contract with no stored method and qualifies the check with when `gh` can report the allowed methods, and `--merge-method` help says the same.
+- `tests/landing/test_identity.py` pins each policy, the default, a keyless store, a rerun, an unknown value, and a status line.
