@@ -67,3 +67,52 @@ class LeasesTest(BrigadeTest):
         self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
         self.brigade("set", "--thread", "thread-2", "--replace")
         self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["thread"], "thread-2")
+
+    def write_meta(self, **changes):
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta.update(changes)
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+
+    def fired_polish(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "polish", "--summary", "Tidy the guide")
+        return ("fire", "--tickets", "T1", "--station", "perf-issue", "--summary", "Tidy the guide")
+
+    def test_a_fire_refuses_a_stored_cap_that_does_not_parse_and_names_it(self):
+        fire = self.fired_polish()
+        for stored, shown in (("polish=1", "'polish=1'"), ({"polish": "1"}, "'1'")):
+            with self.subTest(stored=stored):
+                self.write_meta(caps=stored)
+                before = self.store_files()
+                error = self.brigade(*fire, ok=False)
+                self.assertIn(f"brigade: warning: restaurant.json caps {shown} is invalid:", error)
+                self.assertEqual(self.store_files(), before)
+
+    def test_a_fire_succeeds_when_caps_is_missing(self):
+        self.open()
+        self.brigade("ticket", "add", "--kind", "polish", "--summary", "Tidy the guide")
+        self.assertNotIn("caps", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertTrue(self.brigade("fire", "--tickets", "T1", "--station", "perf-issue",
+                                     "--summary", "Tidy the guide").startswith("D1"))
+
+    def test_a_brief_refuses_a_stored_review_depth_that_does_not_parse_and_names_it(self):
+        self.briefable()
+        for stored, shown in (("light", "'light'"), ({"fix": "fullish"}, "'fullish'")):
+            with self.subTest(stored=stored):
+                self.write_meta(review=stored)
+                before = self.store_files()
+                error = self.brigade("brief", "D1", *self.FLAGS, "--contract", "none", ok=False)
+                self.assertIn(f"brigade: warning: restaurant.json review {shown} is invalid:", error)
+                self.assertEqual(self.store_files(), before)
+
+    def test_a_brief_succeeds_when_review_is_missing(self):
+        self.briefable()
+        self.assertNotIn("review", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertTrue(self.brigade("brief", "D1", *self.FLAGS, "--contract", "none")
+                        .startswith("Use the poteto-mode skill"))
+
+    def test_set_repairs_a_stored_cap_that_does_not_parse(self):
+        self.open()
+        self.write_meta(caps={"polish": "1"})
+        self.brigade("set", "--cap", "polish=1")
+        self.assertEqual(json.loads((self.at / "restaurant.json").read_text())["caps"], {"polish": 1})

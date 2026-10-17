@@ -1,0 +1,2 @@
+- kind fix
+- brigade refuses a malformed contextCap, coordinatorProvider, caps, or review value in restaurant.json instead of silently using its default, and prints a warning on stderr naming the key, the file, and the bad value.

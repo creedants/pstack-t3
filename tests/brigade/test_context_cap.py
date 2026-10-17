@@ -30,6 +30,51 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
         self.assertNotIn("contextCap", self.meta())
 
+    def test_open_refuses_a_stored_context_cap_that_is_not_a_whole_number_and_names_it(self):
+        self.open()
+        settings_before = self.settings().read_bytes()
+        for stored, shown in (("400000", "'400000'"), (True, "True")):
+            with self.subTest(stored=stored):
+                meta = self.meta()
+                meta["contextCap"] = stored
+                (self.at / "restaurant.json").write_text(json.dumps(meta))
+                store_before = self.store_files()
+                error = self.open(code=1)
+                self.assertIn(f"brigade: warning: restaurant.json contextCap {shown} is invalid: "
+                              "it is not a whole number", error.splitlines())
+                self.assertEqual(self.settings().read_bytes(), settings_before)
+                self.assertEqual(self.store_files(), store_before)
+
+    def test_open_takes_the_default_cap_when_context_cap_is_missing(self):
+        self.open()
+        self.brigade("set", "--context-cap", "90000")
+        self.brigade("set", "--context-cap", "")
+        self.assertNotIn("contextCap", self.meta())
+        self.settings().unlink()
+        self.assertEqual(self.open(), f"exists {self.at}")
+        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
+
+    def test_open_refuses_a_stored_coordinator_provider_that_is_not_known_and_names_it(self):
+        self.open()
+        meta = self.meta()
+        meta["coordinatorProvider"] = "vm"
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+        settings_before, store_before = self.settings().read_bytes(), self.store_files()
+        error = self.open(code=1)
+        self.assertIn("brigade: warning: restaurant.json coordinatorProvider 'vm' is invalid: "
+                      "it is not claude or other", error.splitlines())
+        self.assertEqual(self.settings().read_bytes(), settings_before)
+        self.assertEqual(self.store_files(), store_before)
+
+    def test_open_takes_the_default_provider_when_coordinator_provider_is_missing(self):
+        self.open()
+        self.brigade("set", "--coordinator-provider", "other")
+        self.brigade("set", "--coordinator-provider", "")
+        self.assertNotIn("coordinatorProvider", self.meta())
+        self.settings().unlink()
+        self.assertEqual(self.open(), f"exists {self.at}")
+        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
+
     def test_open_stores_the_passed_cap_and_provider_and_syncs_them(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
                      "--context-cap", "200000", "--coordinator-provider", "claude")
