@@ -22,6 +22,14 @@ class ContextCapTest(BrigadeTest):
         self.settings().parent.mkdir(parents=True, exist_ok=True)
         self.settings().write_text(text)
 
+    def drift(self, held, cap):
+        """The reopen line for a settings file that holds held while the store's cap is cap."""
+        return f"{self.settings()} holds autoCompactWindow {held}, not {cap}; run brigade.py set --context-cap {cap}"
+
+    def missing_drift(self, cap):
+        """The reopen line for a settings file that holds no integer cap while the store's cap is cap."""
+        return f"{self.settings()} holds no integer autoCompactWindow; run brigade.py set --context-cap {cap}"
+
     def open(self, *extra, ok=True, code=None):
         return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, ok=ok, code=code)
 
@@ -51,8 +59,8 @@ class ContextCapTest(BrigadeTest):
         self.brigade("set", "--context-cap", "")
         self.assertNotIn("contextCap", self.meta())
         self.settings().unlink()
-        self.assertEqual(self.open(), f"exists {self.at}")
-        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
+        self.assertEqual(self.open(), f"exists {self.at}\n{self.missing_drift(300000)}")
+        self.assertFalse(self.settings().exists())
 
     def test_open_refuses_a_stored_coordinator_provider_that_is_not_known_and_names_it(self):
         self.open()
@@ -72,8 +80,8 @@ class ContextCapTest(BrigadeTest):
         self.brigade("set", "--coordinator-provider", "")
         self.assertNotIn("coordinatorProvider", self.meta())
         self.settings().unlink()
-        self.assertEqual(self.open(), f"exists {self.at}")
-        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
+        self.assertEqual(self.open(), f"exists {self.at}\n{self.missing_drift(300000)}")
+        self.assertFalse(self.settings().exists())
 
     def test_open_stores_the_passed_cap_and_provider_and_syncs_them(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
@@ -82,7 +90,7 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.meta()["coordinatorProvider"], "claude")
         self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 200000\n}\n')
 
-    def test_reopen_keeps_the_stored_cap_and_repairs_the_settings_file(self):
+    def test_reopen_reports_a_missing_settings_file_and_creates_none(self):
         self.open()
         self.brigade("set", "--context-cap", "90000")
         self.assertEqual(
@@ -91,8 +99,8 @@ class ContextCapTest(BrigadeTest):
             f"exists {self.at}\ncontext-cap stays 90000; change it with set --context-cap")
         self.assertEqual(self.meta()["contextCap"], 90000)
         self.settings().unlink()
-        self.assertEqual(self.open(), f"exists {self.at}")
-        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 90000\n}\n')
+        self.assertEqual(self.open(), f"exists {self.at}\n{self.missing_drift(90000)}")
+        self.assertFalse(self.settings().exists())
 
     def test_reopen_reports_an_ignored_context_cap_and_keeps_the_store(self):
         self.open()
@@ -284,12 +292,42 @@ class ContextCapTest(BrigadeTest):
                                      "--intake", "github", code=1), refusal)
         self.assertFalse((self.store / "bridge-kit" / "replacement").exists())
 
-    def test_a_refused_open_of_an_existing_store_changes_no_store_file(self):
+    def test_reopen_reports_a_settings_file_that_holds_no_object_and_writes_nothing(self):
         self.open()
         before = self.store_files()
         self.write_settings('[1, {"keep": true}]\n')
-        self.assertEqual(self.open(code=1), f"brigade: {self.settings()} holds no JSON object; fix or remove it")
+        self.assertEqual(self.open(), f"exists {self.at}\n{self.missing_drift(300000)}")
         self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.settings().read_text(), '[1, {"keep": true}]\n')
+
+    def test_open_creation_adopts_an_existing_cap_and_writes_no_settings_byte(self):
+        self.write_settings('{\n  "other": true,\n  "autoCompactWindow": 500000\n}\n')
+        before = self.settings().read_bytes()
+        self.assertEqual(self.open(), f"opened {self.at}")
+        self.assertEqual(self.meta()["contextCap"], 500000)
+        self.assertEqual(self.settings().read_bytes(), before)
+
+    def test_open_creation_writes_the_default_over_a_cap_that_is_not_an_integer(self):
+        self.write_settings('{\n  "autoCompactWindow": "500000"\n}\n')
+        self.assertEqual(self.open(), f"opened {self.at}")
+        self.assertNotIn("contextCap", self.meta())
+        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 300000\n}\n')
+
+    def test_reopen_reports_a_hand_edit_to_the_adopted_cap_and_keeps_both_values(self):
+        self.write_settings('{\n  "autoCompactWindow": 500000\n}\n')
+        self.open()
+        self.write_settings('{\n  "autoCompactWindow": 600000\n}\n')
+        store = self.store_files()
+        self.assertEqual(self.open(), f"exists {self.at}\n{self.drift(600000, 500000)}")
+        self.assertEqual(self.store_files(), store)
+        self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 600000\n}\n')
+
+    def test_reopen_writes_no_byte_when_the_settings_file_already_matches(self):
+        self.open()
+        self.write_settings('{"autoCompactWindow":300000}')
+        before = self.settings().read_bytes()
+        self.assertEqual(self.open(), f"exists {self.at}")
+        self.assertEqual(self.settings().read_bytes(), before)
 
     def test_open_refuses_a_tracked_settings_file_symlink_and_changes_nothing(self):
         self.git_project()
@@ -658,3 +696,35 @@ class ContextCapTest(BrigadeTest):
         self.assertEqual(self.meta()["contextCap"], 120000)
         self.assertFalse(self.settings().exists())
         self.assertTrue(self.brigade("status").endswith("\ncontext cap 120000 is not enforced on this host"))
+
+    def thread_landing(self):
+        """A local landing contract and a store that records the thread t1."""
+        self.init_landing()
+        self.landing_env()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf")
+        self.brigade("set", "--thread", "t1")
+
+    def store_a_cap_that_is_not_a_whole_number(self):
+        """Write restaurant.json holding contextCap "400000" and return its bytes."""
+        meta = self.meta()
+        meta["contextCap"] = "400000"
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+        return (self.at / "restaurant.json").read_bytes()
+
+    def test_replace_refuses_a_malformed_stored_cap_before_raising_the_landing_floor(self):
+        self.thread_landing()
+        before = self.store_a_cap_that_is_not_a_whole_number()
+        rows = self.landing_rows()
+        error = self.brigade("set", "--thread", "t2", "--replace", code=1)
+        self.assertIn("brigade: warning: restaurant.json contextCap '400000' is invalid: "
+                      "it is not a whole number", error.splitlines())
+        self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+        self.assertEqual(self.landing_rows(), rows)
+
+    def test_replace_with_a_repair_flag_repairs_the_stored_cap_and_raises_the_landing_floor(self):
+        self.thread_landing()
+        self.store_a_cap_that_is_not_a_whole_number()
+        self.brigade("set", "--thread", "t2", "--replace", "--context-cap", "400000")
+        meta = self.meta()
+        self.assertEqual((meta["thread"], meta["generation"], meta["contextCap"]), ("t2", 2, 400000))
+        self.assertIn(("perf/", 2), self.landing_rows()["owner"])

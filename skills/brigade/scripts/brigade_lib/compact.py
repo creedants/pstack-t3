@@ -87,6 +87,42 @@ def _object(raw):
     return value if isinstance(value, dict) else None
 
 
+def existing_cap(project_root):
+    """The integer autoCompactWindow the settings file already holds, or None.
+
+    None covers an unreadable file, a file that is not a strict JSON object, a missing key, and a value that is a
+    boolean or not an integer. This reads only, so it applies none of the write refusals in _load.
+    """
+    try:
+        raw = settings_path(project_root).read_bytes()
+    except OSError:
+        return None
+    value = _object(raw)
+    if value is None:
+        return None
+    cap = value.get(SETTINGS_KEY)
+    if isinstance(cap, bool) or not isinstance(cap, int):
+        return None
+    return cap
+
+
+def drift_line(meta):
+    """The one line naming a settings file that does not hold the effective cap, or None when it does.
+
+    None covers a provider that does not read as claude and a file that already holds the effective cap.
+    """
+    if effective_provider(meta) != "claude":
+        return None
+    cap = effective_cap(meta)
+    path = settings_path(meta["projectRoot"])
+    held = existing_cap(meta["projectRoot"])
+    if held == cap:
+        return None
+    if held is None:
+        return f"{path} holds no integer {SETTINGS_KEY}; run brigade.py set --context-cap {cap}"
+    return f"{path} holds {SETTINGS_KEY} {held}, not {cap}; run brigade.py set --context-cap {cap}"
+
+
 def _existing(directory):
     """The nearest existing directory at or above this one."""
     while not directory.is_dir():
@@ -240,6 +276,9 @@ def _with_cap(text, cap):
 
 def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
+
+    Only two callers reach this. Creation without --context-cap when the settings file holds no integer cap, and
+    set --context-cap. Every other path leaves the settings file alone.
 
     A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
     resolved file that either lookup in _git_refusal reports as tracked or unreadable, and a git command that cannot

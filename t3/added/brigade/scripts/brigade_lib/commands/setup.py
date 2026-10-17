@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.compact import effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
+from brigade_lib.compact import drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
 from brigade_lib.store import AUTOFIRE, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, is_admin, low_reserve_of, open_restaurant, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
@@ -139,8 +139,10 @@ def handle_open(args, root):
         if cap is not None and workers >= cap:
             lines.append(f"warning: workers {workers} is at or above the repository cap of {cap} while a sibling exists")
     meta = restaurant.meta
-    if not created and effective_provider(meta) == "claude":
-        sync_meta(meta)
+    if not created:
+        line = drift_line(meta)
+        if line is not None:
+            lines.append(line)
     return "\n".join(lines)
 
 
@@ -148,10 +150,7 @@ def handle_set(restaurant, args):
     if args.thread or args.expect is not None:
         if args.thread is None:
             raise BrigadeError("--expect needs --thread")
-        if args.low_reserve is None:
-            low_reserve_of(restaurant.meta)
-        elif args.low_reserve != "":
-            parse_low_reserve(args.low_reserve)
+        validate_settings(prospective_settings(restaurant, args))
         return set_thread(restaurant, args)
     with restaurant.checked():
         return seam.command(restaurant, args)
@@ -163,25 +162,16 @@ def handle(restaurant, args):
     return None
 
 
-def handle_locked(restaurant, args, view):
-    if args.command != "set":
-        return None
+def setting_changes(restaurant, args):
+    """The restaurant.json changes and the drops every set flag but --thread and --expect makes.
+
+    One translation serves both the prospective settings a command validates and the write it makes, so a flag
+    can never mean two things.
+    """
     meta = restaurant.meta
-    changes, drop, logged = {}, [], None
+    changes, drop = {}, []
     if args.intake is not None:
         changes["intake"] = set_intake(restaurant, intake_list(args.intake))["intake"]
-    if args.thread is not None and (args.thread or args.expect is not None):
-        current = (meta.get("thread") or "").strip()
-        generation, changing = next_owner(meta, args.thread, args.replace, args.expect, args.stopped)
-        changes.update(generation=generation, thread=args.thread)
-        if changing and current and not current.startswith("recovering:"):
-            changes["previousThread"] = current
-        if changing and is_admin(meta):
-            note = f"replaced {current}" if current else ("restarted" if meta.get("generation") else "first thread")
-            note += f"; stopped {clean(args.stopped)}" if args.stopped else ""
-            ident = f"{args.thread}@{generation}"
-            if not any(row["kind"] == "thread" and row["id"] == ident for row in restaurant.rows("log.tsv")):
-                logged = ("thread", ident, "recorded", note)
     if args.reporting:
         changes["reporting"] = args.reporting
     if args.workers is not None:
@@ -256,15 +246,43 @@ def handle_locked(restaurant, args, view):
             else:
                 schedules.pop(name, None)
         changes["schedules"] = schedules
-    prospective = dict(meta)
+    return changes, drop
+
+
+def prospective_settings(restaurant, args):
+    """restaurant.json as this command would leave it with every flag but --thread and --expect applied."""
+    changes, drop = setting_changes(restaurant, args)
+    prospective = dict(restaurant.meta)
     prospective.update(changes)
     for key in drop:
         prospective.pop(key, None)
+    return prospective
+
+
+def handle_locked(restaurant, args, view):
+    if args.command != "set":
+        return None
+    meta = restaurant.meta
+    changes, drop, logged = {}, [], None
+    if args.thread is not None and (args.thread or args.expect is not None):
+        current = (meta.get("thread") or "").strip()
+        generation, changing = next_owner(meta, args.thread, args.replace, args.expect, args.stopped)
+        changes.update(generation=generation, thread=args.thread)
+        if changing and current and not current.startswith("recovering:"):
+            changes["previousThread"] = current
+        if changing and is_admin(meta):
+            note = f"replaced {current}" if current else ("restarted" if meta.get("generation") else "first thread")
+            note += f"; stopped {clean(args.stopped)}" if args.stopped else ""
+            ident = f"{args.thread}@{generation}"
+            if not any(row["kind"] == "thread" and row["id"] == ident for row in restaurant.rows("log.tsv")):
+                logged = ("thread", ident, "recorded", note)
+    settings, drop = setting_changes(restaurant, args)
+    changes.update(settings)
+    prospective = prospective_settings(restaurant, args)
     validate_settings(prospective)
     if logged is not None:
         restaurant.log(*logged)
-    if args.context_cap is not None or args.coordinator_provider is not None:
-        if effective_provider(prospective) == "claude":
-            sync_meta(prospective)
+    if args.context_cap is not None and effective_provider(prospective) == "claude":
+        sync_meta(prospective)
     meta = restaurant.change_meta(drop, **changes)
     return json.dumps(meta, indent=2)

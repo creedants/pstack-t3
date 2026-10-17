@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.compact import effective_provider, refuse_setting, sync_meta
+from brigade_lib.compact import effective_provider, existing_cap, refuse_setting, sync_meta
 from brigade_lib.shared import BrigadeError, MalformedTable, slug, stored
 
 
@@ -663,11 +663,16 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         meta["role"] = "admin"
     # The settings file is written before the store is published, so a refusal leaves no store behind and claims no intake.
     if effective_provider(meta) == "claude":
-        try:
-            sync_meta(meta)
-        except BrigadeError:
-            directory.rmdir()
-            raise
+        # Creation adopts a cap the user already set, so only a file with no integer cap is written.
+        held = existing_cap(meta["projectRoot"]) if context_cap is None else None
+        if held is not None:
+            meta["contextCap"] = held
+        else:
+            try:
+                sync_meta(meta)
+            except BrigadeError:
+                directory.rmdir()
+                raise
     for filename, template in (("menu.md", ADMIN_MENU if admin else MENU), ("house-rules.md", HOUSE_RULES)):
         seam.write_atomic(directory / filename, template.format(restaurant=name))
     for table in TABLES:

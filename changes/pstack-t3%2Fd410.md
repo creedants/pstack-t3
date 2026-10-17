@@ -1,0 +1,4 @@
+- kind fix
+- `brigade open` on creation with no `--context-cap` adopts an integer `autoCompactWindow` already present in the project's `.claude/settings.local.json` as the store's `contextCap` and writes nothing to that file.
+- `brigade open` on an existing store writes no settings file, and one drift line names the file, the value it holds or that it holds no integer, the effective cap, and `set --context-cap`.
+- `brigade set --thread ... --replace` validates the prospective settings before it raises the landing owner floor, so a malformed stored setting refuses with no write, including no landing owner row.
