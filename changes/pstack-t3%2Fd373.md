@@ -1,3 +1,4 @@
 - kind polish
 - `fire` refuses a path missing from the checkout with `<path> is not in the checkout. Drop it from --paths`. Two missing paths use `<a> and <b> are not in the checkout. Drop them from --paths`. Three or more use Oxford comma with `are`.
 - The brief holds `List only code delegate, claims check, and architect runner under ## Threads` and `Put every other child under ## Notes`.
+- `dish --state dropped` with a cleared thread rebound during lease release archives nothing.
