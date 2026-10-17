@@ -1,0 +1,2 @@
+- kind polish
+- The Roadmap in `docs/guide.md` no longer lists testing on macOS. It still lists testing on T3's other providers (OpenCode, Antigravity, ACP agents).
