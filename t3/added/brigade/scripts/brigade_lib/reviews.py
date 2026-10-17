@@ -33,7 +33,7 @@ THREADS_SECTION = (2, "Threads")
 THREADS_ITEM = re.compile(r"^- ([a-z]+(?: [a-z]+)*) `([^`]+)` (\S+)$")
 # A recognized list-item prefix triggers refusal when THREADS_ITEM does not match.
 THREADS_ITEM_START = re.compile(r"[-*+\u2022]|\d+[.)]")
-# A backticked value in the thread-id position of a child row, that is a backticked value holding a colon.
+# A backticked thread id, that is a backticked value holding a colon, wherever it sits on the line.
 THREADS_ITEM_THREAD = re.compile(r"`[^`]*:[^`]*`")
 # Why report_threads cannot read one line of a report's ## Threads section. Each value finishes `line <n> `.
 THREADS_REFUSED = {
@@ -225,10 +225,10 @@ def review_report(restaurant, dish_id, report):
 def threads_prose(line):
     """Whether a non-blank line of the ## Threads section is plain prose, so report_threads skips it.
 
-    A prose line starts, after any leading whitespace, with no list marker, is no heading, holds no
+    A prose line starts, after any leading whitespace, with neither a list marker nor a `#`, holds no
     backticked thread id, that is no backticked value holding a colon, and names no child role. A list
     marker is a hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a closing
-    parenthesis. Every other line that fails THREADS_ITEM is a malformed child row, refused by its number.
+    parenthesis. Every other line that fails THREADS_ITEM is refused by its number.
     """
     stripped = line.lstrip()
     if THREADS_ITEM_START.match(stripped) or stripped.startswith("#"):
@@ -245,7 +245,7 @@ def report_threads(text):
     tuple of `(line number, reason)` pairs. A fenced block that opens after up to three spaces is
     skipped, so no line inside one is read. A report with no ## Threads section holds no child. A line
     with no text is skipped, and so is a line of the section that is plain prose, that is a line that
-    starts, after any leading whitespace, with no list marker, is no heading, holds no backticked thread
+    starts, after any leading whitespace, with neither a list marker nor a `#`, holds no backticked thread
     id, and names no child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number
     followed by a dot or a closing parenthesis. A line that is not prose and is not one item of the form
     - <role> `<thread id>` <seat> is reported by its number. A heading deeper than the section's own or a
