@@ -8,12 +8,14 @@ import math
 import os
 import posixpath
 import re
+import select
 import shlex
 import signal
 import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -1000,20 +1002,272 @@ def slot(pool="worker", repo=None, command=None, *, count=1):
             _hide_hold()
 
 
-def supervised(command, cwd, timeout):
-    """Run a shell command in its own process group and kill the whole group on timeout."""
-    process = subprocess.Popen(command, cwd=cwd, shell=True, start_new_session=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    try:
-        output, _ = process.communicate(timeout=timeout)
-        return process.returncode, output.decode("utf-8", "replace")
-    except subprocess.TimeoutExpired:
-        _killpg_like_linux(process, signal.SIGKILL)
+_BUILD_DRAIN_GRACE = 5.0
+
+
+_ARMED = "armed"
+
+
+_STARTED = "started"
+
+
+_GROUP_KILLED = "group-killed"
+
+
+_REAPED = "reaped"
+
+
+_RESTORED = "restored"
+
+
+class _Build:
+    """One shell command in its own process group, owned by exactly one runner.
+
+    Only the runner sends SIGKILL to the group and only the runner reaps the leader. It sends SIGKILL only
+    before it reaps. The SIGINT handler records the interrupt and wakes the runner. It never
+    signals, reaps, raises, or calls the entry disposition. The entry disposition receives the
+    postponed SIGINT from deliver, after close restores the disposition.
+    No code outside this class waits on the Popen. Nothing calls its wait, poll, or communicate.
+    """
+
+    def __init__(self, previous):
+        """Previous is what signal.getsignal(SIGINT) returned on entry. Opens no file descriptors."""
+        self._previous = previous
+        self._intercept = previous is signal.SIG_DFL or callable(previous)
+        self.phase = None
+        self._pending = None
+        self._popen = None
+        self._wake_r = None
+        self._wake_w = None
+        self._stdout = None
+        self._chunks = []
+        self.returncode = None
+
+    def start(self, command, cwd):
+        """Open the wake pipe, install the interceptable handler, then spawn. An installed handler is in place before the fork."""
+        self._wake_r, self._wake_w = os.pipe()
+        os.set_blocking(self._wake_r, False)
+        os.set_blocking(self._wake_w, False)
+        self.phase = _ARMED
+        if self._intercept:
+            signal.signal(signal.SIGINT, self._on_sigint)
+        self._popen = subprocess.Popen(command, cwd=cwd, shell=True, start_new_session=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.phase = _STARTED
+        self._stdout = self._popen.stdout
+
+    def run(self, timeout):
+        """Drive STARTED to REAPED. Returns a pair. Timeout returns None as the status."""
+        deadline = time.monotonic() + timeout
+        ended = self._drain(deadline)
+        if ended == "eof":
+            ended = self._await_exit(deadline)
+            if ended == "reaped":
+                return self.returncode, self._text()
+        self._kill_group()
+        if self._drain(time.monotonic() + _BUILD_DRAIN_GRACE) != "eof":
+            self._close_stdout()
+            self._chunks = []
+        self._reap_killed()
+        text = self._text()
+        return (None, text) if ended == "deadline" else (self.returncode, text)
+
+    def close(self):
+        """Converge to RESTORED from any phase. Idempotent. Runs in the finally."""
         try:
-            output, _ = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            # A descendant left the group with setsid and still holds the pipe. Stop waiting for it.
-            process.stdout.close()
-            process.wait()
-            output = b""
-        return None, output.decode("utf-8", "replace")
+            if self.phase == _STARTED:
+                self._kill_group()
+            if self.phase == _GROUP_KILLED:
+                self._close_stdout()
+                self._reap_killed()
+        finally:
+            self._restore()
+            self._close_stdout()
+            if self._wake_r is not None:
+                try:
+                    os.close(self._wake_r)
+                except OSError:
+                    pass
+                self._wake_r = None
+            if self._wake_w is not None:
+                try:
+                    os.close(self._wake_w)
+                except OSError:
+                    pass
+                self._wake_w = None
+
+    def deliver(self):
+        """Hand a postponed SIGINT to the entry disposition. Runs after close."""
+        if self._pending is None:
+            return
+        signum, frame = self._pending
+        self._pending = None
+        if self._previous is signal.SIG_IGN:
+            return
+        if self._previous is signal.SIG_DFL:
+            os.kill(os.getpid(), signal.SIGINT)
+            raise KeyboardInterrupt
+        if callable(self._previous):
+            self._previous(signum, frame)
+            return
+        raise KeyboardInterrupt
+
+    def _on_sigint(self, signum, frame):
+        """Record the first SIGINT and wake the runner. Never signals, reaps, or raises."""
+        if self._pending is None:
+            self._pending = (signum, frame)
+        try:
+            os.write(self._wake_w, b"\0")
+        except OSError:
+            pass
+
+    def _drain(self, until):
+        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. Never reaps."""
+        while self._stdout is not None:
+            if self._pending is not None and self.phase == _STARTED:
+                return "interrupt"
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                return "deadline"
+            readers = [self._wake_r] if self._wake_r is not None else []
+            if self._stdout is not None:
+                try:
+                    readers.append(self._stdout.fileno())
+                except (OSError, ValueError):
+                    self._close_stdout()
+                    return "eof"
+            try:
+                ready, _, _ = select.select(readers, [], [], remaining)
+            except (OSError, ValueError):
+                continue
+            for descriptor in ready:
+                if descriptor == self._wake_r:
+                    try:
+                        os.read(self._wake_r, 512)
+                    except OSError:
+                        pass
+                else:
+                    try:
+                        chunk = os.read(descriptor, 65536)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        self._close_stdout()
+                        return "eof"
+                    self._chunks.append(chunk)
+        return "eof"
+
+    def _await_exit(self, deadline):
+        """Poll the leader with WNOHANG reaps after EOF. This runner is the only signaller."""
+        delay = 0.0
+        while True:
+            if self._try_reap():
+                return "reaped"
+            if self._pending is not None:
+                return "interrupt"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return "deadline"
+            try:
+                select.select([self._wake_r] if self._wake_r is not None else [], [], [], min(delay, remaining))
+            except (OSError, ValueError):
+                pass
+            if self._wake_r is not None:
+                try:
+                    os.read(self._wake_r, 512)
+                except OSError:
+                    pass
+            delay = min(max(delay * 2, 0.001), 0.05)
+
+    def _kill_group(self):
+        """Move STARTED to GROUP_KILLED and attempt SIGKILL once. A call after reap is a bug."""
+        if self.phase not in (_STARTED, _GROUP_KILLED):
+            raise RuntimeError("signal after reap")
+        if self.phase == _GROUP_KILLED:
+            return
+        self.phase = _GROUP_KILLED
+        try:
+            _killpg_like_linux(self._popen, signal.SIGKILL)
+        except OSError:
+            pass
+
+    def _try_reap(self):
+        """Run one waitpid with WNOHANG. True when the leader is gone. Records our reap or a foreign reap."""
+        try:
+            pid, status = os.waitpid(self._popen.pid, os.WNOHANG)
+        except ChildProcessError:
+            self._reaped(None)
+            return True
+        if pid == 0:
+            return False
+        self._reaped(status)
+        return True
+
+    def _reap_killed(self):
+        """Run one blocking waitpid after the SIGKILL attempt in GROUP_KILLED.
+
+        This wait has no deadline. A pending SIGINT stays postponed until the leader exits.
+        """
+        try:
+            _, status = os.waitpid(self._popen.pid, 0)
+        except ChildProcessError:
+            status = None
+        self._reaped(status)
+
+    def _reaped(self, status):
+        """Record the single reap. Writes returncode so Popen never queues the pid."""
+        self.returncode = -1 if status is None else os.waitstatus_to_exitcode(status)
+        self._popen.returncode = self.returncode
+        self.phase = _REAPED
+
+    def _restore(self):
+        """Restore the interceptable entry disposition. Blocks SIGINT for the swap where pthread_sigmask exists."""
+        blocked = hasattr(signal, "pthread_sigmask")
+        old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT}) if blocked else None
+        try:
+            if self._intercept and self.phase is not None:
+                signal.signal(signal.SIGINT, self._previous)
+            self.phase = _RESTORED
+        finally:
+            if blocked:
+                signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+    def _close_stdout(self):
+        """Close the build pipe and forget it. Ignores close errors."""
+        if self._stdout is not None:
+            try:
+                self._stdout.close()
+            except (OSError, ValueError):
+                pass
+            self._stdout = None
+
+    def _text(self):
+        """Decode the bytes read so far with replacement. Keeps CRLF."""
+        return b"".join(self._chunks).decode("utf-8", "replace")
+
+
+def run_build(command, cwd, timeout):
+    """Run a shell command in its own process group. Returns a pair. Timeout returns None as the status.
+
+    One runner sends SIGKILL to the group and reaps the leader, and it sends SIGKILL only before it reaps.
+    An interceptable SIGINT before the reap is postponed. The runner never sends SIGKILL after it reaps.
+    It restores the entry disposition, and then delivers the SIGINT to it. SIG_IGN leaves the
+    build running.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError("signal only works in main thread of the main interpreter")
+    build = _Build(signal.getsignal(signal.SIGINT))
+    try:
+        build.start(command, cwd)
+        result = build.run(timeout)
+    finally:
+        try:
+            build.close()
+        finally:
+            build.deliver()
+    return result
+
+
+def supervised(command, cwd, timeout):
+    """Run a shell command in its own process group and attempt SIGKILL at the timeout."""
+    return run_build(command, cwd, timeout)

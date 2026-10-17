@@ -1,0 +1,5 @@
+- kind fix
+- `governor.py` shares one runner between `supervised` and `Integration._run_build`.
+- The runner sends SIGKILL to the group only before it reaps.
+- Restoration blocks SIGINT for the swap where pthread_sigmask exists.
+- Timeout attempts SIGKILL for the group before the reap. The output drain after the attempt waits at most five seconds. The final reap has no deadline and postpones SIGINT until the leader exits.

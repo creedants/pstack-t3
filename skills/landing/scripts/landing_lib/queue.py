@@ -220,49 +220,11 @@ class Integration:
             names.extend(path for path in out.split("\0") if path)
         return sorted(set(names))
 
-    def _stop_build(self, process):
-        if process is None or process.returncode is not None:
-            return
-        killpg = getattr(seam, "_killpg_like_linux", None)
-        try:
-            if killpg is not None:
-                killpg(process, signal.SIGKILL)
-            else:
-                os.killpg(process.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        try:
-            process.wait()
-        except OSError:
-            pass
-
-    def _run_build(self, command, timeout, active):
-        # Tracks the live build so the rebuild guard can stop it before cleanup.
-        try:
-            process = subprocess.Popen(command, cwd=self.path, shell=True, start_new_session=True,
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        except Exception:
-            active["process"] = None
-            raise
-        active["process"] = process
-        try:
-            output, _ = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            self._stop_build(process)
-            try:
-                output, _ = process.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.stdout.close()
-                process.wait()
-                output = b""
-            active["process"] = None
-            return None, output.decode("utf-8", "replace")
-        active["process"] = None
-        return process.returncode, output.decode("utf-8", "replace")
+    def _run_build(self, command, timeout):
+        return seam.run_build(command, self.path, timeout)
 
     def _rebuild(self, before):
         command = "python3 scripts/build.py"
-        active = {}
         try:
             failed = self._clear_generated()
             if failed:
@@ -275,7 +237,7 @@ class Integration:
                 slot = None
             holder = slot("landing", repo=self.path, command=command) if slot else contextlib.nullcontext()
             with holder:
-                first = self._run_build(command, timeout, active)
+                first = self._run_build(command, timeout)
                 if first[0] is None or first[0] != 0:
                     reason = "timed out" if first[0] is None else f"exited {first[0]}"
                     return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(first[1])}")
@@ -292,7 +254,7 @@ class Integration:
                 failed = self._clear_generated()
                 if failed:
                     return self._give_up(before, failed)
-                second = self._run_build(command, timeout, active)
+                second = self._run_build(command, timeout)
                 if second[0] is None or second[0] != 0:
                     reason = "timed out" if second[0] is None else f"exited {second[0]}"
                     return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(second[1])}")
@@ -317,7 +279,6 @@ class Integration:
                     return self._give_up(before, f"rebuild failed. `git commit --amend` exited {amend.returncode}. {_tail(amend.stderr + amend.stdout)}")
             return None
         except BaseException as error:
-            self._stop_build(active.pop("process", None))
             self._give_up(before, "")
             if isinstance(error, Exception):
                 return f"rebuild failed. `{command}` {type(error).__name__}: {error}"
