@@ -70,7 +70,7 @@ class LandingTest(LandingTestBase):
             time.sleep(0.02)
         self.fail(f"{path} held no whole pid in {timeout}s: {last!r}")
 
-    def test_a_pid_file_read_waits_for_the_whole_pid_not_the_files_creation(self):
+    def test_a_pid_file_read_waits_past_an_empty_file_the_writer_fills_later(self):
         path = self.base / "empty-then-filled.pid"
         path.write_text("")
         filler = threading.Timer(0.2, path.write_text, args=("12345",))
