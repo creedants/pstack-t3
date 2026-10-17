@@ -806,7 +806,7 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(payload["modeSource"], str(repo.user))
         self.assertEqual(payload["escalate"], ["**/migrations/**"])
 
-    def test_user_write_without_mode_resets_to_full(self):
+    def test_replace_without_mode_resets_to_full(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             first = repo.write("--mode", "light")
@@ -1047,7 +1047,7 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(document["roles"]["bug-fix"], ["inherit"])
         self.assertNotIn("budget", document)
 
-    def test_mode_full_repairs_stored_turbo_without_keep(self):
+    def test_mode_full_repairs_stored_turbo(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.put(repo.user, {"mode": "turbo", "roles": {}})
