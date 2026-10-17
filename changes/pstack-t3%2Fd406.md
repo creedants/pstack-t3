@@ -1,0 +1,2 @@
+- kind polish
+- `docs/live-runs.md` drops the stale line ranges from the two `### Defects found` citations, leaving the runtime's Top-level threads section named by file and naming `copy_file` for the build's file copy.
