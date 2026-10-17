@@ -388,7 +388,7 @@ def foreign_author(store, entry):
 
 
 def author_policy_note(contract):
-    """The author policy a repo status line names, or "" when the contract holds none or any."""
+    """The author policy a repo status line names, or "" unless the contract holds configured or credited."""
     policy = contract.get("authorPolicy")
     return f"author policy: {policy}" if policy in AUTHOR_POLICIES and policy != "any" else ""
 

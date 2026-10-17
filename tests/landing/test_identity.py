@@ -18,7 +18,7 @@ from .support import (
 
 class LandingTest(LandingTestBase):
     def init(self, mode="auto", batch=1, author_policy="credited", ok=True, **extra):
-        """Every test in this file runs under the policy it names. None omits the flag, so the store keeps its value."""
+        """Every test in this file runs under the policy it names. None omits the flag, so a first init stores any and a rerun keeps the stored value."""
         args = ["init", "--trunk", extra.get("trunk", "main"), "--mode", mode, "--check", "./check.sh", "--batch", str(batch)]
         if "merge_method" in extra:
             args += ["--merge-method", extra["merge_method"]]
