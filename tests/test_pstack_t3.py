@@ -102,7 +102,7 @@ class RolesTest(unittest.TestCase):
         proposals = text.split("**(b) Propose roles.**", 1)[1].split("**(c) Confirm.**", 1)[0]
         for phrase in (
             "Reason over the live catalog from step 1 and propose a seat per role",
-            "Any role the user leaves unset resolves to `inherit`.",
+            "Any role the user leaves unset resolves to `inherit`, except `review backups`, which stays unset.",
             "It has no built-in seats, and it refuses `inherit`, because the parent can be the author.",
             "Set at least two seats of different model families",
         ):
@@ -1851,7 +1851,7 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
         section = runtime_doc_section("roles.md", "## Claude Haiku 5.5")
         self.assertIn('`roles.py show --role "skill tests" --launches-seats`', section)
         self.assertIn("That form refuses a resolved seat that runs on the cursor driver", section)
-        self.assertIn("A configured non-cursor seat is used as configured.", section)
+        self.assertIn("That pool does not limit a configured non-cursor seat.", section)
         self.assertIn(roles.HAIKU_BRIEF[0], (ROOT / "t3/scripts/roles.py").read_text())
         author = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()
         self.assertIn("--launches-seats", author)
