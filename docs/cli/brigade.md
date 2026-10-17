@@ -67,7 +67,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
 | `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside /tmp; "" clears the setting |
 | `--low-reserve N` |  |  |  | the most workers still idle when a low ticket is held back while an urgent or normal ticket can start; 0 holds no low ticket back; "" clears it to 1 |
-| `--liveness-ms N` |  |  |  | milliseconds between liveness wakes, a whole number of at least 60000; "" removes the setting |
+| `--liveness-ms N` |  |  |  | the interval a new liveness schedule uses, a whole number of at least 60000; "" removes the setting |
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 

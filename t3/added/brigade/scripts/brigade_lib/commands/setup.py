@@ -80,7 +80,7 @@ def register_set(sub):
                    help="the most workers still idle when a low ticket is held back while an urgent or normal "
                         "ticket can start; 0 holds no low ticket back; \"\" clears it to 1")
     p.add_argument("--liveness-ms", metavar="N",
-                   help="milliseconds between liveness wakes, a whole number of at least 60000; \"\" removes the setting")
+                   help="the interval a new liveness schedule uses, a whole number of at least 60000; \"\" removes the setting")
     p.add_argument("--context-cap", default=None,
                    help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
