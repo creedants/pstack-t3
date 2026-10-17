@@ -126,6 +126,10 @@ LOW_RESERVE_KEY = "lowReserve"
 # The restaurant.json key that overrides the liveness interval.
 LIVENESS_KEY = "livenessMs"
 LIVENESS_FLOOR = 60000
+# The restaurant.json key that names the directory holding one change-note fragment per branch.
+CHANGE_NOTE_KEY = "changeNoteDir"
+CHANGE_NOTE_REFUSAL = ("it is not a repository-relative directory path with no leading slash, "
+                       "no .., no comma, and no whitespace")
 # The interval each reporting level uses when the store holds no livenessMs key.
 LIVENESS_DEFAULT_MS = {"every-turn": 600000, "milestones": 600000, "digest": 1800000}
 SNAPSHOT_CHUNK = 1 << 16
@@ -269,6 +273,47 @@ def parse_liveness_ms(text):
     if value < LIVENESS_FLOOR:
         raise BrigadeError(f"--liveness-ms takes a whole number of at least {LIVENESS_FLOOR}, got '{text}'")
     return value
+
+
+def _change_note_norm(value):
+    text = value.replace("\\", "/")
+    if text.startswith("/") or ".." in text.split("/") or "," in text or re.search(r"\s", text):
+        return None
+    made = posixpath.normpath(text).lstrip("/")
+    if made in ("", ".", "/") or made == ".." or made.startswith("../"):
+        return None
+    return made
+
+
+def change_note_dir(meta):
+    """The change-note directory this store records, or empty string when it records none.
+
+    A missing key and an empty string both read as unset. A present value that is not a
+    repository-relative directory path is refused through refuse_setting.
+    """
+    if CHANGE_NOTE_KEY not in meta:
+        return ""
+    value = meta[CHANGE_NOTE_KEY]
+    if value == "":
+        return ""
+    if not isinstance(value, str):
+        refuse_setting(CHANGE_NOTE_KEY, value, CHANGE_NOTE_REFUSAL)
+    made = _change_note_norm(value)
+    if made is None:
+        refuse_setting(CHANGE_NOTE_KEY, value, CHANGE_NOTE_REFUSAL)
+    return made
+
+
+def parse_change_note_dir(text):
+    """The directory a --change-note-dir flag stores, normalized. Empty string is the caller's clear signal, not this function's."""
+    if not isinstance(text, str):
+        raise BrigadeError("--change-note-dir takes a repository-relative directory path with no leading slash, "
+                           f"no .., no comma, and no whitespace, got '{text}'")
+    made = _change_note_norm(text)
+    if made is None:
+        raise BrigadeError("--change-note-dir takes a repository-relative directory path with no leading slash, "
+                           f"no .., no comma, and no whitespace, got '{text}'")
+    return made
 
 
 def write_atomic(path, text):
