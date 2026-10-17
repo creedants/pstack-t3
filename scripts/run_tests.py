@@ -577,7 +577,7 @@ def start_child(args: list[str], home: Path, start: Path) -> subprocess.Popen:
 def kill_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
 
 
