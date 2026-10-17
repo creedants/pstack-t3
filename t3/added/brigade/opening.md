@@ -40,4 +40,10 @@ First, for every dish that still holds an active lease, run the three drop steps
 
 ## Context cap
 
-The context cap is stored in `restaurant.json`, and reads as 300000 when no integer is stored there. When `coordinatorProvider` reads as `claude`, `open` writes it into the project's `.claude/settings.local.json` as `autoCompactWindow`, and `set` writes it again whenever `--context-cap` or `--coordinator-provider` is passed and the resulting provider reads as `claude`. A refused write exits 1 and leaves the settings file as it was. Reopening a store whose `coordinatorProvider` reads as `claude` creates the file or sets `autoCompactWindow` in it from that cap. A successful write replaces an untracked settings file symbolic link with a regular file and leaves the link's target unchanged. On a host that is not Claude, the context cap is not enforced and no settings file is written.
+The context cap is stored in `restaurant.json`, and reads as 300000 when no `contextCap` key is stored there. When `coordinatorProvider` reads as `claude`, the cap is written to the project's `.claude/settings.local.json` as `autoCompactWindow` only in the cases the paragraphs below name.
+
+Creating a store with no `--context-cap` adopts an integer `autoCompactWindow` the settings file already holds as the store's cap, and writes nothing to that file. Creation with no such integer writes the 300000 default into it. Creation with `--context-cap N` writes `N`.
+
+Opening an existing store never writes the settings file. When that file does not hold the effective cap, `open` prints one drift line. The line names the integer the file holds and the effective cap, or says the file holds no integer cap, and names the command that writes the cap. No line prints when the file already holds the cap, and no line prints when the provider is not `claude`.
+
+On a `claude` store, `set --context-cap N` writes the settings file, and `set --context-cap ""` writes the 300000 default into it. A successful write replaces an untracked settings file symbolic link with a regular file and leaves the link's target unchanged. A refused write exits 1 and leaves the settings file as it was. On a host that is not Claude, the context cap is not enforced and no settings file is written.
