@@ -774,3 +774,42 @@ class BriefsTest(BrigadeTest):
         self.assertTrue(verify.startswith("- v\n"))
         self.assertNotIn("Affected test modules are", verify)
         self.assertNotIn("No affected mapping", verify)
+
+    def test_mapped_verify_lists_modules_and_chain_fails_when_mapped_chain_missing(self):
+        self.started(paths="src/a.py")
+        self.brigade("set", "--thread", "thread-coord")
+        (self.project / "src").mkdir(parents=True, exist_ok=True)
+        (self.project / "src/a.py").write_text("x = 1\n")
+        (self.project / "tests").mkdir(parents=True, exist_ok=True)
+        (self.project / "tests/test_a.py").write_text(
+            "from pathlib import Path\nROOT = Path(__file__).resolve().parents[1]\n"
+            "def test_a():\n    (ROOT / \"src/a.py\").read_text()\n")
+        subprocess.run(["git", "add", "-A"], cwd=self.project, check=True, capture_output=True, text=True)
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                            "--paths", "src/a.py", "--lease", "L1", "--base", "origin/main")
+        verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertIn("Affected test modules are", verify)
+        self.assertIn("tests.test_a", verify)
+        self.assertIn("in the foreground as", verify)
+        self.assertIn("3.10", verify)
+        self.assertIn("scripts/build.py", verify)
+        self.assertIn("no regeneration diff", verify)
+        self.assertIn("scripts/check.py", verify)
+        self.assertIn("foreground slot", verify)
+        self.assertNotIn("No affected mapping", verify)
+
+    def test_fallback_verify_lists_unmapped_and_chain_fails_when_fallback_chain_missing(self):
+        self.started()
+        self.brigade("set", "--thread", "thread-coord")
+        text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
+                            "--paths", "README.md", "--lease", "L1", "--base", "origin/main")
+        verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
+        self.assertIn("No affected mapping", verify)
+        self.assertIn("README.md", verify)
+        self.assertIn("full suite in the foreground", verify)
+        self.assertIn("slot --slots 2", verify)
+        self.assertIn("3.10", verify)
+        self.assertIn("scripts/build.py", verify)
+        self.assertIn("no regeneration diff", verify)
+        self.assertIn("scripts/check.py", verify)
+        self.assertIn("foreground slot", verify)

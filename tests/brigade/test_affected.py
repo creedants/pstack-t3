@@ -236,3 +236,17 @@ class AffectedTest(BrigadeTest):
         out = self.affected("--paths", "src/pinned.py")
         self.assertIn("tests.test_pin", out)
         self.assertIn(ALWAYS, out)
+
+    def test_brigade_source_and_twin_pick_briefs_and_times_fails_when_brigade_entry_not_carried(self):
+        for rel in ("t3/added/brigade/scripts/brigade.py", "skills/brigade/scripts/brigade.py"):
+            out = self.brigade("affected", "--root", str(ROOT), "--paths", rel)
+            self.assertIn("tests.brigade.test_briefs", out)
+            self.assertIn("tests.landing.test_times", out)
+            self.assertNotIn("No affected mapping", out)
+
+    def test_landing_source_and_twin_pick_briefs_and_times_fails_when_landing_entry_not_carried(self):
+        for rel in ("t3/added/landing/scripts/land.py", "skills/landing/scripts/land.py"):
+            out = self.brigade("affected", "--root", str(ROOT), "--paths", rel)
+            self.assertIn("tests.brigade.test_briefs", out)
+            self.assertIn("tests.landing.test_times", out)
+            self.assertNotIn("No affected mapping", out)
