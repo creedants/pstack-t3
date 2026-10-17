@@ -401,13 +401,6 @@ def pr_item_line_note(contract):
     return "pr item line: on" if contract.get("prItemLine", False) else ""
 
 
-def heartbeat_note(contract):
-    """The heartbeat intervals for repo status. Always present."""
-    every = contract.get("heartbeatMs", getattr(seam, "HEARTBEAT_MS", 3600000))
-    merge = contract.get("mergeHeartbeatMs", getattr(seam, "MERGE_HEARTBEAT_MS", 900000))
-    return f"heartbeat everyMs {every} merge wait {merge}"
-
-
 IDENTITY_PAUSE = "the configured git identity is now "
 
 

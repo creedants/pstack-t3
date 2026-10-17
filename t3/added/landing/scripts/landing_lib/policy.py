@@ -160,6 +160,13 @@ def refused_heartbeat(flag, value, floor):
     return None
 
 
+def heartbeat_note(contract):
+    """The heartbeat intervals for repo status. Always present."""
+    every = contract.get("heartbeatMs", HEARTBEAT_MS)
+    merge = contract.get("mergeHeartbeatMs", MERGE_HEARTBEAT_MS)
+    return f"heartbeat everyMs {every} merge wait {merge}"
+
+
 def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None,
          author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None):
     mode = seam.LEGACY_MODES.get(mode, mode)
