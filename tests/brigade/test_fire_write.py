@@ -34,7 +34,7 @@ class FireWriteTest(StoresTest):
         self.assertEqual(self.rows("core", "log.tsv"), [])
         status = self.run_brigade("core", "status")
         self.assertEqual((status.returncode, status.stderr), (0, ""))
-        self.assertEqual(status.stdout.splitlines()[3:], ["kinds: fix 1 waiting, 1 in flight"])
+        self.assertEqual(status.stdout.splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: fix 1 waiting, 1 in flight"])
 
     def test_a_fire_killed_before_its_log_row_is_dropped_and_the_same_fire_again_starts_the_ticket_with_the_same_kind(self):
         self.before_kinds()

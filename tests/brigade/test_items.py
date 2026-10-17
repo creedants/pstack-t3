@@ -1125,7 +1125,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         out = self.assert_each_printing_command_warns(
             f"T1 has kind 'chore', {self.NOT_A_KIND}; {self.NOT_WHILE} T1 is assigned; correct it in rail.tsv by hand",
             f"D1 has kind 'chore', {self.NOT_A_KIND}; no command changes this cell; correct it in dishes.tsv by hand")
-        self.assertEqual(len(out["status"].splitlines()), 3)
+        self.assertEqual(len(out["status"].splitlines()), 4)
         self.assertEqual(out["ticket list"], "T1 assigned normal [user] s")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## In progress", "", "- D1 (T1): Fix s",
                                                                   "", "## Spend", "",
@@ -1169,7 +1169,8 @@ class ItemsTest(BrigadeTest, _ItemsRace):
             f"T2 names goal 'G9', {self.NO_GOAL_ROW}; run ticket set T2 --goal G<n> or --no-goal",
             f"D1 names goal 'G7', {self.NO_GOAL_ROW}; no command changes this cell; correct it in dishes.tsv by hand")
         self.assertEqual(out["status"].splitlines()[3:],
-                         ["kinds: fix 1 waiting, 1 in flight", "goals: unassigned 1 waiting, 1 in flight"])
+                         ["liveness: every 600000 ms (default for milestones)",
+                          "kinds: fix 1 waiting, 1 in flight", "goals: unassigned 1 waiting, 1 in flight"])
         self.assertEqual(out["goal list"].splitlines()[0], "G1 open activity view: 0 waiting, 0 in flight, 0 merged, 0 send-backs")
         self.assertEqual(out["goal list"].splitlines()[-1], "unassigned: 1 waiting, 1 in flight, 0 merged, 0 send-backs")
         self.assertEqual(out["ticket list"], "T1 assigned normal fix [user] a\nT2 waiting normal fix [user] b")
@@ -1192,7 +1193,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
             f"T1 names goal 'G1', {self.NO_GOAL_ROW}; {self.NOT_WHILE} T1 is assigned; correct it in rail.tsv by hand",
             f"T2 names goal 'G1', {self.NO_GOAL_ROW}; run ticket set T2 --goal G<n> or --no-goal",
             f"D1 names goal 'G1', {self.NO_GOAL_ROW}; no command changes this cell; correct it in dishes.tsv by hand")
-        self.assertEqual(out["status"].splitlines()[3:], ["kinds: fix 1 waiting, 1 in flight"])
+        self.assertEqual(out["status"].splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: fix 1 waiting, 1 in flight"])
         self.assertEqual(out["goal list"], "no open or paused goals\nunassigned: 1 waiting, 1 in flight, 0 merged, 0 send-backs")
         self.assertEqual(out["ticket list"], "T1 assigned normal fix [user] a\nT2 waiting normal fix [user] b")
         self.assertEqual(out["close --dry-run"].splitlines()[4:],
