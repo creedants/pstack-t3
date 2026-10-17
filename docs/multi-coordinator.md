@@ -8,6 +8,8 @@ In this document a coordinator is one standing coordinator thread and its store 
 
 ## Summary
 
+**Sample record.** The work-item count in the table comes from the pstack-t3 maintainers' own store. Measure the share of work items that lease hot shared files in your own store.
+
 | # | Gap | What happens today | Change |
 | --- | --- | --- | --- |
 | 1 | Duplicate intake | `ticket add` accepts the same `--ref` in two coordinators, and twice in one | 4 |
