@@ -543,7 +543,7 @@ class AffectedTest(BrigadeTest):
         self.assertIn("slot -- python3 scripts/check.py`.", out)
         self.assertIn("Keep each build and test in a foreground slot.", out)
 
-    def test_a_build_command_of_none_drops_the_build_sentence_fails_when_the_sentinel_is_run(self):
+    def test_a_build_command_of_none_drops_the_build_sentence_fails_when_the_default_is_printed(self):
         self.git_project()
         self.write("src/a.py", "x = 1\n")
         self.write("tests/test_a.py",

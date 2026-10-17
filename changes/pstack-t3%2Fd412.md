@@ -1,2 +1,2 @@
 - kind fix
-- `t3/added/brigade/scripts/brigade_lib/affected.py` renders the verify paragraph's build and check sentences from the store's `buildCommand` and `checkCommand`. A command that is unset, non-text, or `none` leaves its sentence out when no matching store under the root supplies one.
+- `t3/added/brigade/scripts/brigade_lib/affected.py` renders the verify paragraph's build and check sentences from the store's `buildCommand` and `checkCommand`. A command that is unset, non-text, or `none` leaves its sentence out. A caller that passes its own store reads only that store's values. With no store passed, the first value across the stores whose project root matches wins.
