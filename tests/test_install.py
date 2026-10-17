@@ -3009,7 +3009,7 @@ class OwnershipTest(unittest.TestCase):
         self.assert_empty_records()
 
     def backup_race_uninstall(self, a, swarm, backup, *events, crossing=False, **options):
-        """Uninstall with every event fired against the one backup. `crossing` puts the backups on another filesystem. `crossing` as "refused" also asserts no move left the backups by name."""
+        """Uninstall with every event fired against the one backup. `crossing` puts the backups on another filesystem. `crossing` as "refused" asserts that no move left the backups by name and that no copy is left, instead of asserting that a crossing happened."""
         hook = backup_race(backup, swarm, events, **options)
         if crossing:
             hook = cross_device(state_dir(self.home) / "backups", swarm) + hook
@@ -3339,7 +3339,7 @@ class OwnershipTest(unittest.TestCase):
                             self.assertEqual(seen.read_bytes(), b"displaced\x00\xfe")
                     self.assert_empty_records()
 
-    def test_an_entry_that_replaces_the_restored_path_after_publication_is_left_in_place(self):
+    def test_an_entry_that_replaces_the_restored_path_before_its_proof_is_left_in_place(self):
         """An occupant that replaces the live path after creation is left alone. No stranger dir appears. The row stays."""
         for kind in ("file", "directory"):
             with self.subTest(kind=kind):

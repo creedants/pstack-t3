@@ -844,7 +844,7 @@ MOVED = "moved"
 
 @dataclass(frozen=True)
 class Published:
-    """Only publish makes one. It names a live path that publish created from the held descriptor while the path was empty."""
+    """`proved` is the only function that makes one. `publish` and the link branch of `restore_backup` call it after they create the path. It names a live path created from the held descriptor while the path was empty."""
 
     path: str
 
@@ -898,8 +898,8 @@ class Stranded(OSError):
 class Holder:
     """A private directory beside `home`. `aside` is the one name an entry takes inside it.
 
-    An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. Nothing in a SCRAP directory was.
-    It holds a backup whose copy is already in place. A STRANGER entry was parked there from a holder.
+    An entry at `aside` in a HOLDER directory was renamed or hard linked from `home`. A SCRAP directory holds a copy being built, or a backup whose copy is already in place, which `retire` moved there from a HOLDER directory.
+    A STRANGER entry was parked there from a holder.
     This restore could not prove it. The sweep never restores or deletes it.
     As a context manager it removes the directory when it leaves empty, and never deletes an entry. An OSError that
     leaves while entries are inside becomes a `Stranded` that names them.
@@ -927,32 +927,6 @@ class Holder:
         elif isinstance(error, OSError):
             raise Stranded(error, left) from error
         return False
-
-
-def place_copy(source, path, fd):
-    """Copy the entry at `source` beside `path`, then place the copy. Return Published, or why nothing was placed.
-
-    `source` is proven before the call and again once the copy is built, so the copy is of the entry `fd` holds.
-    The copy is held open once that proof passes, so `arrived` proves the placed copy as well.
-    """
-    with Holder(path, SCRAP) as holder, ExitStack() as holds:
-        copy = holder.aside
-        try:
-            if os.path.isdir(source) and not os.path.islink(source):
-                shutil.copytree(source, copy, symlinks=True)
-            else:
-                shutil.copy2(source, copy, follow_symlinks=False)
-            if not same_entry(source, fd):
-                return CHANGED
-            copied = hold(copy, holds)
-            if copied.fd is None:
-                return f"the copy could not be held open to prove it is the entry uninstall read ({copied.error})"
-            code = place(copy, path)
-            return arrived(path, copied.fd) if code == 0 else refusal(path, code)
-        finally:
-            # A placed copy has left the holder. Anything still at `copy` is this call's own copy.
-            if os.path.lexists(copy):
-                discard(copy)
 
 
 def remove_link(path, root, original, noun):
@@ -987,7 +961,7 @@ def inode_of(fd):
 def proved(path, made):
     """Return Published when `path` still names `made`. Else return a refusal saying the entry is still at `path`.
 
-    It never moves `path`. It never deletes an occupant. Only publish makes a Published.
+    It never moves `path`. It never deletes an occupant. Only `proved` makes a Published, and `publish` and the link branch of `restore_backup` call it after they create the path.
     """
     try:
         now = identity(os.lstat(path))[:2]
@@ -1000,7 +974,7 @@ def proved(path, made):
 
 
 def park(entry):
-    """Move the holder entry at `entry` into a new STRANGER directory beside it. Return its new path.
+    """Move the holder entry at `entry` into a new STRANGER directory beside the HOLDER directory that holds it. Return its new path.
 
     It takes a PrivateName only. It never takes a live path. It moves by `place`, so it replaces nothing.
     It stays on one filesystem, so it never needs a copy. Return None when it stayed.
@@ -1017,8 +991,7 @@ def link_held(fd, path):
     """Hard link the entry `fd` holds open to `path` only while `path` is empty. Return 0, or the errno that stopped it.
 
     It links through `/proc/self/fd`, and it answers `ENOSYS` where the platform is not Linux. Publish tries it first.
-    A file that can be hard linked keeps its own backup name until the entry is placed. A directory, or a file that
-    cannot be hard linked, is renamed to the private name when the no-replace rename works. Otherwise it stays where it is.
+    It only links. It never renames the backup, so the backup keeps the name the caller gave it.
     """
     if not sys.platform.startswith("linux"):
         return errno.ENOSYS
@@ -1057,7 +1030,7 @@ def readable_of(fd):
     """Return a readable descriptor on the entry `fd` holds, proved to be the same entry, or None.
 
     It reopens through `/proc/self/fd` without NOFOLLOW, so it needs no backup pathname. It runs before
-    anything is created at the live path. It returns None when the reopen fails or names another entry.
+    anything is created at the live path. It returns None when the reopen names another entry. When the reopen fails, it returns a duplicate of `fd` only if that names the same entry, else None.
     On a host without proc it duplicates `fd` when that names the same entry.
     """
     try:
@@ -1249,7 +1222,7 @@ def copy_tree(proven_dir, live_dir):
 
 
 def remove_while_ours(path, made, is_dir):
-    """Remove `path` only while it still names `made`. Never touch an occupant."""
+    """Remove `path` only after checking that it still names `made`. A same-user process that swaps the name between that check and the removal is not caught."""
     try:
         now = identity(os.lstat(path))[:2]
     except OSError:
@@ -1267,8 +1240,7 @@ def copy_held(fd, path):
     """Create `path` from the entry `fd` holds, only while `path` is empty. Return Published or a refusal.
 
     It reads only from descriptors proved to be the held entry. It creates the live path with O_EXCL open,
-    mkdir, or symlink. It records the new inode and returns proved on that inode. On failure it removes
-    the live path only while the path still names what this call created.
+    mkdir, or symlink. It records the new inode and returns proved on that inode. Once its own create succeeds, it removes the live path on a later failure only while the path still names what this call created. If the first lstat of the new path fails, it leaves the path in place.
     """
     try:
         held = os.fstat(fd)
@@ -1378,12 +1350,12 @@ def publish(fd, path):
     """Create the live path from `fd` only while it is empty. Return Published or a refusal.
 
     It tries link_held first. On 0 it returns proved on the held inode. On EEXIST it returns a refusal
-    and leaves the path alone. Else it tries linkat AT_EMPTY_PATH with no platform test, so a Darwin
+    and leaves the path alone. Else, unless `link_held` returned EXDEV, it tries linkat AT_EMPTY_PATH with no platform test, so a Darwin
     simulation still binds files when NO_PROC blocks proc. Else it copies from descriptors proved to be
     the held entry and creates the live path with O_EXCL. It records the new inode and returns proved on it.
-    On copy failure it removes the live path only while the path still names what this call created.
-    It never moves a holder name onto the live path. It never moves or deletes an occupant.
-    Only publish makes a Published.
+    After its own create succeeds, a copy failure removes the live path only while the path still names what this call created. If the first lstat of the new path fails, the path is left in place.
+    It never moves a holder name onto the live path or moves an occupant of it. It removes its own partial copy only after checking that the path still names that inode, so a same-user process that swaps the name between the check and the removal is not caught.
+    Only `proved` makes a Published, and `publish` and the link branch of `restore_backup` call it after they create the path.
     """
     code = link_held(fd, path)
     if code == 0:
@@ -1425,7 +1397,7 @@ def place_proven(aside, path, fd):
     """Create `path` from `fd` only, then retire `aside` on success. Return Published or a refusal.
 
     It never moves `aside` onto `path`. It never moves or deletes an occupant of `path`.
-    `aside` stays when publish refuses. Only publish makes a Published.
+    `aside` stays when publish refuses. Only `proved` makes a Published, and `publish` and the link branch of `restore_backup` call it after they create the path.
     """
     try:
         placed = publish(fd, path)
@@ -1443,7 +1415,7 @@ def retire(aside, fd):
     """Delete the holder entry at `aside` only while it is the entry `fd` holds.
 
     It takes a PrivateName only. It moves into a SCRAP directory first, then proves it there.
-    Anything else is parked, never deleted.
+    Anything else is parked, or stays in its SCRAP directory when `park` cannot move it. It is never deleted.
     """
     if not isinstance(aside, PrivateName):
         raise TypeError("retire takes a PrivateName only")
@@ -1500,7 +1472,7 @@ def restore_aside(backup, aside, path, fd):
             return CHANGED if code == errno.ENOENT else refusal(path, code)
         taken = MOVED
     if not same_entry(aside, fd):
-        # What the backup's path named when this call took it. It goes back where it came from.
+        # For a moved entry it returns the entry to `backup`. For a twin it drops the second name, or parks what took its place.
         return give_back(taken, backup, aside, CHANGED)
     placed = place_proven(aside, path, fd)
     if isinstance(placed, Published):
