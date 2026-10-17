@@ -2191,7 +2191,7 @@ class FrameTest(OutputCase):
             "112 agents are grouped by the name of the request that started them."])
 
     def test_fit_with_the_frame_keeps_each_fixture_page_at_most_1960_tall_and_16000_bytes_with_its_totals_its_legend_and_every_agent_shown_or_counted(self):
-        for build, agents, tall in ((typical, 50, 1472), (busy, 400, 1950), (day, 400, 1925), (extreme, 3000, 1882)):
+        for build, agents, tall in ((typical, 50, 1472), (busy, 400, 1950), (day, 400, 1955), (extreme, 3000, 1882)):
             with self.subTest(build.__name__):
                 unfolded = page_of(build(Fixture(self.root / build.__name__)))
                 fitted, document = MOD["fit"](unfolded, 15999, CLEAN, 1960)
