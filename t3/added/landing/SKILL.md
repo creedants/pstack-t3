@@ -22,7 +22,7 @@ The rules:
 
 ```bash
 L="python3 <skills>/landing/scripts/land.py --repo <checkout>"
-$L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--base <commit>] [--cap 4] [--generated <paths>] [--rebuild "<cmd>"]
+$L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--author-policy any|configured|credited] [--base <commit>] [--cap 4] [--generated <paths>] [--rebuild "<cmd>"]
 $L mode merge [--merge-method squash]   # change the mode while the queue is empty. --merge-method may change while entries await merge
 $L cap 4                     # most changes in flight on the repository at once; 0 clears it
 $L lease claim --holder <restaurant>/<dish> --paths src/engine,package.json [--owner <restaurant>/@<generation>]   # prints L<n>, who holds the overlap, or the cap and its holders

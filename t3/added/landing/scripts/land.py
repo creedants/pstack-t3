@@ -98,15 +98,16 @@ def parser():
     p.add_argument("--merge-method", choices=MERGE_METHODS, default=None,
                    help="merge mode: how the queue merges its PRs, checked against the repository when gh can report the "
                         "allowed methods, whenever it is set. "
-                        "omitted in merge mode, a first init stores the one allowed method, or merge when gh cannot say, "
-                        "and a rerun keeps the stored method while the repository allows it")
+                        "omitted in merge mode, a first init stores the only allowed method, or prefers merge then squash "
+                        "when several are allowed, or merge when gh cannot say, and a rerun keeps the stored method while "
+                        "the repository allows it")
     p.add_argument("--author-policy", choices=AUTHOR_POLICIES, default=None,
                    help="how the queue judges a reviewed commit's author. any skips the check. configured and credited "
                         "check only when the repository has a configured identity: configured requires that author, and "
                         "credited also lands an entry whose commits by another author each carry a Co-authored-by trailer "
-                        "equal to it and whose body has a line that reads Based on #<n> by @<login>, optionally with a "
-                        "trailing period. Omitted, a rerun keeps the stored policy or stores any when the contract has "
-                        "none, and a first init stores any")
+                        "equal to that commit's author as name <email> and whose body has a line that reads Based on #<n> by "
+                        "@<login>, optionally with a trailing period. Omitted, a rerun keeps the stored policy or stores any "
+                        "when the contract has none, and a first init stores any")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
     p.add_argument("--generated", metavar="PATHS", default=None,
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
