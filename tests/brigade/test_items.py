@@ -1315,6 +1315,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
 
     def test_fire_shared_doc_with_two_tickets_is_refused(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        self.seed_doc_settings()
         for doc in self.SHARED_DOCS:
             with self.subTest(doc=doc):
                 self.brigade("ticket", "add", "--kind", "fix", "--summary", f"First {doc}")
@@ -1328,6 +1329,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
 
     def test_fire_shared_doc_with_ride_along_counts_every_ticket(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        self.seed_doc_settings()
         self.goal("activity view")
         self.goal("current with upstream")
         self.brigade("ticket", "add", "--summary", "Lead work", "--kind", "fix", "--goal", "G1")
@@ -1340,6 +1342,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
 
     def test_fire_shared_doc_refusal_order(self):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+        self.seed_doc_settings()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "First")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Second")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Third")
@@ -1362,6 +1365,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         case = self.fake_land()
         (case / "claim-proceed").touch()
         self.open()
+        self.seed_doc_settings()
         self.rail_before_kinds("a")
         before = self.store_files()
         proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "feature", "--summary", "Do a",
@@ -1377,6 +1381,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             self.land("lease", "claim", "--holder", "engine/D9", "--paths", "docs/guide.md")
             leases = self.land("lease", "list")
@@ -1403,6 +1408,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             leases = self.land("lease", "list")
             before = self.store_files()
@@ -1451,6 +1457,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
     def test_fire_untracked_skill_file_path_refuses(self):
         self.git_project()
         self.open()
+        self.seed_doc_settings()
         for path in ("t3/added/new-skill/SKILL.md", "skills/new-skill/SKILL.md"):
             with self.subTest(path=path):
                 (self.project / path).parent.mkdir(parents=True, exist_ok=True)
@@ -1465,6 +1472,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
     def test_fire_untracked_skill_directory_refuses(self):
         self.git_project()
         self.open()
+        self.seed_doc_settings()
         for directory, doc in (("t3/added/new-skill", "t3/added/new-skill/SKILL.md"),
                                ("skills/new-skill", "skills/new-skill/SKILL.md")):
             with self.subTest(directory=directory):
@@ -1482,6 +1490,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             nested = self.project / "t3/added/new-skill"
             (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)
@@ -1505,6 +1514,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             nested = self.project / "t3/added/new-skill"
             (nested / "SKILL.md").parent.mkdir(parents=True, exist_ok=True)

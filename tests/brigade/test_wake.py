@@ -811,6 +811,7 @@ class WakeTest(BrigadeTest):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "1")
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "First")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Second")
             self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "First")

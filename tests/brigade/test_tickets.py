@@ -1348,6 +1348,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         case = self.fake_land()
         (case / "claim-proceed").touch()
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        self.seed_doc_settings(docTimebox=None)
         for doc in self.SHARED_DOCS:
             with self.subTest(doc=doc):
                 first = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Fix {doc} quickly")
@@ -1371,6 +1372,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         case = self.fake_land()
         (case / "claim-proceed").touch()
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--workers", "50")
+        self.seed_doc_settings()
         for doc in self.SHARED_DOCS:
             with self.subTest(doc=doc):
                 ident = self.brigade("ticket", "add", "--kind", "fix", "--summary", f"Long work on {doc}")
@@ -1399,6 +1401,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         case = self.fake_land()
         (case / "claim-proceed").touch()
         self.open()
+        self.seed_doc_settings()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long skill work")
         before = self.store_files()
         self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Skill",
@@ -1416,6 +1419,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         case = self.fake_land()
         (case / "claim-proceed").touch()
         self.open()
+        self.seed_doc_settings()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Backup work")
         proc = self.fire_with_fake_land(case, "--tickets", "T1", "--station", "bug-fix", "--summary", "Backup",
                                         "--paths", "docs/guide.md.bak", "--timebox", "120")
@@ -1434,6 +1438,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.seed_doc_settings()
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Long doc work")
             leases = self.land("lease", "list")
             before = self.store_files()
@@ -1450,6 +1455,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         case = self.fake_land()
         self.brigade("open", "--project-root", str(self.project), "--name", "Second")
         second = self.store / "bridge-kit" / "second"
+        self.seed_doc_settings(second)
         self.run_at(second, "ticket", "add", "--kind", "fix", "--summary", "Long doc work")
         before = {str(path.relative_to(second)): path.read_bytes() for path in sorted(second.rglob("*"))
                   if path.is_file() and path.name != "restaurant.lock"}

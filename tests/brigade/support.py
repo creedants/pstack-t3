@@ -56,6 +56,19 @@ ITEM_DECISION = (
 )
 # The brigade reporting docs join in BRIGADE_DOCS order. Later items append to this tuple.
 BRIGADE_DOCS = ("SKILL.md", "admin-reporting.md", "opening.md", "recovery.md", "script.md", "views.md")
+# This repository's shared-document catalog and timebox, the value its own store would record.
+DOC_SETTINGS = {
+    "sharedDocs": [
+        {"path": "README.md", "kind": "file"},
+        {"path": "docs/guide.md", "kind": "file"},
+        {"path": "t3/runtime.md", "kind": "file"},
+        {"path": "t3/setup.md", "kind": "file"},
+        {"path": "t3/added/", "kind": "skill"},
+        {"path": "t3/overrides/", "kind": "skill"},
+        {"path": "skills/", "kind": "skill"},
+    ],
+    "docTimebox": 90,
+}
 
 
 def brigade_docs():
@@ -1914,7 +1927,7 @@ class BrigadeTest(unittest.TestCase):
         return ("drop it from --paths and give the sentences as follow-ups, or pass --doc-item" if count == 1
                 else "drop them from --paths and give the sentences as follow-ups, or pass --doc-item")
 
-    def doc_line(self, docs, timebox=None, count=None):
+    def doc_line(self, docs, timebox=None, count=None, minutes=90):
         docs = tuple(sorted(docs))
         if len(docs) == 1:
             head = f"{docs[0]} is a shared document"
@@ -1924,10 +1937,25 @@ class BrigadeTest(unittest.TestCase):
             head = f"{', '.join(docs[:-1])}, and {docs[-1]} are shared documents"
         reasons = []
         if timebox is not None:
-            reasons.append(f"--timebox is {timebox}, over 90 minutes")
+            reasons.append(f"--timebox is {timebox}, over {minutes} minutes")
         if count is not None:
             reasons.append(f"--tickets names {count} tickets")
         return f"brigade: {head} and {', and '.join(reasons)}; {self.doc_tail(len(docs))}"
+
+    def seed_doc_settings(self, directory=None, **overrides):
+        """Write DOC_SETTINGS into this store's restaurant.json, plus any overrides.
+
+        A None override removes that key, so a test can exercise a default.
+        """
+        path = (self.at if directory is None else directory) / "restaurant.json"
+        meta = json.loads(path.read_text())
+        meta.update(DOC_SETTINGS)
+        for key, value in overrides.items():
+            if value is None:
+                meta.pop(key, None)
+            else:
+                meta[key] = value
+        path.write_text(json.dumps(meta, indent=2) + "\n")
 
     def doc_log_note(self, directory, dish):
         for line in (directory / "log.tsv").read_text().splitlines()[1:]:
