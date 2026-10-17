@@ -873,7 +873,7 @@ def resolve_seat(seat, catalog, budget, name, exclude=()):
 
 
 def finish_seat(seat, model, budget, exclude=()):
-    """Every explicit seat passes here, so an excluded seat raises instead of being emitted."""
+    """Apply the budget to an explicit seat. Raise when the exclude list passed here refuses the seat."""
     reason = exclude_reason(seat, exclude)
     if reason is not None:
         raise RolesError(f"{seat['providerInstanceId']}/{seat['model']}: {reason}, and {EXCLUDE_RULE}")

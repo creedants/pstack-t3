@@ -1819,7 +1819,7 @@ def cursor_only_catalog():
 
 
 class SkillTestsCursorCliTest(unittest.TestCase):
-    """The cursor driver cannot launch seats, so skill tests refuses a seat that runs on it."""
+    """The cursor driver cannot launch seats, so a seat that runs on it is refused under --launches-seats."""
 
     def run_show(self, roles, *extra):
         with tempfile.TemporaryDirectory() as directory:
@@ -4594,7 +4594,7 @@ MIGRATION_CATALOG = {"providers": [
 
 
 class HouseRuleMigrationCliTest(unittest.TestCase):
-    """The owner's house-rule JSON reproduces the removed built-in picks and refusals."""
+    """The owner's house-rule JSON reproduces the four picks and three refusals this test names."""
 
     def setUp(self):
         self.exclude = roles.parse_exclude(MIGRATION_JSON["exclude"], "test")

@@ -1851,7 +1851,7 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
         section = runtime_doc_section("roles.md", "## Claude Haiku 5.5")
         self.assertIn('`roles.py show --role "skill tests" --launches-seats`', section)
         self.assertIn("That form refuses a resolved seat that runs on the cursor driver", section)
-        self.assertIn("That pool does not limit a configured non-cursor seat.", section)
+        self.assertIn("A configured non-cursor seat is not limited by `--launches-seats`.", section)
         self.assertIn(roles.HAIKU_BRIEF[0], (ROOT / "t3/scripts/roles.py").read_text())
         author = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()
         self.assertIn("--launches-seats", author)
@@ -2012,7 +2012,7 @@ class StalledChildDocTest(unittest.TestCase):
             "A candidate is skipped when its provider is the failed provider, is already out, is not runnable or not in the catalog, the `exclude` list refuses it, or, for a review role, its model family wrote the diff.",
             "`review backups` has no backup.",
             "When no candidate is left, the command parks.",
-            "It prints the original seat when its provider is back, and otherwise the next `backups` seat.",
+            "It prints the original seat when its provider is back, and otherwise the first usable `backups` seat.",
             "The command prints `relaunch`, `panel`, `park`, or `not-usage-limit`.",
             "For a `verifiers` seat with `review backups` set, the command prints `panel` instead.",
             "a stable `clientRequestId` ending in `-panel-<n>`",

@@ -161,11 +161,11 @@ A model family is the leading word of the model ID after the normalizer runs. `c
 
 Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
-The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with `model` (a glob) and/or `options` (an object of option key to value). A string entry is refused. A rule holds when every part holds. A model glob matches the seat's bare id or its normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model. A seat the exclude list refuses is refused everywhere: a configured role seat, a backup seat, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
+The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with `model` (a glob) and/or `options` (an object of option key to value). A string entry is refused. A rule holds when every part holds. A model glob matches the seat's bare id or its normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model. A seat the exclude list refuses is refused in each place a seat is chosen: a configured role seat, a backup candidate, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
 
 [roles.md](roles.md#excluded-seats) lists the exact rule shape and the per-command behavior. In short, `show` skips a refused configured seat with a note, `validate` lists each refused seat and exits 1, and `write` refuses the config, even with `--force`. An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the list allows, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
 
-The Cursor `skill tests` exclusion stays, for a technical cause: the cursor driver cannot launch seats. It is matched by `driverKind` (`runs_on_cursor`), not by instance id. `show` adds a note on the `skill tests` entry when a resolved seat runs on the cursor driver. `validate` prints the same sentence as a problem and exits 1. `--launches-seats` refuses a skill tests seat that resolves to the cursor driver.
+The Cursor `skill tests` rule stays, for a technical cause: the cursor driver cannot launch seats. It is matched by `driverKind` (`runs_on_cursor`), not by instance id. `show` adds a note on the `skill tests` entry when a resolved seat runs on the cursor driver. `validate` prints the same sentence as a problem and exits 1. `--launches-seats` refuses a skill tests seat that resolves to the cursor driver.
 
 ### Budget
 
@@ -221,7 +221,7 @@ python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" [--playbook <name> -
 
 Before a light `roles.py show` or `roles.py backup` call, read [roles.md](roles.md#budget).
 
-An explicit budget wins. Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so an `inherit` seat of a capped role gets the cap.
+An explicit budget wins. Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so a configured `inherit` seat of a capped role gets the cap.
 
 Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A thread whose brief has a `Mode:` line stops at a verifiable point and reports `Contested: <reason>` under its status. A thread whose mode came from the session or the roles files switches that work to full, announces the escalation, and runs the step full mode prescribes, such as `interrogate`. Nothing moves work from full to light mid-flight.
 

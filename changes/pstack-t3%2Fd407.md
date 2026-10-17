@@ -1,7 +1,7 @@
 - kind feature
 - `roles.py` removes every built-in model pick. An unset role resolves to `inherit`, and `review backups` stays `unset`.
 - `roles.py` adds the optional `exclude` and `backups` keys. `exclude` refuses a seat by model-id glob or declared option, and every entry is an object with `model` and/or `options`; a string entry is refused with a message that names the `exclude` key. `backups` lists the seats `roles.py backup` tries in order.
-- `roles.py` keeps the Cursor `skill tests` exclusion, matched by `driverKind`.
+- `roles.py` keeps the Cursor `skill tests` rule, matched by `driverKind`.
 - The runtime, the roles reference, the failures reference, the setup skill, and the guide describe the `exclude` and `backups` keys, and setup proposes seats from the live catalog. The how-it-works, light-mode, and live-runs pages and the `poteto-help` skill state that an unset role resolves to `inherit`, and `review backups` stays `unset`.
-- `tests/test_roles_cli.py` and `tests/test_pstack_t3.py` test the new behavior, including the owner's house-rule migration for `exclude` and `backups`. `tests/brigade/test_launch.py` names a seat in its roles fixture, so brigade's launch keeps refusing a role whose seats are `inherit`.
+- `tests/test_roles_cli.py` and `tests/test_pstack_t3.py` test the new behavior, including the owner's house-rule migration for `exclude` and `backups`. `tests/brigade/test_launch.py` names a seat in its roles fixture for the six tests that relied on a built-in seat, and its `test_inherit_seats_are_not_one_seat` still pins brigade's refusal of a role whose seats are `inherit`.
 - `python3 scripts/build.py` refreshes the generated `skills/` copies and `docs/cli/roles.md`.
