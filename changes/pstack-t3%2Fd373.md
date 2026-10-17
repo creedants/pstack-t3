@@ -1,4 +1,4 @@
 - kind polish
-- `fire` never refuses a path for being absent. It leases every path given. On a successful fire, it prints one stderr line per path that is neither a tracked file nor a tracked directory. Each line reads `fire: <path> is not in the checkout; a stale ticket path leases nothing real`. The lines are sorted and deduplicated. When the git index cannot be read it prints no warning.
+- `fire` never refuses a path for being absent. It checks no path for existence. It passes every path to the lease claim as given. On a successful fire, it prints one stderr line per path that is neither a tracked file nor a tracked directory. Each line reads `fire: <path> is not in the checkout; a stale ticket path leases nothing real`. The lines are sorted and deduplicated. When the git index cannot be read it prints no warning.
 - The brief holds `List only code delegate, claims check, and architect runner under ## Threads` and `Put every other child under ## Notes`.
 - `dish --state dropped` with a cleared thread rebound during lease release archives nothing.
