@@ -198,16 +198,18 @@ class LandingTest(LandingTestBase):
                         self.fail(f"repo view did not pause: {child.communicate()}")
                     time.sleep(0.01)
                 (self.base / "pause-repo-view").unlink()
-                self.init(mode="human")
-                self.assertEqual(self.stored_merge_method(), "merge")
+                self.allow_methods(merge=True, squash=True, rebase=True)
+                self.assertEqual(self.land("mode", "human", "--merge-method", "rebase"), "landing mode is now human, merging with --rebase")
+                self.allow_methods(merge=True, squash=True)
+                self.assertEqual(self.stored_merge_method(), "rebase")
                 (self.base / "repo-view-release").write_text("")
                 out, err = child.communicate(timeout=10)
             finally:
                 if child.poll() is None:
                     child.kill()
                     child.communicate()
-            self.assertEqual((child.returncode, out.strip()), (0, "landing mode is now merge, merging with --squash"), err)
-            self.assertEqual(self.stored_merge_method(), "squash")
+            self.assertEqual((child.returncode, out.strip()), (0, "landing mode is now merge, merging with --merge"), err)
+            self.assertEqual(self.stored_merge_method(), "merge")
 
     def test_mode_local_checks_an_explicit_merge_method(self):
         with self.fake_gh():
