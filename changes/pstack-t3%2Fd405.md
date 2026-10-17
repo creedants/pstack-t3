@@ -1,5 +1,5 @@
 - kind polish
-- `failures.md` drops the version-gated restart continuation sentence, which the host now states.
+- `failures.md` drops the version-gated restart continuation sentence.
 - `t3/runtime.md` drops the duplicated worktree-cleanup sentence in Local state.
 - `t3/runtime.md` pull request watching drops the host wake-rule list it restated.
 - `python3 scripts/build.py` refreshes the generated `skills/pstack-runtime/` copies.
