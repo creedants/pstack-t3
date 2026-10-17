@@ -4721,7 +4721,7 @@ MALFORMED_BACKUP_SEATS = (
 class BackupSeatShapeCliTest(unittest.TestCase):
     """B3. A malformed backups seat is refused by name, never with a traceback."""
 
-    def test_every_malformed_backups_seat_is_refused_without_a_traceback(self):
+    def test_each_malformed_backups_seat_shape_in_the_table_is_refused_without_a_traceback(self):
         for command in ("validate", "show"):
             for seat in MALFORMED_BACKUP_SEATS:
                 with self.subTest(command=command, seat=seat):
@@ -4872,7 +4872,7 @@ class ExcludeNarrowingCliTest(unittest.TestCase):
 
 
 class BackupCandidateOptionsCliTest(unittest.TestCase):
-    """B5. A backup candidate keeps its declared options and takes the failed level only when it names none."""
+    """B5. A backup candidate keeps its declared options and takes the failed level only when it names no effort level."""
 
     def test_a_candidate_keeps_its_options_and_a_bare_candidate_takes_the_failed_level(self):
         cases = (

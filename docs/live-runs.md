@@ -17,7 +17,7 @@ This page records each live end-to-end run of a long pstack-t3 playbook on a rea
   3. Add `variance` and `stdev`.
   4. Add a `python -m stats` command line. It depends on #3.
 - **Launch.** One root thread on Claude Opus 5.5 in the project root, started with `$poteto-mode full autopilot`. The message named the four issues and gave full autonomy to merge on a clean verdict. The operator answered no question during the run, because the playbook asked none.
-- **Seats since this run.** The owners ran on Grok 4.7 Build Fast, and one owner picked Claude Haiku 4.5 by hand (defect 3). No built-in pick returns either one now, because a role set in no roles file resolves to `inherit`, except `review backups`, which stays unset. A user refuses either one by listing it in the roles file's `exclude` list (#96, #98).
+- **Seats since this run.** The owners ran on Grok 4.7 Build Fast, and one owner picked Claude Haiku 4.5 by hand (defect 3). No built-in pick returns either one now, because a role set in no roles file resolves to `inherit`, unless the `exclude` list refuses that seat, and `review backups` stays unset. A user refuses either one by listing it in the roles file's `exclude` list (#96, #98).
 
 ### What happened
 

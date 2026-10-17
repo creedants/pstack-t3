@@ -102,7 +102,7 @@ class RolesTest(unittest.TestCase):
         proposals = text.split("**(b) Propose roles.**", 1)[1].split("**(c) Confirm.**", 1)[0]
         for phrase in (
             "Reason over the live catalog from step 1 and propose a seat per role",
-            "Any role the user leaves unset resolves to `inherit`, except `review backups`, which stays unset.",
+            "Any role the user leaves unset resolves to `inherit`, unless the `exclude` list refuses the inherited seat, and `review backups` stays unset.",
             "It has no built-in seats, and it refuses `inherit`, because the parent can be the author.",
             "Set at least two seats of different model families",
         ):

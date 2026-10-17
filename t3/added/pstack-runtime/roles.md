@@ -6,7 +6,7 @@ Read this file before you write or validate a roles file, or when `roles.py` pri
 
 `roles.py show` owns this mapping. A skill must not rebuild it.
 
-There are no built-in model picks. A role set in no roles file resolves to `"inherit"`, with the note `unset in roles.json, so it inherits this thread's seat; run setup to choose a seat`. When the exclude list refuses the inherited parent, the role resolves to the replacement [Excluded seats](#excluded-seats) gives instead, and it carries no unset note. The one exception is `review backups`, which stays `"unset"` with its own note. No unset role resolves to a hard-coded model.
+There are no built-in model picks. A role set in no roles file resolves to `"inherit"`, with the note `unset in roles.json, so it inherits this thread's seat; run setup to choose a seat`. When the exclude list refuses the inherited parent, the role resolves to what [Excluded seats](#excluded-seats) gives instead, and it carries no unset note. The one exception is `review backups`, which stays `"unset"` with its own note. No unset role resolves to a hard-coded model.
 
 The roles file may carry two optional keys. `exclude` is a list of rules that refuse a seat, per [Excluded seats](#excluded-seats). `backups` maps a role name to a non-empty ordered list of seats (`{"providerInstanceId", "model", ...}`) that `roles.py backup` tries when a seat hits a usage limit, per [failures.md](failures.md#usage-limit). An `inherit` seat is refused in `backups`. `validate` checks both keys, and `roles.py write` keeps them.
 
@@ -22,10 +22,10 @@ The roles file may carry `"exclude"`, a list of rules that refuse a seat. An ent
 
 A seat the exclude list refuses is refused in each place a seat is chosen: a configured role seat, a backup candidate, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
 
-- `show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`. When no configured seat is left, the role resolves to `"inherit"`, settled per the next bullet. A `review backups` role with no configured seat left reports `"seats": []` with a catalog.
+- `show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`. When no configured seat is left, every other role resolves to `"inherit"`, settled per the next bullet. A `review backups` role with no configured seat left reports `"seats": []` with a catalog.
 - An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the list allows, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
 - `roles.py backup` skips a refused backup seat.
-- `validate` lists each refused seat and exits 1. `write` refuses the config, even with `--force`.
+- `validate` lists each refused seat and exits 1. `write` refuses a seat the rule matches on its own form, even with `--force`.
 - Without a catalog, `show` cannot settle an `inherit` seat whose parent the exclude list refuses, and reports `"seats": "catalog-required"`. Call `orchestrator_capabilities` and rerun `show` with `--catalog`.
 
 The Cursor `skill tests` rule stays. Its cause is technical: the cursor driver cannot launch seats. It is matched by `driverKind` (`runs_on_cursor`), not by instance id. `show` adds a note on the `skill tests` entry when a resolved seat runs on the cursor driver. `validate` prints the same sentence as a problem and exits 1. `--launches-seats` refuses a configured `skill tests` seat that resolves to the cursor driver. An unset `skill tests` keeps the note and is not refused.
