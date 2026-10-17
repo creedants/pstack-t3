@@ -626,7 +626,7 @@ class ProbeContractTest(unittest.TestCase):
                 self.assertTrue(seen["args"][1 + len(flags)].startswith("--user-data-dir="))
                 self.assertEqual(seen["args"][2 + len(flags):], ["--window-size=390,2000", "--dump-dom", str(target)])
 
-    def test_probe_failure_keeps_the_last_five_stderr_lines_that_are_not_the_display_warning(self):
+    def test_probe_failure_keeps_the_last_five_stderr_diagnostics_and_drops_only_the_warning_sentence(self):
         warning = "[1:1:1:1:ERROR:ui/display/mac/cv_display_link_mac.mm:188] CVDisplayLinkCreateWithCGDisplay failed. CVReturn: -6670"
         cases = (
             (f"{warning}\nfirst\nsecond\nthird\n", "exited 2: first second third"),
