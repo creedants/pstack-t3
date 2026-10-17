@@ -1,2 +1,2 @@
 - kind fix
-- `t3/added/brigade/scripts/brigade_lib/affected.py` renders the verify paragraph's build and check sentences from the store's `buildCommand` and `checkCommand`. An unset, non-text, or `none` command drops its sentence.
+- `t3/added/brigade/scripts/brigade_lib/affected.py` renders the verify paragraph's build and check sentences from the store's `buildCommand` and `checkCommand`. A command that is unset, non-text, or `none` leaves its sentence out when no matching store under the root supplies one.
