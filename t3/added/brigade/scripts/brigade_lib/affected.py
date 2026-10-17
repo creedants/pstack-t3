@@ -444,7 +444,7 @@ def _select(root, paths):
         files, bad = _expand_one(base, norm, tracked)
         unmapped.extend(bad)
         expanded.extend(files)
-    if unmapped:
+    if not expanded and unmapped:
         return _Full(tuple(sorted(set(unmapped))))
     if not expanded:
         return _Modules((ALWAYS,))
@@ -466,8 +466,8 @@ def _select(root, paths):
             modules.update(found)
         else:
             missing.add(norm)
-    if missing:
-        return _Full(tuple(sorted(missing)))
+    if missing or unmapped:
+        return _Full(tuple(sorted(set(list(missing) + unmapped))))
     modules.add(ALWAYS)
     return _Modules(tuple(sorted(modules)))
 

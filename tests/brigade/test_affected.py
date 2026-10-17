@@ -96,6 +96,16 @@ class AffectedTest(BrigadeTest):
         self.assertIn("src/unknown.py", out)
         self.assertIn("full suite", out)
 
+    def test_mixed_expansion_and_mapping_failures_name_both_fails_when_union_missing(self):
+        self.git_project()
+        self.write("src/unknown.py", "x = 1\n")
+        self.write("tests/test_other.py", "def test_o():\n    pass\n")
+        self.track()
+        out = self.affected("--paths", "no-such-file.txt", "--paths", "src/unknown.py")
+        self.assertIn("no-such-file.txt", out)
+        self.assertIn("src/unknown.py", out)
+        self.assertIn("full suite", out)
+
     def test_generated_copy_same_as_source_fails_when_twins_ignored(self):
         self.git_project()
         self.vendor_layout()
