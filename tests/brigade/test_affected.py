@@ -1,3 +1,5 @@
+import tempfile
+
 from .support import (
     setUpModule,
     BrigadeTest,
@@ -8,6 +10,23 @@ from .support import (
 
 ALWAYS = "tests.test_pstack_t3"
 WORKFLOW = "tests.test_run_tests"
+
+
+def reference_close(table, edges):
+    closed = {}
+    for key, value in table.items():
+        closed[key] = set(value)
+    changed = True
+    while changed:
+        changed = False
+        for members in closed.values():
+            for importer, imported in edges.items():
+                if importer in members:
+                    continue
+                if imported & members:
+                    members.add(importer)
+                    changed = True
+    return closed
 
 
 class AffectedTest(BrigadeTest):
@@ -27,12 +46,22 @@ class AffectedTest(BrigadeTest):
     def affected(self, *args, ok=True, code=None):
         return self.brigade("affected", "--root", str(self.project), *args, ok=ok, code=code)
 
-    def archive_root(self):
-        if hasattr(self, "_archive_dir"):
-            return self._archive_dir
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._archive_temporary = tempfile.TemporaryDirectory()
+        dest = Path(cls._archive_temporary.name).resolve() / "archive"
+        cls._archive_dir = cls._make_archive(dest)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._archive_temporary.cleanup()
+        super().tearDownClass()
+
+    @classmethod
+    def _make_archive(cls, dest):
         import shutil
         import subprocess
-        dest = self.root / "archive"
         dest.mkdir(parents=True, exist_ok=True)
         for child in ROOT.iterdir():
             if child.name == ".git" or child.name == "__pycache__":
@@ -44,8 +73,24 @@ class AffectedTest(BrigadeTest):
                 shutil.copy2(child, target)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, capture_output=True, text=True, check=True)
         subprocess.run(["git", "add", "-A"], cwd=dest, capture_output=True, text=True, check=True)
-        self._archive_dir = dest
         return dest
+
+    def archive_root(self):
+        return type(self)._archive_dir
+
+    def close_function(self):
+        import importlib
+        import sys
+        scripts = str(ROOT / "t3/added/brigade/scripts")
+        # Another test module in this worker can leave the path behind, so add it only when it is absent.
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+            self.addCleanup(sys.path.remove, scripts)
+        for name in [n for n in list(sys.modules) if n == "brigade_lib" or n.startswith("brigade_lib.")]:
+            del sys.modules[name]
+        module = importlib.import_module("brigade_lib.affected")
+        self.assertEqual(Path(module.__file__).resolve(), (Path(scripts) / "brigade_lib" / "affected.py").resolve())
+        return module._close
 
     def vendor_layout(self):
         target = self.project / "scripts"
@@ -333,3 +378,32 @@ class AffectedTest(BrigadeTest):
         out = self.affected("--paths", "src/a.py")
         self.assertIn("full suite", out)
         self.assertIn("test_missing_zz", out)
+
+    def test_close_matches_reference_on_seeded_random_tables_fails_when_worklist_misses_an_importer(self):
+        import random
+        close = self.close_function()
+        rng = random.Random(20261017)
+        for _ in range(300):
+            names = [f"m{n}" for n in range(rng.randint(2, 14))]
+            table = {}
+            for k in range(rng.randint(1, 6)):
+                table[f"src/{k}.py"] = set(rng.sample(names, rng.randint(0, len(names))))
+            edges = {}
+            for name in rng.sample(names, rng.randint(0, len(names))):
+                others = [other for other in names if other != name]
+                imported = rng.sample(others, rng.randint(0, len(others)))
+                if imported:
+                    edges[name] = frozenset(imported)
+            want = reference_close({k: set(v) for k, v in table.items()}, edges)
+            got = {k: set(v) for k, v in close(table, edges).items()}
+            self.assertEqual(got, want)
+
+    def test_close_matches_reference_on_a_deep_chain_fails_when_worklist_stops_early(self):
+        close = self.close_function()
+        names = [f"t{n}" for n in range(14)]
+        edges = {names[n]: frozenset([names[n + 1]]) for n in range(len(names) - 1)}
+        table = {"src/a.py": {"t13"}}
+        got = close(table, edges)
+        self.assertEqual(got["src/a.py"], set(names))
+        self.assertEqual({k: set(v) for k, v in got.items()},
+                         reference_close({k: set(v) for k, v in table.items()}, edges))
