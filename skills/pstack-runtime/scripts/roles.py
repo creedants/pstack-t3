@@ -353,8 +353,7 @@ def exclude_reason(seat, exclude=(), role=None):
     """The clause that refuses this seat, or None when the exclude list allows it.
 
     The clause is "<why>, and <EXCLUDE_RULE>", where <why> names the first entry
-    the seat matches. Every path that refuses a seat embeds this clause, so no
-    path words its own refusal. Needs no catalog.
+    the seat matches. Needs no catalog.
     """
     if not isinstance(seat, dict):
         return None
