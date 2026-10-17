@@ -1146,6 +1146,70 @@ class GeneratedTest(LandingTest):
         spawned.assert_not_called()
         self.assertIs(signal.getsignal(signal.SIGCHLD), signal.SIG_IGN)
 
+    def _grace_run(self, hits):
+        """Run a build whose detached grandchild holds the pipe, send hits SIGINTs during grace, and return the elapsed time and deliveries."""
+        import selectors
+        import shlex
+        from unittest import mock
+        pidfile = self.base / "sleeper.pid"
+        script = (
+            "import os, sys, time\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    os.setsid()\n"
+            "    open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+            "    time.sleep(30)\n"
+            "else:\n"
+            "    os.waitpid(child, 0)\n"
+        )
+        command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)} {shlex.quote(str(pidfile))}"
+        # The build is a process because the test delivers SIGINT around a child process group.
+        calls = []
+        previous = signal.getsignal(signal.SIGINT)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
+
+        def recording_previous(signum, frame):
+            calls.append(1)
+
+        signal.signal(signal.SIGINT, recording_previous)
+        real_select = selectors.DefaultSelector.select
+        sent = []
+        started = [None]
+
+        def wrapping(self, timeout=None):
+            # A grace select carries the five second budget. Shorter selects are the initial drain or the exit poll.
+            if timeout is not None and timeout > 1 and len(sent) < hits:
+                sent.append(1)
+                signal.raise_signal(signal.SIGINT)
+            return real_select(self, timeout)
+
+        with mock.patch.object(selectors.DefaultSelector, "select", wrapping):
+            started[0] = time.monotonic()
+            try:
+                land.run_build(command, str(self.work), 0.3)
+            finally:
+                signal.signal(signal.SIGINT, previous)
+                try:
+                    sleeper = int(pidfile.read_text().strip())
+                except (OSError, ValueError):
+                    sleeper = None
+                if sleeper is not None:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(sleeper, signal.SIGKILL)
+        return time.monotonic() - started[0], calls
+
+    def test_second_grace_sigint_cuts_the_drain_short(self):
+        """A second grace SIGINT cuts the five second drain short."""
+        elapsed, calls = self._grace_run(2)
+        self.assertLess(elapsed, 4)
+        self.assertEqual(calls, [1])
+
+    def test_first_grace_sigint_waits_the_full_drain(self):
+        """A first grace SIGINT waits the full five second drain."""
+        elapsed, calls = self._grace_run(1)
+        self.assertGreaterEqual(elapsed, 4.5)
+        self.assertEqual(calls, [1])
+
     def test_install_race_restores_handler_after_interrupt(self):
         """Install race restores the entry handler."""
         real_signal = signal.signal

@@ -1036,6 +1036,7 @@ class _Build:
         self._intercept = previous is signal.SIG_DFL or callable(previous)
         self.phase = None
         self._pending = None
+        self._arrivals = 0
         self._popen = None
         self._wake_r = None
         self._wake_w = None
@@ -1069,7 +1070,7 @@ class _Build:
             if ended == "reaped":
                 return self.returncode, self._text()
         self._kill_group()
-        if self._drain(time.monotonic() + _BUILD_DRAIN_GRACE) != "eof":
+        if self._drain(time.monotonic() + _BUILD_DRAIN_GRACE, self._arrivals) != "eof":
             self._close_stdout()
             self._chunks = []
         self._reap_killed()
@@ -1124,6 +1125,7 @@ class _Build:
 
     def _on_sigint(self, signum, frame):
         """Record the first SIGINT and wake the runner. Never signals, reaps, or raises."""
+        self._arrivals += 1
         if self._pending is None:
             self._pending = (signum, frame)
         try:
@@ -1131,11 +1133,14 @@ class _Build:
         except OSError:
             pass
 
-    def _drain(self, until):
-        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. Never reaps."""
+    def _drain(self, until, grace_mark=None):
+        """Read stdout until EOF or the time limit. Return interrupt only in STARTED. With a grace mark, return cut on a second arrival. Never reaps."""
         while self._stdout is not None:
             if self._pending is not None and self.phase == _STARTED:
                 return "interrupt"
+            # A first SIGINT during grace does not cut.
+            if grace_mark is not None and self._arrivals > grace_mark and self._arrivals >= 2:
+                return "cut"
             remaining = until - time.monotonic()
             if remaining <= 0:
                 return "deadline"
