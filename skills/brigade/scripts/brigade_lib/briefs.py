@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.affected import verify_text as affected_verify_text
+from brigade_lib.affected import DEFAULT_SUITE, layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
@@ -195,9 +195,11 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
             restaurant.fence()
             dish, used_paths, _, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
             inputs = mode_inputs(restaurant, dish, used_paths, thread)
+            meta = restaurant.meta
         mode = seam.roles_mode(inputs)
+        picked_layout = affected_layout(meta)
         if not (verify or "").strip():
-            picked = affected_verify_text(inputs.project_root, used_paths, seam.LAND)
+            picked = affected_verify_text(inputs.project_root, used_paths, seam.LAND, meta)
         else:
             picked = verify
         with restaurant.checked():
@@ -208,28 +210,33 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
             if inputs.escalated is None and mode.escalation:
                 record_escalation(restaurant, ident, mode.escalation)
             return write_brief(restaurant, dish, mode, goal, acceptance, contract, picked, used_paths, used_lease, base,
-                               context, thread)
+                               context, thread, picked_layout)
     raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
 
 
-def verify_rule(land):
-    return (
-        "While working, run only the affected test modules. "
-        f"Run all builds and tests through `python3 {land} slot -- <command>`. "
-        f"When the brief asks for the whole suite, run it as `python3 {land} slot --slots 2 -- python3 scripts/run_tests.py -j 8`. "
-        "When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run. "
-        "An affected-module run stays one slot. "
-        "When this section has an exclusive slot rule for measurements, that rule takes precedence for measurements. "
-        "Run the claims check before the final verification. "
-        "Run the full verification chain once, after the last commit. "
-        "The chain is the first bullet of this section. "
-        "A later commit that changes only prose does not rerun it. "
-        "Run the claims check again after any later edit to prose. "
-        "Prose is a change note, a comment, a docstring, help text, or a report sentence the check covered. "
-        "The final run of the chain also includes `python3 -m unittest tests.test_pstack_t3`, because that module checks the change note. "
-        "A prose-only commit runs that module and does not rerun the chain. "
-        "A fix round runs the affected modules while working and one full run at the end."
-    )
+def verify_rule(land, picked_layout):
+    suite = picked_layout.suite if picked_layout is not None else DEFAULT_SUITE
+    lines = []
+    if picked_layout is not None:
+        lines.append("While working, run only the affected test modules. ")
+    lines.extend([
+        f"Run all builds and tests through `python3 {land} slot -- <command>`. ",
+        f"When the brief asks for the whole suite, run it as `python3 {land} slot --slots 2 -- {suite}`. ",
+        "When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run. ",
+        "An affected-module run stays one slot. ",
+        "When this section has an exclusive slot rule for measurements, that rule takes precedence for measurements. ",
+        "Run the claims check before the final verification. ",
+        "Run the full verification chain once, after the last commit. ",
+        "The chain is the first bullet of this section. ",
+        "A later commit that changes only prose does not rerun it. ",
+        "Run the claims check again after any later edit to prose. ",
+        "Prose is a change note, a comment, a docstring, help text, or a report sentence the check covered. ",
+    ])
+    if picked_layout is not None:
+        lines.append(f"The final run of the chain also includes `python3 -m unittest {picked_layout.always}`. ")
+        lines.append("A prose-only commit runs that module and does not rerun the chain. ")
+        lines.append("A fix round runs the affected modules while working and one full run at the end.")
+    return "".join(lines)
 
 
 def _fill_standing(text, values):
@@ -301,7 +308,8 @@ def worker_house_rules(text):
     return "\n".join(kept)
 
 
-def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread):
+def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread,
+                picked_layout):
     ident = dish["id"]
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
@@ -325,7 +333,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
         "", "CONTRACT:", contract,
         "", "VERIFY:", f"- {verify}",
-        f"- {verify_rule(land)}",
+        f"- {verify_rule(land, picked_layout)}",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
         *(["", "STANDING RULES:", *standing] if standing else []),
