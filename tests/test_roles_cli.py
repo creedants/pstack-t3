@@ -985,6 +985,19 @@ class ModeCliTest(unittest.TestCase):
                 self.assertEqual(repo.user.read_bytes(), before)
                 self.assertFalse(repo.user.with_name("roles.json.bak").exists())
 
+    def test_write_refuses_a_non_utf8_target_and_leaves_the_file(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.user.parent.mkdir(parents=True)
+            repo.user.write_bytes(b"\xff\xfe")
+            before = repo.user.read_bytes()
+            completed = repo.write("--budget", "small")
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertIn(f"error: {repo.user}: invalid JSON:", completed.stderr)
+            self.assertEqual(repo.user.read_bytes(), before)
+            self.assertFalse(repo.user.with_name("roles.json.bak").exists())
+
     def test_keep_is_a_no_op(self):
         with self.open_repo() as directory:
             repo = Repo(directory)

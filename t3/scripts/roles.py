@@ -294,6 +294,8 @@ def load_json(path):
         text = Path(path).read_text()
     except FileNotFoundError:
         return None
+    except UnicodeDecodeError as error:
+        raise RolesError(f"{path}: invalid JSON: {error}") from error
     return parse_json(text, path)
 
 
