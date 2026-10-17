@@ -18,6 +18,7 @@ from .support import (
 CATALOG = ROOT / "tests/fixtures/catalog.json"
 PARENT = CLAUDE
 XHIGH = '{"instanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}'
+XHIGH_SEAT = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}
 MEDIUM = '{"instanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}}'
 LOW = '{"instanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "low"}}'
 FAST = '{"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"fastMode": false}}'
@@ -71,6 +72,10 @@ class LaunchTest(BrigadeTest):
         path.write_text(json.dumps({"version": 1, "budget": budget, "roles": roles}))
         return path
 
+    def write_launch_seats(self, *roles):
+        """Name the Grok xhigh seat for each role, so a full seat prints xhigh and a light brief caps it to medium."""
+        self.write_user_roles({role: [XHIGH_SEAT] for role in roles})
+
     def write_project_roles(self, roles, budget="default"):
         directory = self.project / ".pstack"
         directory.mkdir(parents=True, exist_ok=True)
@@ -101,12 +106,14 @@ class LaunchTest(BrigadeTest):
 
     def test_bug_fix_with_no_brief_prints_the_xhigh_seat(self):
         self.fired_bug_fix()
+        self.write_launch_seats("bug-fix")
         before = self.store_files()
         self.assert_launch(XHIGH)
         self.assertEqual(self.store_files(), before)
 
     def test_a_brief_with_no_mode_line_prints_the_xhigh_seat(self):
         self.fired_bug_fix()
+        self.write_launch_seats("bug-fix")
         self.write_brief("GOAL: keep the seat\n")
         before = self.store_files()
         self.assert_launch(XHIGH)
@@ -114,11 +121,13 @@ class LaunchTest(BrigadeTest):
 
     def test_mode_full_prints_the_xhigh_seat(self):
         self.fired_bug_fix()
+        self.write_launch_seats("bug-fix")
         self.write_brief("Mode: full\n")
         self.assert_launch(XHIGH)
 
     def test_mode_light_prints_the_medium_seat(self):
         self.fired_bug_fix()
+        self.write_launch_seats("bug-fix")
         self.write_brief("GOAL: a light dish\nMode: light\n")
         self.assert_launch(MEDIUM)
 
@@ -126,10 +135,12 @@ class LaunchTest(BrigadeTest):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "light")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        self.write_launch_seats("bug-fix")
         self.assert_launch(XHIGH)
 
     def test_perf_issue_and_hillclimb_print_the_xhigh_seat(self):
         self.open_wide()
+        self.write_launch_seats("perf-issue", "hillclimb")
         self.fire_station("perf-issue")
         self.assert_launch(XHIGH, "D1")
         self.fire_station("hillclimb")

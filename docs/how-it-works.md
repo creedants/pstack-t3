@@ -28,11 +28,10 @@ flowchart TD
 
 pstack never hard-codes a model. Each step names a role, and `roles.py` resolves that role against T3's live catalog.
 
-| Role kind | Default |
+| Role kind | Unset behavior |
 | --- | --- |
-| Single seat (`bug-fix`, `judgment and prose`, `swarm workers`, ...) | Unset single roles use Claude Opus (`claude-opus-5-5`) at xhigh for judgment and Grok (`grok-4.7`) at xhigh for code. `skill tests` prefers a model from another family for a fresh-child skill test. |
-| `arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers` | Those two seats, Claude Opus then Grok |
-| `verifiers` | This thread's model plus one seat per other model family you can run. With one runnable model family, `verifiers` is three copies of one seat. That seat is this thread's model only when this thread's provider can run children. Otherwise that seat is the runnable provider's first model. |
+| Every role except `review backups` (`bug-fix`, `judgment and prose`, `swarm workers`, `skill tests`, `verifiers`, `arena runners`, `arena cross-judge pool`, `architect runners`, `interrogate reviewers`, ...) | `inherit`, so the child runs on this thread's model. |
+| `review backups` | `unset`. Set it to let `roles.py backup` seat a review panel when a verifier's backups are out. Unset, a verifier parks. |
 
 `$setup-pstack` writes your own choices to `~/.config/pstack-t3/roles.json`. A repository can override roles in `.pstack/t3-roles.json`. A reasoning budget (`small` to `unlimited`) sets each seat's effort. A seat whose model you cannot run falls back, and the report names each replacement.
 

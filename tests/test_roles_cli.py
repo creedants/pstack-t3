@@ -1716,6 +1716,23 @@ class VertexHaikuCliTest(unittest.TestCase):
         self.assertIn(roles.EXCLUDE_RULE, completed.stderr)
 
 
+class ExcludeEntryShapeCliTest(unittest.TestCase):
+    """Every exclude entry is an object; a string entry is refused and names the exclude key."""
+
+    def test_a_string_exclude_entry_is_refused_and_names_the_exclude_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {"version": 1, "roles": {}, "exclude": ["grok-4.7"]})
+            completed = repo.show_bug_fix()
+            expected = (
+                f"error: {repo.user}: exclude entry 'grok-4.7' is a string; "
+                "write an object with model and/or options\n"
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr, expected)
+
+
 class UnrunnableHaikuParentCliTest(unittest.TestCase):
     def show(self, constraints):
         with tempfile.TemporaryDirectory() as directory:

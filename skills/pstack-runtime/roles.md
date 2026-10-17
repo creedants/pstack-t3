@@ -18,12 +18,7 @@ Agreement between seats on the same model is weak evidence. It shows the prompt 
 
 ## Excluded seats
 
-The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is one of:
-
-- A model-id glob string, such as `claude-haiku-4-5` or `grok-*-fast`. It matches the seat's bare model id or its normalized id.
-- An object with `model` (a glob) and/or `options` (an object of option key to value), such as `{"model": "grok-4.7", "options": {"fastMode": true}}`.
-
-A rule holds when every part holds. A model glob matches when it names the bare id or the normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model.
+The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with `model` (a glob) and/or `options` (an object of option key to value). A string entry is refused. A model glob such as `grok-*-fast` goes in `model`, and the object `{"model": "grok-4.7", "options": {"fastMode": true}}` refuses by both. A rule holds when every part holds. A model glob matches when it names the bare id or the normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model.
 
 A seat the exclude list refuses is refused everywhere: a configured role seat, a backup seat, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses that model in every role, backup, and inherit replacement`.
 

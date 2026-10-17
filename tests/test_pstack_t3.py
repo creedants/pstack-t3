@@ -2149,7 +2149,7 @@ class SetupFastGrokDocTest(unittest.TestCase):
     def test_setup_describes_the_exclude_key_for_a_fast_grok_id(self):
         text = (ROOT / "t3/setup.md").read_text()
         self.assertIn("The `exclude` key refuses a model.", text)
-        self.assertIn("Add an entry to refuse a fast Grok id such as `grok-4.7-build-fast`", text)
+        self.assertIn('Add an object entry such as `{"model": "grok-4.7-build-fast"}` to refuse a fast Grok id', text)
         self.assertIn("(../pstack-runtime/SKILL.md#excluded-seats)", text)
         self.assertNotIn("Add `fastMode` only when", text)
 

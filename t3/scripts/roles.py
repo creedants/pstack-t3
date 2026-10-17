@@ -336,18 +336,21 @@ def exclude_reason(seat, exclude=()):
 
 
 def parse_exclude(value, origin):
-    """Validate the exclude list and return it as a tuple of rule dicts."""
+    """Validate the exclude list and return it as a tuple of rule dicts.
+
+    Every entry is an object with a non-empty "model", a non-empty "options",
+    or both. A string entry is refused.
+    """
     if not isinstance(value, list):
         raise RolesError(f"{origin}: exclude must be a list")
     rules = []
     for entry in value:
         if isinstance(entry, str):
-            if not entry:
-                raise RolesError(f"{origin}: exclude entries must be a non-empty string or an object")
-            rules.append({"model": entry})
-            continue
+            raise RolesError(
+                f"{origin}: exclude entry {entry!r} is a string; write an object with model and/or options"
+            )
         if not isinstance(entry, dict) or not entry:
-            raise RolesError(f"{origin}: exclude entries must be a non-empty string or an object with model, options, or both")
+            raise RolesError(f"{origin}: exclude entries must be an object with model, options, or both")
         unknown = sorted(set(entry) - {"model", "options"})
         if unknown:
             raise RolesError(f"{origin}: exclude entry has unknown key {unknown[0]!r}")
