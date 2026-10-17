@@ -80,7 +80,7 @@ def setUpModule():
 
 def row(label, depth=0, status="done", spans=((0, 10, "done"),), open_seconds=None, stands_for=1, model="model-a"):
     bars = tuple(MOD["Span"](x, w, MOD["Status"](kind)) for x, w, kind in spans)
-    return MOD["Row"](depth, label, model, "Claude", MOD["Status"](status), 60, bars, open_seconds, stands_for)
+    return MOD["Row"](depth, label, model, MOD["Status"](status), 60, bars, open_seconds, stands_for)
 
 
 def item(ident, in_flight=True, summary="summary", pr="", no_link=""):
@@ -94,7 +94,7 @@ def group(of, *rows):
 def page(*groups, items=(), coordinator=None, hidden=None, name="kit"):
     rows = [each for one in groups for each in one.rows]
     totals = MOD["Totals"](sum(each.open_seconds is not None for each in rows), sum(each.stands_for for each in rows), 0, 0)
-    return MOD["Page"](name, MOD["Window"](0.0, 10800.0), totals, (("Claude", totals.agents),), coordinator, tuple(groups), tuple(items), hidden or MOD["Hidden"]())
+    return MOD["Page"](name, MOD["Window"](0.0, 10800.0), totals, (("model-a", totals.agents),), coordinator, tuple(groups), tuple(items), hidden or MOD["Hidden"]())
 
 
 def give_kinds_and_goals(directory):
@@ -296,8 +296,8 @@ class RenderHeightTest(unittest.TestCase):
     def test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame(self):
         # The four pages the reviewer of pull request 192 measured, each with the reserved height, the timeline rows, and the flight groups the fit leaves on it.
         cases = (
-            ("busy ordinary", busy_page(self.root / "ordinary", [f"Ship {number}" for number in range(1, 37)]), 1956, 11, 8),
-            ("busy wide", busy_page(self.root / "wide", ["W" * 36] * 36), 1918, 8, 8),
+            ("busy ordinary", busy_page(self.root / "ordinary", [f"Ship {number}" for number in range(1, 37)]), 1936, 11, 8),
+            ("busy wide", busy_page(self.root / "wide", ["W" * 36] * 36), 1960, 9, 8),
             ("new short", wide_page([f"Ship {number}" for number in range(1, 9)]), 1886, 16, 8),
             ("new wide", wide_page(["W" * 36] * 8), 1950, 12, 8),
         )

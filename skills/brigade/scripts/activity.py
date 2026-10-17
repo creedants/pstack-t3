@@ -156,9 +156,11 @@ STATE_WORDS = {
 }
 UNKNOWN_STATE = ("other", "")
 FINISHED_STATES = ("merged", "dropped")
-PROVIDERS = {"claudeAgent": ("Claude", 1), "codex": ("Codex", 2), "grok": ("Grok", 3), "opencode": ("OpenCode", 4), "cursor": ("Cursor", 5)}
-OTHER_PROVIDER = ("Other", 6)
+DRIVERS = frozenset({"claudeAgent", "codex", "grok", "opencode", "cursor"})
 OTHER_MODEL = "other model"
+MODEL_SLOTS = 5
+OTHER_SLOT = 6
+MIXED_SLOT = 0
 UNGROUPED = "Not tied to a work item"
 UNNAMED = "work item"
 KINDS = ("feature", "fix", "polish", "upkeep", "study")
@@ -322,7 +324,6 @@ class Row:
     depth: int
     label: str
     model: str
-    provider: str
     status: Status
     seconds: int
     spans: tuple[Span, ...]
@@ -1178,9 +1179,9 @@ class Privacy:
             line = tidy
 
     def model(self, value):
-        """value as field() leaves it, without one leading `<a key of PROVIDERS>/`, cut to 48 characters. OTHER_MODEL when nothing is left."""
+        """value as field() leaves it, without one leading `<a key of DRIVERS>/`, cut to 48 characters. OTHER_MODEL when nothing is left."""
         driver, slash, rest = value.partition("/")
-        name = self.field(rest if slash and driver in PROVIDERS else value)
+        name = self.field(rest if slash and driver in DRIVERS else value)
         return short(name, MODEL_CHARS) or OTHER_MODEL
 
     def link(self, value):
@@ -1591,7 +1592,7 @@ def build_page(store, t3, window, privacy):
 
     def row(agent, depth, label):
         turn = open_turn(agent)
-        return Row(depth, label, privacy.model(agent.model), PROVIDERS.get(agent.provider, OTHER_PROVIDER)[0], status_of(agent),
+        return Row(depth, label, privacy.model(agent.model), status_of(agent),
                    seconds_of(agent, window), spans_of(agent, window), int(window.end - turn.start) if turn else None, 1 if stretches(agent) else 0)
 
     def order(entry):
@@ -1626,8 +1627,8 @@ def build_page(store, t3, window, privacy):
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
-    providers = [row.provider for row in everyone]
-    legend = tuple(sorted(((name, providers.count(name)) for name in set(providers)), key=lambda entry: (-entry[1], entry[0])))
+    models = [row.model for row in everyone]
+    legend = tuple(sorted(((name, models.count(name)) for name in set(models)), key=lambda entry: (-entry[1], entry[0])))
     own = None
     coordinators = [t3.agents[thread] for thread in store.coordinators if thread in t3.agents]
     if coordinators:
@@ -1720,8 +1721,8 @@ def summary(rows, depth, label):
     spans = [span for row in rows for span in row.spans]
     failed = [span for span in spans if span.status is Status.FAILED]
     bars = union((span for span in spans if span.status is not Status.FAILED), Status.DONE) + union(failed, Status.FAILED)
-    models, providers = {row.model for row in rows}, {row.provider for row in rows}
-    return Row(depth, label, models.pop() if len(models) == 1 else "", providers.pop() if len(providers) == 1 else "", Status.DONE,
+    models = {row.model for row in rows}
+    return Row(depth, label, models.pop() if len(models) == 1 else "", Status.DONE,
                sum(row.seconds for row in rows), tuple(bars), None, agents_in(rows), all(row.earlier for row in rows))
 
 
@@ -2559,7 +2560,7 @@ RENDERER = squeezed("""
           add(head, 'span', 'sum', item[1]);
           add(head, 'b', 'chip ' + item[3], item[2]);
         } else add(head, 'span', '', 'Not tied to a work item');
-        for (const r of rows) lane('p' + (r[3] < 0 ? 0 : D.P[r[3]][1]), r[0], r[1], r[2], r[4], r[5], r[6]);
+        for (const r of rows) lane('p' + r[3], r[0], r[1], r[2], r[4], r[5], r[6]);
       }
       const strip = D.I.map((it, i) => [i, it]).filter(([, it]) => it[5]);
       if (strip.length) {
@@ -2680,8 +2681,7 @@ STRIP_HOOK = squeezed("""
 
 
 def wire(page):
-    models, providers = [], [name for name, _ in page.legend]
-    colors = dict([*PROVIDERS.values(), OTHER_PROVIDER])
+    models = []
 
     def model(name):
         if name and name not in models:
@@ -2693,8 +2693,7 @@ def wire(page):
 
     def line(row):
         tail = [row.stands_for, dur(row.open_seconds)] if row.open_seconds is not None else [row.stands_for] if row.stands_for != 1 else []
-        provider = providers.index(row.provider) if row.provider in providers else -1
-        return [row.depth, row.label, model(row.model), provider, WIRE_STATUS.index(row.status), dur(row.seconds), bars(row.spans), *tail]
+        return [row.depth, row.label, model(row.model), model_slot(row.model), WIRE_STATUS.index(row.status), dur(row.seconds), bars(row.spans), *tail]
 
     items = items_of(page)
     own, totals = page.coordinator, page.totals
@@ -2712,7 +2711,7 @@ def wire(page):
         "w": [int(page.window.start), round(page.window.end - page.window.start), span(page.window)],
         "n": [totals.running, totals.agents, totals.subagents, totals.failed],
         "S": [status.value for status in WIRE_STATUS],
-        "P": [[name, colors[name], agents] for name, agents in page.legend],
+        "P": [[name, model_slot(name), agents] for name, agents in page.legend],
         "k": own and [model(own.model), WIRE_STATUS.index(own.status), dur(own.seconds), bars(own.spans)],
         "I": [cells(item) for item in items],
         "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
@@ -2737,6 +2736,15 @@ def checksum(text):
     for at in range(0, len(units), 2):
         value = ((value ^ int.from_bytes(units[at:at + 2], "little")) * 16777619) & 0xFFFFFFFF
     return value
+
+
+def model_slot(name: str) -> int:
+    """MIXED_SLOT when empty, OTHER_SLOT for OTHER_MODEL, else checksum slot 1 to MODEL_SLOTS."""
+    if not name:
+        return MIXED_SLOT
+    if name == OTHER_MODEL:
+        return OTHER_SLOT
+    return checksum(name) % MODEL_SLOTS + 1
 
 
 def render_html(page, clean):
@@ -2826,6 +2834,7 @@ def render_text(page, clean):
         f"{totals.running} running now, {count(totals.agents, 'agent')}, {count(totals.subagents, 'sub-agent')}, {totals.failed} failed",
     ]
     for heading, body in (
+            ("Models", [line(name, str(agents)) for name, agents in page.legend]),
             ("Running now", capped(running, TEXT_RUNNING, "running agent")),
             ("Queued", capped(queued, TEXT_QUEUED, "queued agent")),
             ("Work items", items + ([f"  and {count(more, 'more work item')}"] if more else []) + loose),
