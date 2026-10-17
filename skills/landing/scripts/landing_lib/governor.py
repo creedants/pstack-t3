@@ -651,14 +651,20 @@ def _ticket_named(ticket):
 
 
 def _mint_ticket(tickets, kind, waiting):
-    """Create one exclusively locked ticket and return its number and file."""
+    """Create one exclusively locked ticket and return its number and file.
+
+    The name is mode 0o600 from the moment it appears.
+    """
     number = max((live for live, _ in waiting), default=0) + 1
     while os.path.lexists(tickets / f"{number}-{kind}"):
         number += 1
-    ticket = open(tickets / f"{number}-{kind}", "x")
+    previous = os.umask(0o077)
     try:
-        # open creates the file as 0o666 masked by the umask. fchmod sets 0o600 anyway.
-        os.fchmod(ticket.fileno(), 0o600)
+        # open asks for 0o666 and the 0o077 umask leaves 0o600, so the name is owner-readable when it appears.
+        ticket = open(tickets / f"{number}-{kind}", "x")
+    finally:
+        os.umask(previous)
+    try:
         fcntl.flock(ticket, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BaseException:
         ticket.close()

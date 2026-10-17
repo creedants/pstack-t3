@@ -385,7 +385,7 @@ class LandingTest(LandingTestBase):
                 ProcessReason.GOVERNOR, SCRIPT, ["slot", "--", "true"],
                 env=slots.env, timeout=20)
             statuses.append(result.returncode)
-        self.assertEqual((bool(mode & 0o400), statuses), (True, [0, 0]), oct(mode))
+        self.assertEqual((mode, statuses), (0o600, [0, 0]), oct(mode))
 
     def test_a_ticket_name_hard_linked_to_an_unreadable_file_does_not_stop_a_slot(self):
         """The slot command is a process because the test asserts its exit status."""
