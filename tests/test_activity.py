@@ -2454,7 +2454,7 @@ class RendererTest(OutputCase):
             self.assertNotIn(ident, document)
             self.assertNotIn(ident, "\n".join(lines))
 
-    def test_worker_with_an_end_stamp_says_ended_and_a_verifier_with_an_empty_end_says_open_and_the_earlier_worker_folds_into_one_summary_line(self):
+    def test_worker_with_an_end_stamp_says_ended_and_a_verifier_with_an_empty_end_says_open_and_an_earlier_attempts_worker_folds_into_one_summary_line(self):
         fixture = one_running(self.fixture).write()
         fixture.write_store()
         stamp = fixture.stamp(10)
