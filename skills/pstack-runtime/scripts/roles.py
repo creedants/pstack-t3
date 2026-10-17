@@ -1529,6 +1529,13 @@ def write_atomic(path, data):
         raise
 
 
+def back_up(path):
+    """Copy the target's current bytes to <name>.bak before a --replace rewrite."""
+    if not path.exists():
+        return
+    path.with_name(path.name + ".bak").write_bytes(path.read_bytes())
+
+
 def validate(config, catalog):
     problems = excluded_problems(config["roles"])
     for name, seats in config["roles"].items():
@@ -1612,24 +1619,20 @@ def command_write(args):
     given_parent(args)
     catalog = load_catalog(args.catalog)
     target = project_config_path(args.cwd) if args.project else (Path(args.config) if args.config else user_config_path())
-    try:
-        loaded = load_json(target)
-    except RolesError:
-        if args.keep:
-            raise
-        loaded = None
+    loaded = load_json(target)
     if loaded is None:
         loaded = {}
-    if args.keep:
-        raw = check_shape(loaded, target)
-    elif isinstance(loaded, dict):
-        raw = loaded
-    else:
-        raw = {}
+    if not isinstance(loaded, dict):
+        if not args.replace:
+            raise RolesError(f"{target}: expected an object")
+        loaded = {}
+    # A write keeps every stored key a flag does not name. --replace starts fresh.
+    raw = loaded
     allow = stored_allow(raw, target).remove_all(args.deny_opencode or []).add_all(args.allow_opencode or [])
-    # Budget and roles survive a rewrite only with --keep. Escalate is separate.
-    existing = raw if args.keep else {}
-    roles = dict(existing.get("roles", {}))
+    stored_roles = raw.get("roles", {})
+    if not isinstance(stored_roles, dict):
+        raise RolesError(f"{target}: roles must be an object")
+    roles = {} if args.replace else dict(stored_roles)
     for assignment in args.set or []:
         name, equals, value = assignment.partition("=")
         name = name.strip()
@@ -1637,15 +1640,14 @@ def command_write(args):
             raise RolesError(f"--set {assignment!r}: expected '<role>=<seat>[;<seat>...]' with a known role")
         roles[name] = [parse_seat(part) for part in value.split(";") if part.strip()]
     config = {"version": 1, "roles": roles}
-    budget = args.budget or existing.get("budget")
+    budget = args.budget if args.budget is not None else (None if args.replace else raw.get("budget"))
     if budget is not None:
         config["budget"] = budget
     elif not args.project:
         config["budget"] = "default"
-    if args.mode:
-        config["mode"] = args.mode
-    elif args.keep and "mode" in raw:
-        config["mode"] = raw["mode"]
+    mode = args.mode if args.mode is not None else (None if args.replace else raw.get("mode"))
+    if mode is not None:
+        config["mode"] = mode
     elif not args.project:
         config["mode"] = "full"
     if args.project and not args.clear_escalate:
@@ -1655,6 +1657,10 @@ def command_write(args):
             config["escalate"] = raw["escalate"]
     if allow.models:
         config["opencodeAllow"] = allow.to_json()
+    if not args.replace:
+        for key, value in raw.items():
+            if key not in config and key not in ("version", "roles", "budget", "mode", "escalate", "opencodeAllow"):
+                config[key] = value
     check_shape(config, target)
     if "escalate" in config:
         config["escalate"] = list(config["escalate"])
@@ -1666,6 +1672,8 @@ def command_write(args):
     problems.extend(opencode_allow_lines(roles, allow, checking))
     if problems and not args.force:
         raise RolesError("refusing to write without --force:\n" + "\n".join(problems))
+    if args.replace:
+        back_up(target)
     write_atomic(target, config)
     if not args.project and not args.config:
         write_atomic(snapshot_path(), catalog)
@@ -2101,7 +2109,8 @@ def main(argv=None):
     group.add_argument("--clear-escalate", action="store_true")
     write.add_argument("--set", action="append", help="'<role>=<seat>[;<seat>]', seat = inherit | provider/model[?option=value]")
     write.add_argument("--project", action="store_true", help="write the project file instead of the user file")
-    write.add_argument("--keep", action="store_true", help="keep roles already in the target file")
+    write.add_argument("--keep", action="store_true", help="accepted and ignored; a write keeps the stored keys it does not name")
+    write.add_argument("--replace", action="store_true", help="rewrite the file from the flags and write <file>.bak first")
     write.add_argument("--force", action="store_true", help="write despite the problems validate lists, except an excluded seat")
     write.add_argument(
         "--allow-opencode",

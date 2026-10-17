@@ -53,7 +53,7 @@ roles.py validate [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG
 ## roles.py write
 
 ```text
-roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT] [--budget BUDGET] [--mode MODE] [--escalate ESCALATE | --clear-escalate] [--set SET] [--project] [--keep] [--force] [--allow-opencode ALLOW_OPENCODE] [--deny-opencode DENY_OPENCODE]
+roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT] [--budget BUDGET] [--mode MODE] [--escalate ESCALATE | --clear-escalate] [--set SET] [--project] [--keep] [--replace] [--force] [--allow-opencode ALLOW_OPENCODE] [--deny-opencode DENY_OPENCODE]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -68,7 +68,8 @@ roles.py write [--cwd CWD] [--config CONFIG] --catalog CATALOG [--parent PARENT]
 | `--clear-escalate` |  |  |  |  |
 | `--set SET` (repeatable) |  |  |  | '\<role>=\<seat>[;\<seat>]', seat = inherit \| provider/model[?option=value] |
 | `--project` |  |  |  | write the project file instead of the user file |
-| `--keep` |  |  |  | keep roles already in the target file |
+| `--keep` |  |  |  | accepted and ignored; a write keeps the stored keys it does not name |
+| `--replace` |  |  |  | rewrite the file from the flags and write \<file>.bak first |
 | `--force` |  |  |  | write despite the problems validate lists, except an excluded seat |
 | `--allow-opencode ALLOW_OPENCODE` (repeatable) |  |  |  | Add this full OpenCode model id to the allow list in the file being written. |
 | `--deny-opencode DENY_OPENCODE` (repeatable) |  |  |  | Remove this full OpenCode model id from the allow list in the file being written. |

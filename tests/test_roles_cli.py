@@ -686,7 +686,7 @@ class ModeCliTest(unittest.TestCase):
                         repo.project,
                         {"version": 1, "roles": {}, "mode": "light", "escalate": [pattern]},
                     )
-                    completed = repo.write("--project")
+                    completed = repo.write("--project", "--replace")
                     self.assertEqual(completed.returncode, 0)
                     self.assertEqual(completed.stdout, f"wrote {repo.project}\n")
                     self.assertEqual(completed.stderr, "")
@@ -791,7 +791,7 @@ class ModeCliTest(unittest.TestCase):
             repo.put(repo.user, {"mode": "light"})
             first = repo.write("--project", "--mode", "light", "--escalate", "**/migrations/**")
             self.assertEqual(first.returncode, 0, first.stderr)
-            second = repo.write("--project", "--set", "bug-fix=inherit")
+            second = repo.write("--project", "--replace", "--set", "bug-fix=inherit")
             self.assertEqual(second.returncode, 0, second.stderr)
             document = json.loads(repo.project.read_text())
             self.assertEqual(list(document), ["version", "roles", "escalate"])
@@ -812,7 +812,7 @@ class ModeCliTest(unittest.TestCase):
             first = repo.write("--mode", "light")
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertEqual(json.loads(repo.user.read_text())["mode"], "light")
-            second = repo.write("--budget", "small")
+            second = repo.write("--replace", "--budget", "small")
             self.assertEqual(second.returncode, 0, second.stderr)
             document = json.loads(repo.user.read_text())
         self.assertEqual(list(document), ["version", "roles", "budget", "mode"])
@@ -889,16 +889,6 @@ class ModeCliTest(unittest.TestCase):
             self.assertEqual(repo.project.read_text(), before)
             self.assertFalse(repo.user.exists())
 
-    def test_write_without_keep_replaces_invalid_json(self):
-        with self.open_repo() as directory:
-            repo = Repo(directory)
-            repo.user.parent.mkdir(parents=True)
-            repo.user.write_text("{not json", encoding="utf-8")
-            completed = repo.write("--budget", "small")
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            document = json.loads(repo.user.read_text())
-        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
-
     def test_keep_on_invalid_json_exits_2(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
@@ -909,12 +899,12 @@ class ModeCliTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 2)
             self.assertEqual(repo.user.read_text(), before)
 
-    def test_write_without_keep_replaces_a_non_object(self):
+    def test_replace_rewrites_a_non_object(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             repo.user.parent.mkdir(parents=True)
             repo.user.write_text("[]\n", encoding="utf-8")
-            completed = repo.write("--mode", "light")
+            completed = repo.write("--replace", "--mode", "light")
             self.assertEqual(completed.returncode, 0, completed.stderr)
             document = json.loads(repo.user.read_text())
         self.assertEqual(document, {"version": 1, "roles": {}, "budget": "default", "mode": "light"})
@@ -927,6 +917,70 @@ class ModeCliTest(unittest.TestCase):
             completed = repo.write("--keep", "--budget", "small")
             self.assertEqual(completed.returncode, 2)
             self.assertEqual(repo.user.read_text(), "[]\n")
+
+    def test_write_keeps_stored_roles_budget_mode_and_an_unknown_key(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {
+                "version": 1,
+                "roles": {"bug-fix": ["inherit"], "hillclimb": ["inherit"]},
+                "budget": "large",
+                "mode": "light",
+                "exclude": ["grok-4.7-build-fast"],
+            })
+            completed = repo.write("--set", "bug-fix=grok/grok-4.7")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.user.read_text())
+        self.assertEqual(document["roles"]["hillclimb"], ["inherit"])
+        self.assertEqual(document["roles"]["bug-fix"], [{"providerInstanceId": "grok", "model": "grok-4.7"}])
+        self.assertEqual(document["budget"], "large")
+        self.assertEqual(document["mode"], "light")
+        self.assertEqual(document["exclude"], ["grok-4.7-build-fast"])
+
+    def test_replace_rewrites_the_file_and_writes_a_backup(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.put(repo.user, {
+                "version": 1,
+                "roles": {"bug-fix": ["inherit"]},
+                "budget": "large",
+                "mode": "light",
+            })
+            before = repo.user.read_bytes()
+            completed = repo.write("--replace", "--budget", "small")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            document = json.loads(repo.user.read_text())
+            self.assertEqual(repo.user.with_name("roles.json.bak").read_bytes(), before)
+        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
+
+    def test_write_refuses_invalid_json_and_leaves_the_file(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.user.parent.mkdir(parents=True)
+            repo.user.write_text("{not json", encoding="utf-8")
+            before = repo.user.read_bytes()
+            plain = repo.write("--budget", "small")
+            replaced = repo.write("--replace", "--budget", "small")
+            for completed in (plain, replaced):
+                self.assertEqual(completed.returncode, 2)
+                self.assertEqual(completed.stdout, "")
+                self.assertIn(f"error: {repo.user}: invalid JSON:", completed.stderr)
+                self.assertEqual(repo.user.read_bytes(), before)
+                self.assertFalse(repo.user.with_name("roles.json.bak").exists())
+
+    def test_keep_is_a_no_op(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            seed = {"version": 1, "roles": {"hillclimb": ["inherit"]}, "budget": "large"}
+            repo.put(repo.user, seed)
+            without = repo.write("--set", "bug-fix=grok/grok-4.7")
+            self.assertEqual(without.returncode, 0, without.stderr)
+            plain = repo.user.read_bytes()
+            repo.put(repo.user, seed)
+            kept = repo.write("--keep", "--set", "bug-fix=grok/grok-4.7")
+            self.assertEqual(kept.returncode, 0, kept.stderr)
+            with_keep = repo.user.read_bytes()
+        self.assertEqual(with_keep, plain)
 
     def test_user_keep_drops_a_stored_escalate_list(self):
         with self.open_repo() as directory:
@@ -1041,8 +1095,8 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(re.findall(r'--set "([^"]+)"', text), SET_EXAMPLES)
         self.assertIn("--budget large --mode full", text)
         self.assertIn(f"description: {SETUP_DESCRIPTION}", text)
-        self.assertIn("A user write without `--mode` stores `full`.", text)
-        self.assertIn("A project write without `--mode` omits the key.", text)
+        self.assertIn("A user write with no stored mode and no `--mode` stores `full`.", text)
+        self.assertIn("A project write with no stored mode and no `--mode` omits the key.", text)
         self.assertIn("Omitting `--escalate` leaves a stored project list in place.", text)
         self.assertIn("Tell the user which file was written, the budget, the mode,", text)
 
@@ -5013,7 +5067,7 @@ class OpenCodeAllowCliTest(unittest.TestCase):
                 {"verifiers": [bare_seat("opencode", PICKLE)]},
                 [PICKLE, SPACE_BUNNY],
             )))
-            dropped = repo.run("write", "--catalog", catalog, "--set", "bug-fix=grok/grok-4.7")
+            dropped = repo.run("write", "--catalog", catalog, "--replace", "--set", "bug-fix=grok/grok-4.7")
             self.assertEqual(dropped.returncode, 0, dropped.stderr)
             self.assertEqual(dropped.stdout, f"wrote {repo.user}\n")
             self.assertEqual(repo.user.read_text(), dumped(user_document(
@@ -5057,7 +5111,7 @@ class OpenCodeAllowCliTest(unittest.TestCase):
                 "roles": {"nope": ["inherit"]},
                 "opencodeAllow": [SPACE_BUNNY, PICKLE, PICKLE],
             })
-            copied = repo.run("write", "--catalog", catalog, "--set", "bug-fix=grok/grok-4.7")
+            copied = repo.run("write", "--catalog", catalog, "--replace", "--set", "bug-fix=grok/grok-4.7")
             self.assertEqual(copied.returncode, 0, copied.stderr)
             self.assertEqual(copied.stdout, f"wrote {repo.user}\n")
             self.assertEqual(repo.user.read_text(), dumped(user_document(
