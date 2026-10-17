@@ -1652,7 +1652,7 @@ class RenderedTreeCheckTest(unittest.TestCase):
         (root / "setup-pstack").mkdir()
         (root / "setup-pstack/SKILL.md").write_text(
             "---\nname: setup-pstack\ndescription: d\n---\n\n"
-            "Call `watch_pull_request`. T3 Code 0.0.46-nightly.20261005.2702 or later.\n"
+            "Call `watch_pull_request`. T3 Code 0.1.0 or later.\n"
         )
         if roles:
             (root / "pstack-runtime/scripts").mkdir()
