@@ -2048,8 +2048,8 @@ def line_count(page):
 
 
 def limit_ledger(page, keep):
-    """The page with the first keep attempt lines in display order on every copy of each work item. cut_lines counts the lines the prefix leaves off.
-    Display order is items_of order, each work item key once, current lines before fold payload within a key. Within a key, payload drops before current lines.
+    """The page with the first keep attempt lines in items_of order on every copy of each work item. cut_lines counts the lines the prefix leaves off.
+    items_of order is page.items first, then each group item not in page.items. Each work item key appears once, current lines before fold payload within a key. Within a key, payload drops before current lines.
     """
     seen, remaining, removed = set(), keep, 0
     kept_current, kept_payload = {}, {}

@@ -276,7 +276,7 @@ class LiveAttemptFoldTest(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         return result.stdout
 
-    def test_opening_the_attempt_details_in_the_live_wrapper_shows_the_earlier_rows_and_closing_hides_them_again(self):
+    def test_live_fold_script_on_the_static_document_shows_earlier_rows_when_attempt_details_open_and_hides_them_on_close(self):
         probe = "".join((
             "<script>", MOD["LIVE_FOLD"],
             "fold();",
