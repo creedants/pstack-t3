@@ -1,0 +1,5 @@
+- kind polish
+- `scripts/check.py` fails `check_tree` when `README.md` or `docs/guide.md` states a T3 Code minimum version other than the one in the setup gate sentence that `REQUIRED_TOOLS` requires in `setup-pstack/SKILL.md`
+- the finding names the file, the line, the stated version, and the gate version
+- the gate version is read from that sentence, so a bump of it needs no second literal
+- `tests/test_check.py` pins that a README and a guide naming the gate version are quiet and that a README or a guide naming another version is reported with both versions
