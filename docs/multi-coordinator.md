@@ -559,7 +559,7 @@ Record four numbers.
 
 - Duplicate tickets filed. The target is 0.
 - Items left `queued` after they landed. The target is 0.
-- Minutes from a lease release to the retry. The target is at most one liveness interval, 10 minutes at `milestones`.
+- Minutes from a lease release to the retry. The target is at most one liveness interval, 10 minutes at `milestones` by default. `brigade.py set --liveness-ms` stores another interval.
 - `fire` refusals, counted by kind (`lease`, `repository`, `workers`).
 
 After change 10 lands, the same run continues with an executive admin.
