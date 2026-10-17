@@ -330,6 +330,11 @@ class Row:
     open_seconds: Optional[int] = None
     stands_for: int = 1
     earlier: bool = False
+    color_slot: Optional[int] = None
+
+    def __post_init__(self):
+        if self.color_slot is None:
+            object.__setattr__(self, "color_slot", model_slot(self.model))
 
 
 @dataclass(frozen=True)
@@ -2693,7 +2698,7 @@ def wire(page):
 
     def line(row):
         tail = [row.stands_for, dur(row.open_seconds)] if row.open_seconds is not None else [row.stands_for] if row.stands_for != 1 else []
-        return [row.depth, row.label, model(row.model), model_slot(row.model), WIRE_STATUS.index(row.status), dur(row.seconds), bars(row.spans), *tail]
+        return [row.depth, row.label, model(row.model), row.color_slot, WIRE_STATUS.index(row.status), dur(row.seconds), bars(row.spans), *tail]
 
     items = items_of(page)
     own, totals = page.coordinator, page.totals

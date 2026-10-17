@@ -1652,6 +1652,7 @@ class FoldTest(ActivityCase):
         self.assertEqual((third.item.summary, third.item.pr), ('"' * 5 + "…", ""))
         self.assertEqual((fourth.item.summary, fourth.item.pr), ("s" * 33 + "…", "https://example.test/?" + "&" * 13))
         self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 21 + "…", "𝔸" * 8 + "…"))
+        self.assertEqual(MOD["wire"](folded)["G"][0][1][0][3], MOD["model_slot"]("m" * 40))
         self.assertEqual(folded.items, (first.item, second.item, third.item, fourth.item))
         self.assertEqual([each.no_link for each in folded.items], ["cut", "", "cut", ""])
         self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["2 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
@@ -3713,8 +3714,8 @@ class PriorPageTest(OutputCase):
         prior = json.loads(DATA.search(frozen_bytes(script, fixture).decode()).group(1))
         self.assertEqual(current["P"], [["model-a", MOD["model_slot"]("model-a"), 1]])
         self.assertEqual(prior["P"], [["Claude", 1, 1]])
-        self.assertEqual([line[:3] + line[4:] for _, lines in current["G"] for line in lines],
-                         [line[:3] + line[4:] for _, lines in prior["G"] for line in lines])
+        self.assertEqual([[index, [line[:3] + line[4:] for line in lines]] for index, lines in current["G"]],
+                         [[index, [line[:3] + line[4:] for line in lines]] for index, lines in prior["G"]])
         self.assertEqual([line[3] for _, lines in current["G"] for line in lines], [MOD["model_slot"]("model-a")])
         self.assertEqual({key: current[key] for key in current if key not in ("P", "G")},
                          {key: prior[key] for key in prior if key not in ("P", "G")})
@@ -3731,8 +3732,11 @@ class PriorPageTest(OutputCase):
         prior = json.loads(DATA.search(frozen_bytes(script, second).decode()).group(1))
         self.assertEqual(current["P"], [["model-a", MOD["model_slot"]("model-a"), 1]])
         self.assertEqual(prior["P"], [["Claude", 1, 1]])
-        self.assertEqual([line[:3] + line[4:] for _, lines in current["G"] for line in lines],
-                         [line[:3] + line[4:] for _, lines in prior["G"] for line in lines])
+        self.assertEqual([[index, [line[:3] + line[4:] for line in lines]] for index, lines in current["G"]],
+                         [[index, [line[:3] + line[4:] for line in lines]] for index, lines in prior["G"]])
+        self.assertEqual([line[3] for _, lines in current["G"] for line in lines], [MOD["model_slot"]("model-a")])
+        self.assertEqual({key: current[key] for key in current if key not in ("P", "G")},
+                         {key: prior[key] for key in prior if key not in ("P", "G")})
         for output in (html, text):
             self.assertNotIn(b"Unassigned", output)
             self.assertNotIn(b"Unused goal name", output)
