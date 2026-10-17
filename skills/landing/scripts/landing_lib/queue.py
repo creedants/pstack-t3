@@ -32,10 +32,13 @@ def submit(store, holder, branch, sha, lease, reviewer, title="", body="", owner
     changed = seam.changed_paths(repo, base, sha)
     if not changed:
         raise seam.LandError(f"{sha[:12]} changes nothing relative to {contract['trunk']}")
-    files = seam.source_paths(changed)
+    generated_paths = contract.get("generated") or []
+    files = seam.source_paths(changed, generated_paths)
     if not files:
-        raise seam.LandError(f"{sha[:12]} changes only generated paths {', '.join(changed)}. Change sources and run python3 scripts/build.py")
-    print_ = seam.fingerprint(repo, base, sha)
+        if contract.get("rebuild"):
+            raise seam.LandError(f"{sha[:12]} changes only generated paths {', '.join(changed)}. Change sources and run {contract['rebuild']}")
+        raise seam.LandError(f"{sha[:12]} changes only generated paths {', '.join(changed)}. Change sources; the contract has no rebuild command")
+    print_ = seam.fingerprint(repo, base, sha, generated_paths)
     seam.git("update-ref", seam.pin_ref(sha), sha, cwd=repo)
     with store.tx() as db:
         seam.check_owner(db, holder, owner)
@@ -112,9 +115,16 @@ class Integration:
                 names.append(chunk.split()[-1])
         return names
 
+    def _generated(self):
+        """The contract's generated paths. An older contract with no key has none."""
+        return list(self.store.contract.get("generated") or [])
+
     def _generated_snapshot(self):
         """Read staged generated paths, modes, blobs, and stages from git ls-files."""
-        result = self.git("ls-files", "-s", "-z", "--", *seam.GENERATED_PATHS, check=False, exact=True)
+        generated = self._generated()
+        if not generated:
+            return {}
+        result = self.git("ls-files", "-s", "-z", "--", *generated, check=False, exact=True)
         if result.returncode != 0:
             return None
         entries = {}
@@ -132,7 +142,7 @@ class Integration:
         return entries
 
     def _roots_escape(self):
-        for root in seam.GENERATED_PATHS:
+        for root in self._generated():
             cur = Path(self.path)
             for part in Path(root).parts:
                 cur = cur / part
@@ -146,21 +156,25 @@ class Integration:
 
     def _give_up(self, before, reason):
         self.git("reset", "--hard", before, check=False)
-        if not self._roots_escape():
-            self.git("clean", "-ffdx", "--", *seam.GENERATED_PATHS, check=False)
+        generated = self._generated()
+        if generated and not self._roots_escape():
+            self.git("clean", "-ffdx", "--", *generated, check=False)
         return reason
 
     def _clear_generated(self):
+        generated = self._generated()
+        if not generated:
+            return None
         escaped = self._roots_escape()
         if escaped:
             return escaped
-        cleared = self.git("rm", "-r", "-f", "--ignore-unmatch", "--", *seam.GENERATED_PATHS, check=False)
+        cleared = self.git("rm", "-r", "-f", "--ignore-unmatch", "--", *generated, check=False)
         if cleared.returncode != 0:
             return f"rebuild failed. `git rm -r` for generated paths exited {cleared.returncode}. {_tail(cleared.stderr + cleared.stdout)}"
-        cleaned = self.git("clean", "-ffdx", "--", *seam.GENERATED_PATHS, check=False)
+        cleaned = self.git("clean", "-ffdx", "--", *generated, check=False)
         if cleaned.returncode != 0:
             return f"rebuild failed. `git clean -ffdx` for generated paths exited {cleaned.returncode}. {_tail(cleaned.stderr + cleaned.stdout)}"
-        for path in seam.GENERATED_PATHS:
+        for path in generated:
             full = Path(self.path) / path
             try:
                 if os.path.islink(full) or full.is_file():
@@ -169,29 +183,16 @@ class Integration:
                 pass
         return None
 
-    def _has_generated_state(self):
-        snapshot = self._generated_snapshot()
-        if snapshot is None or snapshot:
-            return True
-        for root in seam.GENERATED_PATHS:
-            try:
-                os.lstat(Path(self.path) / root)
-                return True
-            except OSError:
-                continue
-        return False
-
     def _resolve_generated(self, before, identity, result):
-        did = False
         while result.returncode != 0 and cherry_pick_stopped_for_conflict(result):
             unmerged = self._unmerged_paths()
-            if not unmerged or seam.source_paths(unmerged):
-                return result, did
+            if not unmerged or seam.source_paths(unmerged, self._generated()):
+                return result
             picked = self.git("rev-parse", "--verify", "CHERRY_PICK_HEAD", check=False)
             if picked.returncode != 0:
-                return result, did
+                return result
             if self._roots_escape():
-                return result, did
+                return result
             restored = []
             for path in unmerged:
                 spec = f":(literal){path}"
@@ -199,19 +200,18 @@ class Integration:
                 if in_ours:
                     checkout = self.git("checkout", "--ours", "--", spec, check=False)
                     if checkout.returncode != 0:
-                        return result, did
+                        return result
                     restored.append(spec)
                 else:
                     removed = self.git("rm", "--", spec, check=False)
                     if removed.returncode != 0:
-                        return result, did
+                        return result
             if restored:
                 staged = self.git("add", "--all", "--", *restored, check=False)
                 if staged.returncode != 0:
-                    return result, did
+                    return result
             result = self.git(*identity, "-c", "rerere.enabled=false", "cherry-pick", "--continue", check=False)
-            did = True
-        return result, did
+        return result
 
     def _dirty_tracked(self):
         names = []
@@ -224,7 +224,8 @@ class Integration:
         return seam.run_build(command, self.path, timeout)
 
     def _rebuild(self, before):
-        command = "python3 scripts/build.py"
+        command = self.store.contract.get("rebuild")
+        generated = self._generated()
         try:
             failed = self._clear_generated()
             if failed:
@@ -242,10 +243,10 @@ class Integration:
                     reason = "timed out" if first[0] is None else f"exited {first[0]}"
                     return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(first[1])}")
                 dirty = self._dirty_tracked()
-                sources = sorted(seam.source_paths(dirty))
+                sources = sorted(seam.source_paths(dirty, generated))
                 if sources:
                     return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
-                staged = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
+                staged = self.git("add", "--all", "--", *generated, check=False)
                 if staged.returncode != 0:
                     return self._give_up(before, f"rebuild failed. `git add` exited {staged.returncode}. {_tail(staged.stderr + staged.stdout)}")
                 snapshot = self._generated_snapshot()
@@ -259,10 +260,10 @@ class Integration:
                     reason = "timed out" if second[0] is None else f"exited {second[0]}"
                     return self._give_up(before, f"rebuild failed. `{command}` {reason}. {_tail(second[1])}")
                 dirty = self._dirty_tracked()
-                sources = sorted(seam.source_paths(dirty))
+                sources = sorted(seam.source_paths(dirty, generated))
                 if sources:
                     return self._give_up(before, f"build changed sources {', '.join(sources)}. Rebuild must only change generated paths")
-                restaged = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
+                restaged = self.git("add", "--all", "--", *generated, check=False)
                 if restaged.returncode != 0:
                     return self._give_up(before, f"rebuild failed. `git add` exited {restaged.returncode}. {_tail(restaged.stderr + restaged.stdout)}")
                 again = self._generated_snapshot()
@@ -270,7 +271,7 @@ class Integration:
                     return self._give_up(before, "rebuild failed. `git ls-files` for generated paths failed")
                 if again != snapshot:
                     return self._give_up(before, "build did not reproduce generated entries")
-            added = self.git("add", "--all", "--", *seam.GENERATED_PATHS, check=False)
+            added = self.git("add", "--all", "--", *generated, check=False)
             if added.returncode != 0:
                 return self._give_up(before, f"rebuild failed. `git add` exited {added.returncode}. {_tail(added.stderr + added.stdout)}")
             if self.git("diff", "--cached", "--quiet", check=False).returncode != 0:
@@ -290,8 +291,7 @@ class Integration:
         spec = f"{entry['base']}..{seam.pin_ref(entry['sha'])}"
         identity = seam.committer(self.path)
         result = self.git(*identity, "-c", "rerere.enabled=false", "cherry-pick", spec, check=False)
-        # resolved tracks generated resolution across pick and skip.
-        result, resolved = self._resolve_generated(before, identity, result)
+        result = self._resolve_generated(before, identity, result)
         # git 2.43 has no cherry-pick --empty=drop. Git added it in 2.45. Drop a commit that
         # became empty, and stop on a commit that started empty. That matches --empty=drop.
         if result.returncode != 0:
@@ -312,8 +312,7 @@ class Integration:
                     break
                 result = self.git(*identity, "-c", "rerere.enabled=false", "cherry-pick", "--skip", check=False)
                 remaining -= 1
-                result, did = self._resolve_generated(before, identity, result)
-                resolved = resolved or did
+                result = self._resolve_generated(before, identity, result)
         if result.returncode != 0:
             self.git("cherry-pick", "--abort", check=False)
             if cherry_pick_stopped_for_conflict(result):
@@ -322,19 +321,16 @@ class Integration:
             self._give_up(before, "")
             raise seam.Infrastructure("cherry-pick failed: " + (detail.splitlines() or ["no output"])[-1])
         changed = seam.changed_paths(self.path, before, self.head())
-        sources = seam.source_paths(changed)
+        generated_paths = self._generated()
+        sources = seam.source_paths(changed, generated_paths)
         if not sources:
             self.git("reset", "--hard", before)
             return "already-in-trunk"
-        generated = [path for path in changed if seam.is_generated(path)]
-        has_builder = (Path(self.path) / "scripts/build.py").is_file()
-        if not has_builder and (generated or self._has_generated_state()):
-            return self._give_up(before, "cannot rebuild generated output without scripts/build.py")
-        if generated or resolved or has_builder:
+        if generated_paths and self.store.contract.get("rebuild"):
             failed = self._rebuild(before)
             if failed:
                 return failed
-        if seam.fingerprint(self.path, before, self.head()) != entry["fingerprint"]:
+        if seam.fingerprint(self.path, before, self.head(), generated_paths) != entry["fingerprint"]:
             return self._give_up(before, "the rebased change differs from the reviewed one; review it again")
         reason = seam.foreign_author(self.store, entry)
         if reason:

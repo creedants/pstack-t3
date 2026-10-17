@@ -21,7 +21,7 @@ Land many agents' work on one repository through one queue.
 ## land.py init
 
 ```text
-land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--cap CAP]
+land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--cap CAP] [--generated PATHS] [--rebuild COMMAND]
 ```
 
 write the repository's landing contract
@@ -38,6 +38,8 @@ write the repository's landing contract
 | `--timeout TIMEOUT` |  |  |  | seconds before a check is killed. Omitted, a rerun keeps the stored timeout and a first init stores 1800 |
 | `--merge-method MERGE_METHOD` |  | `merge`, `squash`, `rebase` |  | merge mode: how the queue merges its PRs, checked against the repository whenever it is set. omitted in merge mode, a first init stores the one allowed method, or merge when gh cannot say, and a rerun keeps the stored method while the repository allows it |
 | `--cap CAP` |  |  |  | most changes in flight on the repository at once; 0 clears it |
+| `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
+| `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |
 
 ## land.py cap
 

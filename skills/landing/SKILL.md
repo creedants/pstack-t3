@@ -24,7 +24,7 @@ The rules:
 
 ```bash
 L="python3 <skills>/landing/scripts/land.py --repo <checkout>"
-$L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--base <commit>] [--cap 4]
+$L init --trunk main --mode human|merge|push|local --check "<cmd>" [--check ...] [--setup "npm ci"] [--batch 4] [--timeout 1800] [--merge-method merge|squash|rebase] [--base <commit>] [--cap 4] [--generated <paths>] [--rebuild "<cmd>"]
 $L mode merge [--merge-method squash]   # change the mode while the queue is empty. --merge-method may change while entries await merge
 $L cap 4                     # most changes in flight on the repository at once; 0 clears it
 $L lease claim --holder <restaurant>/<dish> --paths src/engine,package.json [--owner <restaurant>/@<generation>]   # prints L<n>, who holds the overlap, or the cap and its holders
@@ -66,6 +66,8 @@ The executive admin carries out its rulings with `lease reserve`, `lease unreser
 Run `init` the first time any coordinator writes to a repository. The mode decides whether the user stays a gate on landing, so it is the user's choice. brigade asks it when a restaurant opens. Any other coordinator asks once per repository with the host's question tool, unless the user already said.
 
 A rerun of `init` keeps the stored checks, setup, batch and timeout whose flag is omitted. A default fills a key only when the contract does not hold that key. With a stored method, an omitted `--merge-method` keeps it while the repository allows it, picks an allowed method when it is not allowed, refuses when the repository allows none, and keeps it when `gh` cannot report the allowed methods.
+
+`--generated` lists repository-relative paths the queue treats as generated output, as a comma list. `--rebuild` names the command that regenerates them. A new contract stores an empty list and no command. A rerun keeps a stored `generated` and `rebuild` whose flag is omitted, and an empty value clears either. `init` refuses an absolute path, a path with a `.`, `..`, or empty component, and an empty entry in the list. With no generated paths the queue never refuses a generated-only change, never runs `git rm` or `git clean` on a path, and never rebuilds. With generated paths and no rebuild command it refuses a change that touches only those paths, and the refusal names the missing command. With both it behaves as before, with the stored paths and command. `init` and `status` print both keys when the contract holds either. pstack-t3 keeps its behavior with this rerun: `python3 <skills>/landing/scripts/land.py --repo <checkout> init --trunk main --mode merge --generated skills,docs/cli,docs/skills.md --rebuild "python3 scripts/build.py"`.
 
 In `merge` mode, `init` runs `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`. When the contract has no merge method and `--merge-method` is omitted, it stores the only allowed method. When several methods are allowed, it prefers merge, then squash. An explicit method the repository disallows is refused, and the error names the allowed methods. When `gh` fails, `init` stores the explicit method, keeps the stored method when the flag is omitted, or defaults to merge when neither exists. The method is checked against the repository whenever it is set, in any mode, and whenever the mode becomes merge. `mode merge` swaps a stored method the repository disallows for an allowed one and names it.
 

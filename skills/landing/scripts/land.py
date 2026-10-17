@@ -100,6 +100,12 @@ def parser():
                         "omitted in merge mode, a first init stores the one allowed method, or merge when gh cannot say, "
                         "and a rerun keeps the stored method while the repository allows it")
     p.add_argument("--cap", type=int, help="most changes in flight on the repository at once; 0 clears it")
+    p.add_argument("--generated", metavar="PATHS", default=None,
+                   help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
+                        "An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none")
+    p.add_argument("--rebuild", metavar="COMMAND", default=None,
+                   help="command that regenerates the generated paths while landing, such as \"python3 scripts/build.py\". "
+                        "An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none")
 
     p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
     p.add_argument("count", type=int)
@@ -223,7 +229,7 @@ def run(argv):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
-                    args.merge_method, args.cap), 0
+                    args.merge_method, args.cap, args.generated, args.rebuild), 0
     if args.command == "times":
         return landing_times(args.repo, args.last, args.holder, args.json), 0
     with Store.for_repo(args.repo) as store:
@@ -273,7 +279,12 @@ def run(argv):
             return holder_status(store, args.holder, args.sha), 0
         if args.sha:
             raise LandError("status --sha needs --holder")
-        return status(store, args.id), 0
+        line = status(store, args.id)
+        if not args.id:
+            note = generated_note(store.contract.get("generated") or [], store.contract.get("rebuild"))
+            if note:
+                line = f"{line} {note}"
+        return line, 0
 
 
 def main(argv=None):
