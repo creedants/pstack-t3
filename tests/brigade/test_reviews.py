@@ -252,6 +252,85 @@ class ReviewsTest(BrigadeTest):
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
                           ["D1", "1", "claims check", THREAD_B, "grok/grok-4.7", "", "stamp"]])
 
+    def test_a_prose_line_in_a_threads_section_skips_the_line_and_records_both_rows(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n"
+                                  "Both children finished before the reviewer read the report.\n"
+                                  f"- claims check `{THREAD_C}` {CODEX}\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
+                          ["D1", "1", "code delegate", THREAD_B, "opencode-go/step-5-preview-free", "", "stamp"],
+                          ["D1", "1", "claims check", THREAD_C, CODEX, "", "stamp"]])
+
+    def test_a_malformed_list_item_in_a_threads_section_is_refused_by_its_number(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                  f"- code delegate {THREAD_B} opencode-go/step-5-preview-free\n")
+        before = self.store_files()
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, ok=False),
+                         "brigade: D1: reports/D1.md cannot be read; line 5 is not one list item of the form "
+                         "- <role> `<thread id>` <seat>; nothing recorded")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual([row[1:] for row in self.thread_rows()],
+                         [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
+
+    def test_each_threads_case_is_refused_by_its_number_or_records_its_rows(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        role = f"claims check `{THREAD_C}` {CODEX}"
+        item = ("brigade: D1: reports/D1.md cannot be read; line 6 is not one list item of the form "
+                "- <role> `<thread id>` <seat>; nothing recorded")
+        deeper = ("brigade: D1: reports/D1.md cannot be read; line 6 is a heading deeper than the ## Threads "
+                  "heading; nothing recorded")
+        again = "brigade: D1: reports/D1.md cannot be read; line 6 is a second ## Threads heading; nothing recorded"
+        recorded = [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
+                    ["D1", "1", "code delegate", THREAD_B, "opencode-go/step-5-preview-free", "", "stamp"],
+                    ["D1", "1", "claims check", THREAD_C, CODEX, "", "stamp"]]
+        cases = (
+            ("prose", "Both children finished.", "", recorded[:2]),
+            ("indented dash", f" - {role}", item, None),
+            ("three-space dash", f"   - {role}", item, None),
+            ("tabbed dash", f"\t- {role}", item, None),
+            ("indented star", f"  * {role}", item, None),
+            ("tabbed plus", f"\t+ {role}", item, None),
+            ("numbered dot", f"1. {role}", item, None),
+            ("numbered paren", f"1) {role}", item, None),
+            ("bullet", f"\u2022 {role}", item, None),
+            ("missing dash", role, item, None),
+            ("missing separator", f"-{role}", item, None),
+            ("bare dash", "-", item, None),
+            ("bare star", "*", item, None),
+            ("bare plus", "+", item, None),
+            ("indented deeper heading", "  ### Children", item, None),
+            ("indented Threads heading", "  ## Threads", item, None),
+            ("dash tab", f"-\t{role}", item, None),
+            ("star space", f"* {role}", item, None),
+            ("plus space", f"+ {role}", item, None),
+            ("dash then role only", "- claims check", item, None),
+            ("deeper heading", "### Children", deeper, None),
+            ("second Threads heading", "## Threads", again, None),
+            ("one item", f"- {role}", "", recorded),
+        )
+        for name, third, error, expected in cases:
+            with self.subTest(case=name):
+                self.review_file("D1.md", "findings\n\n## Threads\n\n"
+                                          f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n{third}\n")
+                before = self.store_files()
+                record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                          "--author", CLAUDE, "--verifier", CODEX)
+                if error:
+                    self.assertEqual(self.brigade(*record, ok=False), error)
+                    self.assertEqual(self.store_files(), before)
+                else:
+                    self.assertEqual(self.brigade(*record), "D1 sent-back")
+                    self.assertEqual([row[1:] for row in self.thread_rows()], expected)
+
     def test_a_padded_report_thread_id_is_refused_by_its_number_and_a_rerun_adds_no_row(self):
         self.fired_bug_fix()
         self.brigade("dish", "D1", "--thread", THREAD_A)
