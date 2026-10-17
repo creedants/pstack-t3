@@ -187,7 +187,7 @@ def covered(path, paths):
 
 
 def generated_path(value):
-    """One repository-relative generated path. Refuses an absolute path, an empty value, and a '.' or '..' component."""
+    """One repository-relative generated path. Refuses an absolute path and a '.', '..', or empty component."""
     text = value.strip().replace("\\", "/").rstrip("/")
     parts = text.split("/")
     if not text or text.startswith("/") or any(part in ("", ".", "..") for part in parts):
