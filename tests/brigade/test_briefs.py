@@ -820,7 +820,7 @@ class BriefsTest(BrigadeTest):
         self.assertEqual(self.tables(), before)
         self.assertFalse((self.at / "goals.tsv").exists())
 
-    def test_omitted_verify_runs_the_check_command_fails_when_the_picker_runs_without_a_layout(self):
+    def test_omitted_verify_runs_the_check_command_and_names_no_affected_modules_fails_when_the_picker_runs_without_a_layout(self):
         self.started()
         self.brigade("set", "--thread", "thread-coord")
         self.brigade("set", "--check-command", "python3 scripts/check.py")
@@ -831,6 +831,7 @@ class BriefsTest(BrigadeTest):
         self.assertIn("picker is off", verify)
         self.assertNotIn("tests.test_pstack_t3", verify)
         self.assertNotIn("run_tests.py", verify)
+        self.assertNotIn("affected modules while working", verify)
         self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
 
     def test_no_layout_and_no_check_command_says_no_verify_command_is_set(self):
@@ -894,6 +895,7 @@ class BriefsTest(BrigadeTest):
         self.assertIn("no regeneration diff", verify)
         self.assertIn("scripts/check.py", verify)
         self.assertIn("foreground slot", verify)
+        self.assertIn("affected modules while working", verify)
         self.assertNotIn("No affected mapping", verify)
 
     def test_fallback_verify_lists_unmapped_and_chain_fails_when_fallback_chain_missing(self):
