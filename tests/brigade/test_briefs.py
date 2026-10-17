@@ -876,6 +876,8 @@ class BriefsTest(BrigadeTest):
     def test_mapped_verify_lists_modules_and_chain_fails_when_mapped_chain_missing(self):
         self.started(paths="src/a.py")
         self.record_layout()
+        self.brigade("set", "--build-command", "python3 scripts/build.py",
+                     "--check-command", "python3 scripts/check.py")
         self.brigade("set", "--thread", "thread-coord")
         (self.project / "src").mkdir(parents=True, exist_ok=True)
         (self.project / "src/a.py").write_text("x = 1\n")
@@ -901,6 +903,8 @@ class BriefsTest(BrigadeTest):
     def test_fallback_verify_lists_unmapped_and_chain_fails_when_fallback_chain_missing(self):
         self.started()
         self.record_layout()
+        self.brigade("set", "--build-command", "python3 scripts/build.py",
+                     "--check-command", "python3 scripts/check.py")
         self.brigade("set", "--thread", "thread-coord")
         text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a",
                             "--paths", "README.md", "--lease", "L1", "--base", "origin/main")
