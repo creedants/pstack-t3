@@ -1,5 +1,7 @@
 # Token usage sources
 
+**Sample record.** The counts, the percentages, and the fits below come from one study on the pstack-t3 maintainers' own machine, on 2026-10-10 and 2026-10-11 UTC. They are not your account. Read your own T3 state database and provider logs with the joins in [What a spend command reads](#what-a-spend-command-reads), and compare your own totals.
+
 This page records which token counts to trust for what a piece of work cost. A study run on 2026-10-10 and 2026-10-11 UTC compared T3 Code's stored counts with Claude's and Codex's session logs and OpenCode's message database on one machine. T3 Code was 0.0.46-nightly.20261010.2922. The study attempted joins for all 902 finished Claude and 436 finished Codex provider threads in T3's state database, and for 108 OpenCode provider threads. The counts below came from read-only scripts over that database and those logs. The scripts are not in this repository.
 
 ## The two objects on a provider turn

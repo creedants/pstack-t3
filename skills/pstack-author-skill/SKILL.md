@@ -22,7 +22,7 @@ T3 can run any provider, and each provider loads skills from its own directories
 
 - A project skill: real files in `.agents/skills/<name>/`, plus a relative link `.claude/skills/<name>` pointing at `../../.agents/skills/<name>`. If the repo already keeps skills only under `.claude/skills/`, invert it.
 - A personal skill: real files in `~/.config/pstack-t3/personal/<name>/`, linked with `ln -sfn` into each user directory above for the providers the user runs.
-- A pstack-t3 skill: edit `t3/overrides/<skill>/` or `t3/added/<skill>/` in the pstack-t3 repo and run `python3 scripts/build.py`. Never edit its generated `skills/` tree.
+- A pstack-t3 skill, one that ships inside the pstack-t3 repository: work in a pstack-t3 checkout. Edit `t3/overrides/<skill>/` or `t3/added/<skill>/` there, and run `python3 scripts/build.py`. Never edit its generated `skills/` tree. Outside that checkout, a skill of your own is a project skill in `.agents/skills/<name>/` or a personal skill in `~/.config/pstack-t3/personal/<name>/`.
 - Before creating, search every directory above for an existing skill that covers the topic. Extend it instead of adding a sibling.
 
 ## 2. Write the frontmatter

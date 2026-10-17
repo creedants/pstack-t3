@@ -1,5 +1,7 @@
 # Live runs
 
+**Sample record.** Each run below is one the pstack-t3 maintainers ran themselves on their own scratch repository. Its provider, seats, times, and thread counts belong to that run. Record for your own run what merged, how long it took, and the skill defects it exposed, and check each defect against the skill file the narrative cites.
+
 This page records each live end-to-end run of a long pstack-t3 playbook on a real repository. It lists what merged, how long the run took, and the skill defects the run exposed. Each defect becomes its own ticket. A run changes no skill.
 
 ## Autopilot-full, 2026-10-06
