@@ -1,9 +1,9 @@
 - kind fix
-- restore moves the proven backup into place with place and calls proved with path and fd right after the move
+- restore_aside moves the proven backup into place with place and calls proved with path and fd right after the move
 - proved returns Published when its pathname lookup matches the supplied device and inode numbers. Otherwise it reports that the moved entry could not be confirmed
 - place_proven returns the placement refusal when place refuses and returns the proof refusal when proved fails without touching the live occupant
 - retire runs only after a cross filesystem copy is placed. It requires a PrivateName argument
 - park and retire require a PrivateName argument. PrivateName construction requires its parent directory name to start with `.pstack-t3-`
-- same filesystem moves keep hard links and extended attributes and modes and FIFO type and relative symlink targets. Symlink restore works on macOS again
+- same filesystem moves keep hard links and extended attributes and modes and FIFO type and relative symlink targets
 - a same user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays
 - base place_copy stays for EXDEV only with shutil in a SCRAP holder then place

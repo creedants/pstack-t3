@@ -985,7 +985,7 @@ def proved(path, fd):
 
 
 def park(entry):
-    """Move the holder entry at `entry` into a new STRANGER directory beside the HOLDER directory that holds it. Return its new path.
+    """Move the holder entry at `entry` into a new STRANGER directory beside the holder directory that holds it. Return its new path.
 
     It takes a PrivateName only. It never takes a live path. It moves by `place`, so it replaces nothing.
     It stays on one filesystem, so it never needs a copy. Return None when it stayed.
@@ -1103,7 +1103,7 @@ def give_back(taken, backup, aside, reason):
 
 
 def keep(taken, backup, aside, fd, reason):
-    """After the proof passed and the placement did not, drop the second name for a twin and return the moved entry to `backup` or keep it at `aside`. Park what is not the held entry."""
+    """After `place_proven` returned a refusal, drop the second name for a twin and return the moved entry to `backup` or keep it at `aside`. Park what is not the held entry."""
     if not os.path.lexists(aside):
         return reason
     if same_entry(aside, fd):
@@ -1121,7 +1121,7 @@ def keep(taken, backup, aside, fd, reason):
 def restore_aside(backup, aside, path, fd):
     """Move the proven entry at `aside` to `path` and prove it there. Return why the backup was kept.
 
-    It checks `same_entry` before the move to authorize it, then calls `proved` right after the move. Proof success finishes the restore. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
+    It checks `same_entry` before the move to authorize it, then `place_proven` calls `proved` right after a same-filesystem move. Proof success finishes the restore. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
     """
     try:
         # A second name leaves the backup where it is until the entry is proven.
@@ -1147,7 +1147,7 @@ def restore_aside(backup, aside, path, fd):
 def restore_backup(backup, path, held):
     """Move the backup to `path` only while `path` is empty and the backup is the entry the plan held. Return why it was kept.
 
-    It checks the backup before the move, moves by descriptor link or by private name, then calls `proved` right after the move. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
+    It checks the backup before the move, links it by descriptor or moves it by private name, then calls `proved` right after a same-filesystem move. Proof failure leaves the live entry where it is, deletes nothing, and keeps the backup row. A same-user process that swaps the backup in the instant before the move can make its entry visible at the live path until the check runs. That window stays.
     """
     if held.fd is None:
         return f"the backup could not be held open to prove it is the entry uninstall read ({held.error})"
