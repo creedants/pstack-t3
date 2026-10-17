@@ -1138,7 +1138,7 @@ class _Build:
         while self._stdout is not None:
             if self._pending is not None and self.phase == _STARTED:
                 return "interrupt"
-            # A first SIGINT during grace does not cut.
+            # A grace arrival that is the first arrival of the run does not cut.
             if grace_mark is not None and self._arrivals > grace_mark and self._arrivals >= 2:
                 return "cut"
             remaining = until - time.monotonic()

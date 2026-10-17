@@ -1134,7 +1134,7 @@ class GeneratedTest(LandingTest):
         self.assertLess(elapsed, 5)
 
     def test_run_build_refuses_to_start_while_sigchld_is_ignored(self):
-        """Starting with SIGCHLD ignored cannot pin the group id."""
+        """Refuses to start while SIGCHLD is ignored."""
         from unittest import mock
         previous = signal.getsignal(signal.SIGCHLD)
         self.addCleanup(signal.signal, signal.SIGCHLD, previous)
