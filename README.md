@@ -23,6 +23,12 @@
   <img src="docs/assets/activity-view.png" alt="Activity page for the demo coordinator kit, showing three running agents, one queued worker, four sub-agents, items working, in review, landing, and merged, and timeline bars for Claude, Codex, Grok, and OpenCode models" width="100%">
 </p>
 
+## What it is
+
+pstack is Lauren Tan's set of skills, playbooks, and principles for careful agent engineering. Lauren Tan wrote that set for Cursor. pstack-t3 ships an upstream file unchanged when the file needs no T3 change. It swaps each Cursor mechanism for its T3 Code equivalent. The same skills then run on any provider T3 drives. pstack-t3 adds a standing project coordinator.
+
+Run `python3 scripts/sync_upstream.py --check` to see what upstream changed. Nothing runs that check on a schedule. The check reads the commit pinned in `upstream.json`. `vendor/pstack` stays byte-identical to that commit. `t3/overrides` replaces each file the port changes. pstack-t3 requires T3 Code nightly `0.0.46-nightly.20261005.2702` or later. It does not update T3 Code.
+
 ## What it does
 
 - **Picks the right workflow for your request.** `$poteto-mode` matches your task to one of its playbooks, such as bug fix, feature, refactor, or investigation. It follows the playbook steps in a visible todo list.
@@ -38,9 +44,3 @@ Start with [1. Install (two minutes)](docs/guide.md#1-install-two-minutes).
 See [all 59 skills and every playbook](docs/skills.md).
 
 pstack is by [Lauren Tan (poteto)](https://x.com/poteto). MIT licensed. See [LICENSE](LICENSE).
-
-## Continuous integration
-
-Every pull request runs the test suite on macOS with Python 3.12 in four parts on `macos-latest`.
-The check named `test (3.12)` fails unless each part succeeds.
-Python 3.10 jobs and the workflow's separate browser-selection step run on Ubuntu only.
