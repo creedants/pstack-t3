@@ -2,3 +2,5 @@
 - `tests/landing/test_generated.py` records each killpg and each waitpid that reaps a child or fails with ChildProcessError for a specific pid with its pid and reports signal after reap only when a killpg names a pid that an earlier event reaped
 - `tests/landing/test_generated.py` finds a zombie through `/proc` and then through `ps -o stat=` when `/proc/<pid>/stat` cannot be read
 - `tests/landing/test_generated.py` runs `test_previous_callable_runs_after_the_reap` and `test_sigint_sampled_lines_never_signal_after_reap` on the host and on simulated Darwin without `os.waitid` (on a Darwin host without `os.waitid`, only simulated Darwin runs). `test_darwin_ps_reap_is_not_a_leader_reap` runs its body only on simulated Darwin.
+- `tests/landing/test_generated.py` asserts delivery only when the sampled line ran and asserts no call when the replay ended before the index
+- `tests/landing/test_generated.py` restores the entry SIGINT disposition through unittest cleanup

@@ -1152,6 +1152,8 @@ class GeneratedTest(LandingTest):
 
     def test_sigint_sampled_lines_never_signal_after_reap(self):
         """Sampled lines never signal after the reap."""
+        entry = signal.getsignal(signal.SIGINT)
+        self.addCleanup(signal.signal, signal.SIGINT, entry)
         codes = {land.run_build.__code__}
         for value in vars(land._Build).values():
             if callable(value):
@@ -1198,11 +1200,14 @@ class GeneratedTest(LandingTest):
                                     entry = raising_previous if kind == "raising" else returning_previous
                                     signal.signal(signal.SIGINT, entry)
                                     fired = [0]
+                                    # hit records reach when raise interrupts before the increment.
+                                    hit = [False]
 
                                     def tracer(frame, event, arg):
                                         if frame.f_code in codes:
                                             if event == "line":
                                                 if fired[0] == index:
+                                                    hit[0] = True
                                                     signal.raise_signal(signal.SIGINT)
                                                 fired[0] += 1
                                             return tracer
@@ -1221,9 +1226,11 @@ class GeneratedTest(LandingTest):
                                     restored = signal.getsignal(signal.SIGINT) is entry
                                     self.assertFalse(after, f"{platform} {kind} {command} line {index}: {trace.events}")
                                     self.assertTrue(restored, f"{platform} {kind} {command} line {index}")
-                                    self.assertEqual(calls, [1], f"{platform} {kind} {command} line {index}")
+                                    if hit[0]:
+                                        self.assertEqual(calls, [1], f"{platform} {kind} {command} line {index}")
+                                    else:
+                                        self.assertEqual(calls, [], f"{platform} {kind} {command} line {index}")
                                     self.assertLess(elapsed, 6, f"{platform} {kind} {command} line {index}")
-                        signal.signal(signal.SIGINT, signal.default_int_handler)
 
     def test_timeout_kills_live_build_with_no_exit_detector(self):
         """Timeout kills a live build without an exit detector."""
