@@ -7,3 +7,4 @@
 - `init` and a repo-level `status` print `generated` and `rebuild` when the contract holds either.
 - pstack-t3 keeps today's behavior with `python3 skills/landing/scripts/land.py --repo <checkout> init --trunk main --mode merge --generated skills,docs/cli,docs/skills.md --rebuild "python3 scripts/build.py"`.
 - `tests/landing/test_generated.py` pins a hand-written `skills/` change landing as ordinary source with no generated config, a source-only change rebuilding its generated output under a contract with generated paths and a rebuild command, the rerun-keeps and clear rules, and the path refusals.
+- `tests/landing/test_identity.py` lists `generated` and `rebuild` among the contract keys it expects.
