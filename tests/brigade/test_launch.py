@@ -248,8 +248,7 @@ class LaunchTest(BrigadeTest):
         providers_null.write_text('{"providers": [null]}')
         script_catalog = root / "script-catalog.json"
         script_catalog.write_text("{}")
-        # The depth that raises RecursionError depends on the interpreter's C stack,
-        # so grow the fixture until this interpreter refuses it.
+        # Grow the fixture until this interpreter raises RecursionError.
         depth = 20000
         while depth <= 1048576:
             deep_text = "[" * depth + "]" * depth
