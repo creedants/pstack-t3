@@ -1,0 +1,4 @@
+- kind feature
+- The brigade-admin skill's `Open an executive admin` step 5 asks the user, with the host's question tool, for the intake interval in whole minutes and the morning and evening times as `HH:MM`, offers one hour, `09:00`, and `18:30` as the defaults, refuses an intake interval above 120 minutes, refuses an evening time at or before `18:00`, and carries the chosen values in the admin's start message.
+- `Admin first service` step 2 creates `intake`, `morning`, and `evening` from those values, and a start message with no value for one of the three takes the default, `3600000` ms, `09:00`, and `18:30`.
+- `Admin recovery and retirement` step 2 reads each recorded schedule's cadence from `list_scheduled_tasks` before it deletes it, builds the start message from the cadence it read, and uses the default `3600000` ms, `09:00`, and `18:30` when no cadence was read.
