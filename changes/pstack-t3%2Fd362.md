@@ -1,6 +1,7 @@
 - kind fix
 - `place` treats a source that is gone after its hard link worked as moved, so a restore whose backup directory vanishes after the entry reached its path reports it restored instead of failing with ENOENT
-- every restore that moves an entry by name proves `path` names the held entry after the move, parks any other entry in a `.pstack-t3-stranger-` directory beside it, and keeps the backup and its row
-- a copy across filesystems proves its source again after the copy is built, and is held open so its placement is proven too
-- a moved entry this restore cannot prove goes back to the backup's path only while that path is still free, and the sweep leaves `.pstack-t3-stranger-` entries where they are
-- `restore_race` and `cross_device` make the occupant and the by-name crossing count independent of whether the platform links a held descriptor through `/proc`, and `raising` raises only while the caller's named call runs
+- publish creates the live path from the held descriptor only while the path is empty, and only publish makes a Published
+- publish never moves a holder name onto the live path and never moves or deletes an occupant of the live path
+- proved returns Published only when the path still names the made inode, else it returns a refusal saying the entry is still at the path
+- park and retire take a PrivateName only, so a live occupant is never parked or deleted
+- `restore_race` and `cross_device` occupy at link_held entry every route and at os.open and os.mkdir and os.symlink onto the path
