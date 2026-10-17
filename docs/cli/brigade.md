@@ -43,7 +43,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -66,6 +66,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of the kind holding a worker slot; a pair with no number clears that kind's cap; an empty value clears every cap |
 | `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
 | `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside /tmp; "" clears the setting |
+| `--low-reserve N` |  |  |  | the most workers still idle when a low ticket is held back while an urgent or normal ticket can start; 0 holds no low ticket back; "" clears it to 1 |
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 
@@ -304,7 +305,7 @@ liveness: which dishes have reports, are running, or are over their timebox
 brigade.py [flags] startable
 ```
 
-waiting tickets in the order they should start, each with why it can or cannot start now; a low ticket that would take the last idle worker is held back while any urgent or normal ticket is waiting, whether or not that ticket can start now; it starts nothing
+waiting tickets in the order they should start, each with why it can or cannot start now; a low ticket that could otherwise start and does not ride a higher ticket's paths is held back while an urgent or normal ticket can start now and the workers still idle are at least one and at most lowReserve, the restaurant.json setting that reads as 1 when absent and holds no low ticket back at 0; it starts nothing
 
 ## brigade.py hang
 

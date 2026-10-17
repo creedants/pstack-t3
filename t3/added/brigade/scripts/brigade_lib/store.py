@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
-from brigade_lib.compact import effective_provider, sync_meta
+from brigade_lib.compact import effective_provider, refuse_setting, sync_meta
 from brigade_lib.shared import BrigadeError, MalformedTable, slug, stored
 
 
@@ -121,6 +121,8 @@ NEEDS_CONTRACT = ("brief needs a contract; pass --contract <text> or the contrac
 # The restaurant.json key that holds the parent directory worker briefs pass to mktemp -d -p.
 SCRATCH_KEY = "scratchDir"
 SCRATCH_REFUSAL = "--scratch-dir takes an absolute directory path outside /tmp, or empty string to clear it"
+# The restaurant.json key that overrides LOW_RESERVE.
+LOW_RESERVE_KEY = "lowReserve"
 SNAPSHOT_CHUNK = 1 << 16
 
 MENU = """# Menu: {restaurant}
@@ -194,6 +196,30 @@ def scratch_parent_text(value):
     if refused:
         raise BrigadeError(SCRATCH_REFUSAL)
     return str(resolved)
+
+
+def low_reserve_of(meta):
+    """The low-priority worker reserve this store enforces.
+
+    A missing key takes LOW_RESERVE. A present value that is a boolean, is not an integer, or is negative is refused.
+    """
+    if LOW_RESERVE_KEY not in meta:
+        return LOW_RESERVE
+    value = meta[LOW_RESERVE_KEY]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        refuse_setting(LOW_RESERVE_KEY, value, "it is not a whole number of 0 or more")
+    return value
+
+
+def parse_low_reserve(text):
+    """The integer a --low-reserve flag stores. Empty string is the caller's clear signal, not this function's."""
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise BrigadeError(f"--low-reserve takes a whole number of 0 or more, got '{text}'") from None
+    if value < 0:
+        raise BrigadeError(f"--low-reserve takes a whole number of 0 or more, got '{text}'")
+    return value
 
 
 def write_atomic(path, text):

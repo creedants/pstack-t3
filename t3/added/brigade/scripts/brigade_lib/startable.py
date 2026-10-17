@@ -23,7 +23,7 @@ from pathlib import Path, PurePosixPath
 from brigade_lib.layout import _layout, _one
 from brigade_lib.leases import STANDINGS, _claim_norm, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
 from brigade_lib.shared import age, clean, slug
-from brigade_lib.store import LOW_FLAG_DAYS, LOW_RESERVE, PRIORITIES_BY_RANK
+from brigade_lib.store import LOW_FLAG_DAYS, PRIORITIES_BY_RANK, low_reserve_of
 from brigade_lib.tickets import EVERY_ROW, Label, label_words, paths_of, priority_of, read_labels
 
 
@@ -67,11 +67,11 @@ def waiting_ticket(row, label=Label(), *, doc_item=False, paths=None):
                    bool(doc_item))
 
 
-def plan(tickets, refill, running, cap, level, refusals, now, expanded=None):
+def plan(tickets, refill, running, cap, level, refusals, now, low_reserve, expanded=None):
     allowed = () if level == "off" else PRIORITIES_BY_RANK[:PRIORITIES_BY_RANK.index(level) + 1]
     idle = max(0, cap - running)
     priorities = {ticket.id: ticket.priority for ticket in tickets}
-    higher_waits = any(ticket.priority != "low" for ticket in tickets)
+    higher_started = False
     started = {}
     standings = []
     for ticket in sorted(tickets, key=lambda ticket: (PRIORITIES_BY_RANK.index(ticket.priority), ticket.filed,
@@ -99,10 +99,12 @@ def plan(tickets, refill, running, cap, level, refusals, now, expanded=None):
             kind, why = hold.standing, hold.words
         elif not idle:
             kind, why = "blocked", NO_WORKER
-        elif low and higher_waits and idle <= LOW_RESERVE:
+        elif low and higher_started and idle <= low_reserve:
             kind = "reserve"
         else:
             idle -= 1
+            if not low:
+                higher_started = True
             started[ticket.id] = eff
             refill = refill.started(ticket.label)
         standings.append(Standing(ticket, kind, why, low and now - ticket.filed > timedelta(days=LOW_FLAG_DAYS)))
@@ -172,7 +174,7 @@ def expanded_paths(tickets, lay):
     return found
 
 
-def startable_lines(standings, meta, running, now):
+def startable_lines(standings, meta, running, now, low_reserve):
     lines = [workers_line(meta, running)]
     if not standings:
         return "\n".join([*lines, "no waiting tickets"])
@@ -185,7 +187,7 @@ def startable_lines(standings, meta, running, now):
         paths = f"; {','.join(ticket.paths)}" if ticket.paths else ""
         if ticket.doc_item and ticket.paths:
             paths += " --doc-item"
-        words = STANDINGS[standing.kind].line_words.format(why=standing.why)
+        words = STANDINGS[standing.kind].line_words.format(why=standing.why, reserve=low_reserve)
         lines.append(f"{ticket.id} {ticket.priority}{label_words(ticket.label)}, {age(now - ticket.filed)}{flag}: {words}{paths}")
         if standing.kind in ("start", "rides"):
             lines.append(f"  {ticket.summary}")
@@ -195,6 +197,7 @@ def startable_lines(standings, meta, running, now):
 def startable(restaurant):
     with restaurant.checked():
         meta, labels = restaurant.meta, read_labels(restaurant, EVERY_ROW)
+        low_reserve = low_reserve_of(meta)
         notes = dict(blocked_waiting(restaurant))
         tickets = []
         for row in restaurant.rows("rail.tsv"):
@@ -222,4 +225,5 @@ def startable(restaurant):
     expanded = expanded_paths(tickets, lay)
     refusals = lease_refusals(meta, tickets)
     moment = datetime.now(timezone.utc)
-    return startable_lines(plan(tickets, refill, running, worker_cap(meta), autofire_of(meta), refusals, moment, expanded), meta, running, moment)
+    return startable_lines(plan(tickets, refill, running, worker_cap(meta), autofire_of(meta), refusals, moment, low_reserve,
+                                expanded), meta, running, moment, low_reserve)

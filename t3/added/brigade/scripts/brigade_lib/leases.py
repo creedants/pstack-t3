@@ -24,7 +24,7 @@ from brigade_lib import seam
 from brigade_lib.compact import refuse_setting
 from brigade_lib.layout import _layout, _one
 from brigade_lib.shared import BrigadeError, slug
-from brigade_lib.store import COUNTED_STATES, KINDS, LOW_RESERVE, MODES, holder_prefix, is_admin
+from brigade_lib.store import COUNTED_STATES, KINDS, MODES, holder_prefix, is_admin
 from brigade_lib.tickets import tracked_paths
 
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
@@ -144,7 +144,8 @@ STANDINGS = {
     "paused": StandingText("goal paused", "{why}"),
     "cap": StandingText("kind cap", "{why}"),
     "share": StandingText("goal share", "{why}"),
-    "reserve": StandingText("held back", f"held back, low tickets leave {LOW_RESERVE} worker idle while an urgent or normal ticket waits"),
+    "reserve": StandingText("held back", "held back, low tickets wait while an urgent or normal ticket can start "
+                                         "now and the workers still idle are at most {reserve}"),
 }
 
 
