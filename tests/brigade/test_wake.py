@@ -135,6 +135,7 @@ class WakeTest(BrigadeTest):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.brigade("set", "--change-note-dir", "changes")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "quoted")
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src/app.py")
             refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", summary,
@@ -180,6 +181,7 @@ class WakeTest(BrigadeTest):
             directory = self.store / "bridge-kit" / "review-more"
             opened = self.brigade("open", "--project-root", str(self.project), "--name", "Review more")
             self.assertEqual(opened, f"opened {directory}")
+            self.run_at(directory, "set", "--change-note-dir", "changes")
             self.run_at(directory, "ticket", "add", "--kind", "fix", "--summary", "Blocked on src")
             self.run_at(directory, "ticket", "add", "--kind", "fix", "--summary", "Takes the first id")
             self.land("lease", "claim", "--holder", "engine/D9", "--paths", "src")

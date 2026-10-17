@@ -354,6 +354,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         from unittest import mock
         with mock.patch.dict(os.environ, self.land_env()):
             self.open()
+            self.brigade("set", "--change-note-dir", "changes")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
             self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "one",
                          "--branch", "perf/d1", "--paths", "a.txt")
@@ -1706,6 +1707,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.brigade("set", "--change-note-dir", "changes")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Keep mine", "--paths", "lib")
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
             refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Keep mine",
@@ -1723,6 +1725,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.brigade("set", "--change-note-dir", "changes")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix the gate")
             self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate",
                                           "--paths", "src"), "D1 (lease L1 held by perf/D1)")

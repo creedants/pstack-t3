@@ -391,7 +391,7 @@ class BriefsTest(BrigadeTest):
                          "brigade: D1 has no contract on record; run brief with --contract")
         self.assertEqual(self.brigade("contract", "D9", ok=False), "brigade: no D9 in dishes.tsv")
 
-    def test_fire_leases_the_branch_changelog_fragment_and_dish_records_a_new_lease(self):
+    def test_fire_with_change_note_dir_leases_the_encoded_fragment_and_dish_records_a_new_lease(self):
         from unittest import mock
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
