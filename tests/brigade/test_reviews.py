@@ -1374,5 +1374,7 @@ class ReviewsTest(BrigadeTest):
         ]))
 
     def test_pass_stats_prints_no_items_with_a_verdict_when_no_pass_row_exists(self):
-        self.fired_bug_fix()
+        self.open()
+        before = {p.relative_to(self.at): (p.read_bytes(), p.stat().st_mtime_ns) for p in self.at.rglob("*") if p.is_file()}
         self.assertEqual(self.brigade("pass", "stats"), "no items with a verdict")
+        self.assertEqual({p.relative_to(self.at): (p.read_bytes(), p.stat().st_mtime_ns) for p in self.at.rglob("*") if p.is_file()}, before)

@@ -460,7 +460,7 @@ brigade.py [flags] pass check --sha SHA [--json] dish
 brigade.py [flags] pass stats [--last LAST]
 ```
 
-print the first-pass rate overall and per author, and send-back counts by reason, over the last N items with a verdict; a send-back row whose reason is empty or is not one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other counts as unrecorded
+Print the first-pass rate overall and per author model. An item has at least one non-member pass.tsv row. Its first non-member row in table order sets its author and first verdict. The rate is the percentage of items whose first verdict is pass. Every other verdict counts as a failure. Select the last N items by the at cell of their last non-member row, descending. Ties keep the order in which items first occur in the table. Count all non-member send-back rows of those items by reason. An empty reason or one outside false-wording, missing-test, wrong-behavior, out-of-lease, scope, other counts as unrecorded. An empty window prints no items with a verdict.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
