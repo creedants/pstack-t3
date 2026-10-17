@@ -1,0 +1,6 @@
+- kind polish
+- `t3/scripts/roles.py` `exclude_reason` is the one function that decides a seat the exclude list refuses. It returns `<bare model id> matches exclude entry <n> (<label>), and <EXCLUDE_RULE>`, or None when the list allows the seat
+- `finish_seat`, `configured_seats`, `inherit_replacement`, `settle_inherit_catalog`, `excluded_problems`, `excluded_backup_problems`, and `backup_problems` embed that clause instead of appending `EXCLUDE_RULE` themselves
+- `panel_verdicts` carried only the reason in its drop note for a refused review backups seat, so that note now ends with the rule clause too
+- the catalog-required note for a refused parent moves the rule clause next to the reason it follows
+- `tests/test_roles_cli.py` `ExcludeRefusalOwnerCliTest` pins the exact refusal clause in resolve, inherit replacement, review backups panel verdicts, validation of backups and configured seats, and the catalog-required note
