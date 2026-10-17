@@ -909,6 +909,23 @@ class ModeCliTest(unittest.TestCase):
             document = json.loads(repo.user.read_text())
         self.assertEqual(document, {"version": 1, "roles": {}, "budget": "default", "mode": "light"})
 
+    def test_a_non_roles_object_is_refused_by_default_and_replaced_by_replace(self):
+        with self.open_repo() as directory:
+            repo = Repo(directory)
+            repo.user.parent.mkdir(parents=True)
+            repo.user.write_text('{"roles": []}\n', encoding="utf-8")
+            before = repo.user.read_bytes()
+            refused = repo.write("--budget", "small")
+            self.assertEqual(refused.returncode, 2)
+            self.assertEqual(refused.stdout, "")
+            self.assertIn(f"error: {repo.user}: roles must be an object", refused.stderr)
+            self.assertEqual(repo.user.read_bytes(), before)
+            replaced = repo.write("--replace", "--budget", "small")
+            self.assertEqual(replaced.returncode, 0, replaced.stderr)
+            document = json.loads(repo.user.read_text())
+            self.assertEqual(repo.user.with_name("roles.json.bak").read_bytes(), before)
+        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
+
     def test_keep_on_a_non_object_exits_2(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
