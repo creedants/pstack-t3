@@ -33,8 +33,8 @@ THREADS_SECTION = (2, "Threads")
 THREADS_ITEM = re.compile(r"^- ([a-z]+(?: [a-z]+)*) `([^`]+)` (\S+)$")
 # A recognized list-item prefix triggers refusal when THREADS_ITEM does not match.
 THREADS_ITEM_START = re.compile(r"[-*+\u2022]|\d+[.)]")
-# A backticked thread id, that is a backticked value holding a colon, wherever it sits on the line.
-THREADS_ITEM_THREAD = re.compile(r"`[^`]*:[^`]*`")
+# A backticked thread id, that is a backticked value holding a colon and holding no whitespace.
+THREADS_ITEM_THREAD = re.compile(r"`[^`\s]*:[^`\s]*`")
 # Why report_threads cannot read one line of a report's ## Threads section. Each value finishes `line <n> `.
 THREADS_REFUSED = {
     "item": "is not one list item of the form - <role> `<thread id>` <seat>",
@@ -226,9 +226,9 @@ def threads_prose(line):
     """Whether a non-blank line of the ## Threads section is plain prose, so report_threads skips it.
 
     A prose line starts, after any leading whitespace, with neither a list marker nor a `#`, holds no
-    backticked thread id, that is no backticked value holding a colon, and names no child role, that is
-    no code delegate, claims check, or architect runner. A list marker is a hyphen, an asterisk, a plus,
-    a bullet, or a number followed by a dot or a closing parenthesis.
+    backticked thread id, that is no backticked value holding a colon and holding no whitespace, and
+    names no child role, that is no code delegate, claims check, or architect runner. A list marker is a
+    hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a closing parenthesis.
     """
     stripped = line.lstrip()
     if THREADS_ITEM_START.match(stripped) or stripped.startswith("#"):
