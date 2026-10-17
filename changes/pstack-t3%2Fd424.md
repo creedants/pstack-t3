@@ -1,0 +1,2 @@
+- kind fix
+- `tests/landing/test_generated.py` `test_build_launch_exception_bounces_and_cleans` removes `PSTACK_TEST_REAL_PROCESS` from `os.environ` before its `land` call and restores it after, so the `landing` test helper runs land.py in this process and the `subprocess.Popen` patch replaces the build launch.
