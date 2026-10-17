@@ -523,7 +523,7 @@ No. It is an independent project, not affiliated with or endorsed by Lauren Tan,
 ## Roadmap
 
 - More live end-to-end runs of the longest playbooks on real multi-PR projects. Autopilot has run once, on a four-PR scratch queue. Orchestrate has not run yet. See [Live runs](live-runs.md) for what merged and the defects each run found.
-- Testing on macOS, and on T3's other providers (OpenCode, Antigravity, ACP agents).
+- Testing on T3's other providers (OpenCode, Antigravity, ACP agents).
 - A T3-native port of Lauren's long-form guide.
 - Tracking upstream pstack releases from the repository, so a new upstream commit opens porting work without a person watching. `scripts/sync_upstream.py --check` reports what upstream changed and what pstack-t3 does with each changed path. Nothing runs it on a schedule or files the porting work yet, and syncing is a manual `scripts/sync_upstream.py` run.
 - Cloud workers through local cua container sandboxes. Today landing still only needs a branch, a path lease, and a reviewed commit.
