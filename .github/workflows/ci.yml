@@ -164,7 +164,7 @@ jobs:
   test_312:
     name: test (3.12)
     runs-on: ubuntu-latest
-    needs: [part_312_1, part_312_2, part_312_3, part_312_4, real_312]
+    needs: [part_312_1, part_312_2, part_312_3, part_312_4, real_312, macos_312_1, macos_312_2, macos_312_3, macos_312_4]
     if: always()
     steps:
       - uses: actions/checkout@v7
@@ -178,27 +178,27 @@ jobs:
           test "${{ needs.part_312_3.result }}" = success
           test "${{ needs.part_312_4.result }}" = success
           test "${{ needs.real_312.result }}" = success || test "${{ needs.real_312.result }}" = skipped
+          test "${{ needs.macos_312_1.result }}" = success
+          test "${{ needs.macos_312_2.result }}" = success
+          test "${{ needs.macos_312_3.result }}" = success
+          test "${{ needs.macos_312_4.result }}" = success
       - name: Generated skills match the sources
         run: |
           python3 scripts/build.py
           git diff --exit-code -- skills docs/skills.md docs/cli
           test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
 
-  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 1 of 4. No macOS part is in a needs list.
+  # Part 1 of 4. A step failure fails this job. test (3.12) lists macos_312_1 in needs and requires result success.
   macos_312_1:
     name: macOS (3.12, 1/4)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-        continue-on-error: true
       - uses: actions/setup-python@v7
-        continue-on-error: true
         with:
           python-version: "3.12"
-      - continue-on-error: true
-        run: pip install pyyaml
+      - run: pip install pyyaml
       - name: Test part 1/4
-        continue-on-error: true
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
           : > "$log"
@@ -212,27 +212,22 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
       - name: Generated skills match the sources
-        continue-on-error: true
         run: |
           python3 scripts/build.py
           git diff --exit-code -- skills docs/skills.md docs/cli
           test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
 
-  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 2 of 4. No macOS part is in a needs list.
+  # Part 2 of 4. A step failure fails this job. test (3.12) lists macos_312_2 in needs and requires result success.
   macos_312_2:
     name: macOS (3.12, 2/4)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-        continue-on-error: true
       - uses: actions/setup-python@v7
-        continue-on-error: true
         with:
           python-version: "3.12"
-      - continue-on-error: true
-        run: pip install pyyaml
+      - run: pip install pyyaml
       - name: Test part 2/4
-        continue-on-error: true
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
           : > "$log"
@@ -246,21 +241,17 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 3 of 4. No macOS part is in a needs list.
+  # Part 3 of 4. A step failure fails this job. test (3.12) lists macos_312_3 in needs and requires result success.
   macos_312_3:
     name: macOS (3.12, 3/4)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-        continue-on-error: true
       - uses: actions/setup-python@v7
-        continue-on-error: true
         with:
           python-version: "3.12"
-      - continue-on-error: true
-        run: pip install pyyaml
+      - run: pip install pyyaml
       - name: Test part 3/4
-        continue-on-error: true
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
           : > "$log"
@@ -274,21 +265,17 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-  # Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 4 of 4. No macOS part is in a needs list.
+  # Part 4 of 4. A step failure fails this job. test (3.12) lists macos_312_4 in needs and requires result success.
   macos_312_4:
     name: macOS (3.12, 4/4)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-        continue-on-error: true
       - uses: actions/setup-python@v7
-        continue-on-error: true
         with:
           python-version: "3.12"
-      - continue-on-error: true
-        run: pip install pyyaml
+      - run: pip install pyyaml
       - name: Test part 4/4
-        continue-on-error: true
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
           : > "$log"

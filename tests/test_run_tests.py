@@ -1452,11 +1452,9 @@ class RunTestsTest(unittest.TestCase):
             import yaml
         except ImportError:
             self.assertIn("needs: [part_310_1, part_310_2, part_310_3, part_310_4]", text)
-            self.assertIn("needs: [part_312_1, part_312_2, part_312_3, part_312_4, real_312]", text)
             self.assertEqual(text.count("if: always()"), 2)
             self.assertIn("if: github.event_name == 'pull_request'", text)
             self.assertIn("python3 scripts/run_tests.py --real-process-share", text)
-            self.assertEqual(text.count("continue-on-error: true"), 17)
             self.assertIsNone(job_body(text.splitlines(keepends=True), "macos_312"))
             for index in range(1, 5):
                 self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 3)
@@ -1464,6 +1462,9 @@ class RunTestsTest(unittest.TestCase):
                 self.assertIsNotNone(body)
                 joined = "".join(body)
                 self.assertNotIn("if:", joined)
+                self.assertNotIn("strategy", joined)
+                self.assertNotIn("env:", joined)
+                self.assertNotIn("needs:", joined)
                 self.assertIn(f"name: macOS (3.12, {index}/4)", joined)
                 self.assertIn("macos-latest", joined)
                 self.assertEqual(joined.count(f"python3 scripts/run_tests.py --part {index}/4"), 1)
@@ -1477,10 +1478,8 @@ class RunTestsTest(unittest.TestCase):
                         self.assertNotIn(f"--part {other}/4", joined)
                 if index == 1:
                     self.assertIn("Generated skills match the sources", joined)
-                    self.assertEqual(joined.count("continue-on-error: true"), 5)
                 else:
                     self.assertNotIn("Generated skills match the sources", joined)
-                    self.assertEqual(joined.count("continue-on-error: true"), 4)
             return
         jobs = yaml.safe_load(text)["jobs"]
         self.assertEqual(list(jobs), [
@@ -1525,9 +1524,7 @@ class RunTestsTest(unittest.TestCase):
             job = jobs[gate]
             self.assertEqual(job["name"], f"test ({version})")
             self.assertEqual(job["if"], "always()")
-            if gate == "test_312":
-                self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)] + ["real_312"])
-            else:
+            if gate != "test_312":
                 self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)])
             self.assertEqual(job["runs-on"], "ubuntu-latest")
             setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
@@ -1547,9 +1544,6 @@ class RunTestsTest(unittest.TestCase):
         named = [job_id for job_id, job in jobs.items()
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
         self.assertEqual(named, ["test_310", "test_312", "macos_312_1"])
-        flagged = [job_id for job_id, job in jobs.items()
-                   if any(step.get("continue-on-error") for step in job["steps"])]
-        self.assertEqual(flagged, ["macos_312_1", "macos_312_2", "macos_312_3", "macos_312_4"])
         self.assertNotIn("macos_312", jobs)
         for index in range(1, 5):
             macos = jobs[f"macos_312_{index}"]
@@ -1561,7 +1555,6 @@ class RunTestsTest(unittest.TestCase):
             self.assertNotIn("env", macos)
             steps = macos["steps"]
             self.assertEqual(len(steps), 5 if index == 1 else 4)
-            self.assertEqual([step.get("continue-on-error") for step in steps], [True] * len(steps))
             self.assertEqual(steps[0].get("uses"), "actions/checkout@v7")
             self.assertEqual(steps[1].get("uses"), "actions/setup-python@v7")
             self.assertEqual(steps[1]["with"]["python-version"], "3.12")
@@ -1628,7 +1621,10 @@ class RunTestsTest(unittest.TestCase):
             for prefix, script in gate_scripts(text, reader):
                 for results, ok in cases:
                     with self.subTest(reader=reader, prefix=prefix, results=results):
-                        status = gate_script_status(script, prefix, results)
+                        if "macos_312" in script:
+                            status = gate_script_status(script, prefix, results, macos=("success",) * 4)
+                        else:
+                            status = gate_script_status(script, prefix, results)
                         if ok:
                             self.assertEqual(status, 0)
                         else:
@@ -1644,7 +1640,7 @@ class RunTestsTest(unittest.TestCase):
             self.assertNotIn("real_312", scripts["part_310"])
             for real, ok in cases:
                 with self.subTest(reader=reader, real=real):
-                    status = gate_script_status(scripts["part_312"], "part_312", parts, real=real)
+                    status = gate_script_status(scripts["part_312"], "part_312", parts, real=real, macos=("success",) * 4)
                     if ok:
                         self.assertEqual(status, 0)
                     else:
@@ -1681,9 +1677,12 @@ class RunTestsTest(unittest.TestCase):
                     for prefix, script in gate_scripts(mutated, reader):
                         expected = mutate_gate_block(name, result_block(text, prefix))
                         if prefix == "part_312":
-                            real_lines = "".join(line for line in original[prefix].splitlines(keepends=True)
-                                                if "real_312" in line)
-                            expected += real_lines
+                            suffix = "".join(
+                                line
+                                for line in original[prefix].splitlines(keepends=True)
+                                if "real_312" in line or "macos_312" in line
+                            )
+                            expected += suffix
                         self.assertEqual(script, expected)
                         with self.assertRaises(AssertionError) as caught:
                             report_failed_part(script, prefix)
@@ -1703,9 +1702,130 @@ class RunTestsTest(unittest.TestCase):
             gate_scripts(folded, "indent")
         self.assertIn("cannot find the result block", str(caught.exception))
 
+    def test_macos_parts_block_test_312(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        assert_macos_blocking(self, text)
+
+    def test_a_macos_result_other_than_success_fails_the_312_gate(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            script = dict(gate_scripts(text, reader))["part_312"]
+            self.assertEqual(
+                gate_script_status(script, "part_312", ("success",) * 4, real="skipped", macos=("success",) * 4), 0
+            )
+            for position in range(4):
+                for bad in ("failure", "cancelled", "skipped", ""):
+                    with self.subTest(reader=reader, position=position, bad=bad):
+                        macos = ("success",) * position + (bad,) + ("success",) * (3 - position)
+                        self.assertNotEqual(
+                            gate_script_status(script, "part_312", ("success",) * 4, real="skipped", macos=macos),
+                            0,
+                        )
+
+    def test_named_macos_mutations_fail_the_pin_they_target(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        assert_macos_blocking(self, text)
+        for name in MACOS_MUTATIONS:
+            with self.subTest(mutation=name):
+                mutated = workflow_with_macos_mutation(text, name)
+                with self.assertRaises(AssertionError):
+                    assert_macos_blocking(self, mutated)
+                if name == "skipped_allowance_on_macos_312_1":
+                    for reader in gate_readers():
+                        scripts = dict(gate_scripts(mutated, reader))
+                        status = gate_script_status(
+                            scripts["part_312"],
+                            "part_312",
+                            ("success",) * 4,
+                            real="skipped",
+                            macos=("skipped", "success", "success", "success"),
+                        )
+                        self.assertEqual(status, 0)
+                if name == "or_true_on_macos_312_2":
+                    for reader in gate_readers():
+                        scripts = dict(gate_scripts(mutated, reader))
+                        status = gate_script_status(
+                            scripts["part_312"],
+                            "part_312",
+                            ("success",) * 4,
+                            real="skipped",
+                            macos=("success", "failure", "success", "success"),
+                        )
+                        self.assertEqual(status, 0)
+
 
 GATES = (("test_310", "part_310"), ("test_312", "part_312"))
 GATE_BLOCK_MUTATIONS = ("or_true", "set_plus_e", "if_false")
+MACOS_PARTS = ("macos_312_1", "macos_312_2", "macos_312_3", "macos_312_4")
+MACOS_MUTATIONS = (
+    "drop_macos_312_1_from_needs",
+    "skipped_allowance_on_macos_312_1",
+    "continue_on_error_on_macos_test_part_1",
+    "restore_advisory_comment",
+    "or_true_on_macos_312_2",
+)
+
+
+def macos_success_line(job_id: str) -> str:
+    return 'test "${{ needs.' + job_id + '.result }}" = success'
+
+
+def assert_macos_blocking(case, text: str) -> None:
+    expected_needs = "needs: [part_312_1, part_312_2, part_312_3, part_312_4, real_312, " + ", ".join(MACOS_PARTS) + "]"
+    case.assertIn(expected_needs, text)
+    for job_id in MACOS_PARTS:
+        case.assertIn(macos_success_line(job_id), text)
+    case.assertNotIn("continue-on-error", text)
+    for phrase in (
+        "No macOS part is in a needs list",
+        "does not fail the job check",
+        "Every step of this part uses continue-on-error",
+    ):
+        case.assertNotIn(phrase, text)
+    for job_id in MACOS_PARTS:
+        for line in text.splitlines():
+            if job_id in line and "needs." in line:
+                case.assertNotIn("skipped", line)
+                case.assertNotIn("|| true", line)
+    for index, job_id in enumerate(MACOS_PARTS, start=1):
+        case.assertIn(
+            f"# Part {index} of 4. A step failure fails this job. test (3.12) lists {job_id} in needs and requires result success.",
+            text,
+        )
+    try:
+        import yaml
+    except ImportError:
+        return
+    jobs = yaml.safe_load(text)["jobs"]
+    case.assertEqual(jobs["test_312"]["needs"], ["part_312_1", "part_312_2", "part_312_3", "part_312_4", "real_312"] + list(MACOS_PARTS))
+    for job_id in MACOS_PARTS:
+        steps = jobs[job_id]["steps"]
+        case.assertFalse(any("continue-on-error" in step for step in steps))
+
+
+def workflow_with_macos_mutation(text: str, name: str) -> str:
+    if name == "drop_macos_312_1_from_needs":
+        return text.replace(", " + MACOS_PARTS[0], "", 1)
+    if name == "skipped_allowance_on_macos_312_1":
+        line = macos_success_line(MACOS_PARTS[0])
+        return text.replace(line, line + ' || test "${{ needs.' + MACOS_PARTS[0] + '.result }}" = skipped', 1)
+    if name == "continue_on_error_on_macos_test_part_1":
+        return text.replace(
+            "      - name: Test part 1/4\n        run: |",
+            "      - name: Test part 1/4\n        continue-on-error: true\n        run: |",
+            1,
+        )
+    if name == "restore_advisory_comment":
+        return text.replace(
+            "# Part 1 of 4. A step failure fails this job. test (3.12) lists " + MACOS_PARTS[0] + " in needs and requires result success.",
+            "# Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 1 of 4. No macOS part is in a needs list.",
+            1,
+        )
+    if name == "or_true_on_macos_312_2":
+        line = macos_success_line(MACOS_PARTS[1])
+        return text.replace(line, line + " || true", 1)
+    raise AssertionError(name)
 
 
 def gate_readers() -> tuple[str, ...]:
@@ -1991,12 +2111,17 @@ def workflow_with_gate_mutation(text: str, name: str) -> str:
 
 
 def report_failed_part(script: str, prefix: str) -> None:
-    status = gate_script_status(script, prefix, ("failure", "success", "success", "success"))
+    if "macos_312" in script:
+        status = gate_script_status(script, prefix, ("failure", "success", "success", "success"), macos=("success",) * 4)
+    else:
+        status = gate_script_status(script, prefix, ("failure", "success", "success", "success"))
     if status == 0:
         raise AssertionError("gate exited 0 with a failed part")
 
 
-def gate_script_status(script: str, prefix: str, results: tuple[str, ...], real: str = "skipped") -> int:
+def gate_script_status(
+    script: str, prefix: str, results: tuple[str, ...], real: str = "skipped", macos: tuple[str, ...] | None = None
+) -> int:
     body = script
     for index, result in enumerate(results, start=1):
         token = "${{ needs." + prefix + "_" + str(index) + ".result }}"
@@ -2006,6 +2131,21 @@ def gate_script_status(script: str, prefix: str, results: tuple[str, ...], real:
     token = "${{ needs.real_312.result }}"
     while token in body:
         body = body.replace(token, real, 1)
+    macos_tokens = ["${{ needs." + job_id + ".result }}" for job_id in MACOS_PARTS]
+    has_macos_tokens = any(token in body for token in macos_tokens)
+    if has_macos_tokens and macos is None:
+        raise AssertionError("macos results missing: pass macos results")
+    if not has_macos_tokens and macos is not None:
+        raise AssertionError("macos results passed but no macos tokens")
+    if macos is not None:
+        if len(macos) != len(MACOS_PARTS):
+            raise AssertionError("macos results length")
+        for job_id, result in zip(MACOS_PARTS, macos):
+            token = "${{ needs." + job_id + ".result }}"
+            if token not in body:
+                raise AssertionError(token)
+            while token in body:
+                body = body.replace(token, result, 1)
     if "${{" in body:
         raise AssertionError(body)
     completed = subprocess.run(["bash", "-e", "-c", body], capture_output=True, text=True)

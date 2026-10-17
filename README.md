@@ -38,3 +38,9 @@ Start with [1. Install (two minutes)](docs/guide.md#1-install-two-minutes).
 See [all 59 skills and every playbook](docs/skills.md).
 
 pstack is by [Lauren Tan (poteto)](https://x.com/poteto). MIT licensed. See [LICENSE](LICENSE).
+
+## Continuous integration
+
+Every pull request runs the test suite on macOS with Python 3.12 in four parts on `macos-latest`.
+The check named `test (3.12)` fails unless each part succeeds.
+Python 3.10 and browser setup run on Ubuntu only.
