@@ -3,4 +3,4 @@
 - `t3/added/brigade/scripts/brigade_lib/commands/setup.py` takes `set --liveness-ms`, stores it, clears it with `""`, and refuses a value that is not a whole number of at least 60000 before writing.
 - `t3/added/brigade/scripts/brigade_lib/commands/report.py` prints the effective interval on the `liveness:` line of `status`.
 - `t3/added/brigade/SKILL.md` takes `everyMs` from that line wherever it creates or recreates the liveness schedule.
-- `tests/brigade/support.py` and the eight test modules that assert `status` text expect the `liveness:` line in its printed position.
+- `tests/brigade/support.py` and the nine test modules that assert `status` text expect the `liveness:` line in its printed position.

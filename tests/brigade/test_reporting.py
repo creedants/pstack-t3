@@ -433,7 +433,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
             "owner t1@1",
         ])
 
-    def test_status_prints_the_stored_liveness_interval_instead_of_ignoring_it(self):
+    def test_status_prints_the_stored_liveness_interval(self):
         self.open()
         for level in ("every-turn", "milestones", "digest"):
             with self.subTest(level=level):
