@@ -16,6 +16,12 @@ from .support import (
 
 
 class LandingTest(LandingTestBase):
+    def stored_pr_item_line(self):
+        """The JSON text under the contract key prItemLine, or None when the key is absent."""
+        with self.raw_db() as db:
+            row = db.execute("SELECT value FROM contract WHERE key = 'prItemLine'").fetchone()
+        return row and row[0]
+
     def test_status_refuses_a_q_number(self):
         self.init()
         self.assertEqual(self.queue_one(), "E1")
@@ -551,7 +557,8 @@ class LandingTest(LandingTestBase):
             fake = self.base / "gh"
             fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
                                                      f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
-            self.init(mode="human")
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "on")
             cases = (
                 ("polish", "G2", "Kind: polish. Goal: rules in the tool"),
                 ("polish", "", "Kind: polish"),
@@ -573,6 +580,88 @@ class LandingTest(LandingTestBase):
                     create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][-1])
                     self.assertEqual(create[create.index("--body") + 1], expected)
                     log.unlink()
+
+    def test_a_first_init_without_the_flag_leaves_the_submitted_body_unchanged(self):
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.init(mode="human")
+            self.assertEqual(self.stored_pr_item_line(), "false")
+            self.store_item("w1", "polish", "G2")
+            sh("git", "checkout", "-q", "-b", "w1", "origin/main", cwd=self.work)
+            (self.work / "a.txt").write_text("agent\n")
+            sha = self.commit("w1")
+            lease = self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease",
+                      lease, "--reviewer", REVIEWER)
+            self.land("land")
+            create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][-1])
+            self.assertEqual(create[create.index("--body") + 1], "")
+
+    def test_a_rerun_without_the_flag_keeps_pr_item_line_on(self):
+        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                  "--pr-item-line", "on")
+        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1")
+        self.assertEqual(self.stored_pr_item_line(), "true")
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.store_item("w1", "polish", "G2")
+            sh("git", "checkout", "-q", "-b", "w1", "origin/main", cwd=self.work)
+            (self.work / "a.txt").write_text("agent\n")
+            sha = self.commit("w1")
+            lease = self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease",
+                      lease, "--reviewer", REVIEWER)
+            self.land("land")
+            create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][-1])
+            self.assertEqual(create[create.index("--body") + 1], "Kind: polish. Goal: rules in the tool")
+
+    def test_an_unknown_pr_item_line_value_is_refused_and_leaves_the_contract_unchanged(self):
+        self.init(mode="human")
+        before = self.queue_rows()
+        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                  "--pr-item-line", "bogus", ok=False)
+        self.assertEqual(self.queue_rows(), before)
+
+    def test_a_deleted_pr_item_line_key_reads_as_off(self):
+        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                  "--pr-item-line", "on")
+        with self.raw_db() as db:
+            db.execute("DELETE FROM contract WHERE key = 'prItemLine'")
+            db.commit()
+        self.assertIsNone(self.stored_pr_item_line())
+        log = self.base / "gh-log"
+        with self.fake_gh():
+            fake = self.base / "gh"
+            fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
+                                                     f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
+            self.store_item("w1", "polish", "G2")
+            sh("git", "checkout", "-q", "-b", "w1", "origin/main", cwd=self.work)
+            (self.work / "a.txt").write_text("agent\n")
+            sha = self.commit("w1")
+            lease = self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
+            self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease",
+                      lease, "--reviewer", REVIEWER)
+            self.land("land")
+            create = ast.literal_eval([line for line in log.read_text().splitlines() if "'create'" in line][-1])
+            self.assertEqual(create[create.index("--body") + 1], "")
+
+    def test_repo_status_names_pr_item_line_only_when_on(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                  "--pr-item-line", "on")
+        self.assertIn("pr item line: on", self.land("status"))
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                  "--pr-item-line", "off")
+        self.assertNotIn("pr item line", self.land("status"))
+        with self.raw_db() as db:
+            db.execute("DELETE FROM contract WHERE key = 'prItemLine'")
+            db.commit()
+        self.assertNotIn("pr item line", self.land("status"))
 
     def test_a_sole_store_without_a_matching_record_leaves_the_submitted_body_alone(self):
         """Pin review finding D255-review-1 R1. A sole foreign store must not lend its kind and goal."""

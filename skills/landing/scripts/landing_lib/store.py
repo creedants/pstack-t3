@@ -350,10 +350,12 @@ def pr_body(store, entry):
     """The body ensure_pr passes to gh pr create.
 
     The body is the submitted one when there is one, and otherwise the message body of the reviewed
-    commit. When the item has a line, it follows that body after one blank line and is the whole body
-    when the body holds no text but whitespace.
+    commit. When the contract sets prItemLine to on and the item has a line, it follows that body after one
+    blank line and is the whole body when the body holds no text but whitespace. A missing key reads as off.
     """
     body = entry["body"] or seam.git("log", "-1", "--format=%b", entry["sha"], cwd=store.repo).stdout.rstrip()
+    if not store.contract.get("prItemLine", False):
+        return body
     line = _item_line(store, entry)
     if not line:
         return body
@@ -392,6 +394,11 @@ def author_policy_note(contract):
     """The stored author policy for repo status, defaulting to any when the key is absent."""
     policy = contract.get("authorPolicy", "any")
     return f"author policy: {policy}"
+
+
+def pr_item_line_note(contract):
+    """The stored item line setting for repo status. Empty unless on."""
+    return "pr item line: on" if contract.get("prItemLine", False) else ""
 
 
 IDENTITY_PAUSE = "the configured git identity is now "
