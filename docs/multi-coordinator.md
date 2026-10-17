@@ -4,6 +4,8 @@ This is the design for running two or more brigade coordinators on one repositor
 
 In this document a coordinator is one standing coordinator thread and its store directory, and a work item is one unit of work handed to a worker. brigade's commands and files use kitchen names, and this document keeps those names only for commands and files, such as `fire`, `ticket add`, `dishes.tsv`, and `restaurant.json`. Two coordinators are siblings when their `restaurant.json` files name the same `projectRoot`.
 
+**Sample records.** The design below applies to any repository. The counts, caps, and lease times quoted in [Method](#method), [What happens today](#what-happens-today), and the [live two-coordinator run](#live-two-coordinator-run) come from the pstack-t3 maintainers' own coordinator store and their own runs. They are not facts about your repository. Measure those counts in your own store and your own run before you rely on them.
+
 ## Summary
 
 | # | Gap | What happens today | Change |
@@ -25,6 +27,8 @@ Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. Changes 1 to 11 
 
 ## Method
 
+**Sample record.** The counts below come from the pstack-t3 maintainers' own coordinator store and their own scratch experiment, not yours. Measure your own work items, leases, and hold times.
+
 Two sources fed the audit.
 
 1. The code in `t3/added/brigade/scripts/brigade.py`, `t3/added/landing/scripts/land.py`, both `SKILL.md` files, and `docs/guide.md`.
@@ -33,6 +37,8 @@ Two sources fed the audit.
 The numbers about real use come from the pstack-t3 coordinator's store (`dishes.tsv`, `log.tsv`) and its landing database (`land.db`, opened read-only). They cover 49 work items and 50 leases over the 40 hours between the first lease claim and the last release.
 
 ## What happens today
+
+**Sample record.** Each section below reports what the pstack-t3 maintainers observed in their own store and their own scratch experiment. Your store and your run will differ.
 
 ### 1. Duplicate intake
 
@@ -438,7 +444,7 @@ Closes gaps 6 and 8.
   ```
 
   `walk --repo <root>` prints one repository.
-- **Skill.** In Open steps 3 and 5, when the contract already has another mode, run `land.py mode`, which names the holders of unreleased leases, then tell each sibling with `t3_thread_send`, using the threads `walk --repo` prints. Standing orders do not restate the landing mode. A coordinator whose standing orders already state it deletes that rule on its next service. pstack-t3's rule 3 is one. The skill's section that describes `walk` for the user covers the grouped form.
+- **Skill.** In Open steps 3 and 5, when the contract already has another mode, run `land.py mode`, which names the holders of unreleased leases, then tell each sibling with `t3_thread_send`, using the threads `walk --repo` prints. Standing orders do not restate the landing mode. A coordinator that finds one already stating it reports the duplicate, says the landing contract wins, and leaves the rule in place unless the user says to remove it. The skill's section that describes `walk` for the user covers the grouped form.
 - **User docs.** `docs/guide.md` gains a "Several coordinators on one repository" section covering changes 1 to 7: the caps, intake ownership, handoff, blocked tickets, lease renewal, and the grouped `walk`. Change 11 adds the admin to it.
 - **Files.** Same as change 3, plus `docs/guide.md` and `docs/brigade-plan.md`.
 - **Tests.** `status` and `walk` print the contract mode after `land.py mode` changes it, with no brigade command run in between. `walk` groups two siblings under one header and a third coordinator under another, with the literal lines. `set --landing` exits 2.
@@ -531,6 +537,8 @@ The admin work waits for the live run. Changes 1 to 7 close every gap on their o
 
 ## Live two-coordinator run
 
+**Sample record.** This run targets the pstack-t3 maintainers' own scratch repository, not yours. Record your own numbers from your own clone.
+
 Run after change 7 lands, on a clone of `creedants/pstack-t3-sandbox`, the scratch repository the request for this design names for the live run. Changes 8 to 11 start only after its first part records its numbers. Opening issues there is still a GitHub write outside pstack-t3's own PR flow. The ref check compares strings, so the run uses an existing sandbox issue URL, or a made-up ref, rather than opening an issue.
 
 The clone is not a git worktree of the sandbox's T3 project, so T3 refuses an `existing_worktree` strategy that points at it. Register the clone as its own T3 project with `t3_project_create`. Launch every coordinator and the admin in that project with `workspaceStrategy: {"type": "root"}`, as the brigade skill says. Workers then use the skill's `worktree` strategy unchanged.
@@ -569,7 +577,7 @@ That part records three more numbers.
 
 ## Out of scope
 
-- **A machine-wide worker cap across repositories.** The governor already caps builds and tests machine-wide. [capacity.md](capacity.md) measured 40 idle agents on this machine with 5.9 GiB of memory still free. The sum of per-repository caps is the machine budget the user picks.
+- **A machine-wide worker cap across repositories.** The governor already caps builds and tests machine-wide. [capacity.md](capacity.md) records 40 idle agents the pstack-t3 maintainers ran on their own host, with 5.9 GiB of memory still free. The sum of per-repository caps is the machine budget the user picks.
 - **Coordination between repositories.** Coordinators on different repositories share no leases, queue, or intake. The first admin serves one repository. An admin that spans repositories or T3 projects needs repository-qualified intake, cross-project routing, and a live test of `t3_thread_send` across projects, so it is a later change.
 - **Compare-and-swap recovery for ordinary coordinators.** Only the admin's store gets `set --thread --expect` and the `--stopped` requirement on `set --thread`. A coordinator keeps atomic opening and change 3's refusal to replace a recorded thread without `--replace`. It still uses `dish --stopped` to drop an item, and change 6's owner token fences its writes.
 - **A record of message sends.** Messages are wakes. Events and requests already have durable identities, a `log.tsv` position and a request id, so no sent or delivered rows are kept.
@@ -581,6 +589,8 @@ That part records three more numbers.
 - **A `lease widen` command.** `submit`'s error says "widen the lease", and no command does that. This affects one coordinator as much as several, so it belongs in its own change.
 
 ## The experiment script
+
+**Sample record.** This script is the pstack-t3 maintainers' own audit of their repository at the commit it names.
 
 This is the audit script, run against commit `5794d40`. It records what each command printed and asserts nothing. The tests in changes 2 to 7 are the asserting checks. Run it with the `skills/` directory of a checkout at `5794d40`, for example one made with `git worktree add /tmp/pstack-t3-5794d40 5794d40`, as `two_restaurants.sh /tmp/pstack-t3-5794d40/skills`. Never point it at a current `skills/` directory. After change 7, its `--landing` flags no longer parse. It writes only under a fresh `mktemp -d` and prints that path at the end.
 
