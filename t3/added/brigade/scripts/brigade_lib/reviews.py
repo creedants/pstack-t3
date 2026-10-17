@@ -24,7 +24,7 @@ from brigade_lib import seam
 from brigade_lib.edits import HEADING, NEEDS_COMMANDS, commit_tree, replay, report_edits
 from brigade_lib.reports import NOT_A_REPORT, REVIEW_FILE, in_reports, report_stat
 from brigade_lib.shared import BrigadeError, clean, fence_close, one_of, stored, threads_fence_open
-from brigade_lib.store import CHILD_ROLES, EDITS_VERDICT, OWING_STATES, ROUND_BUDGET, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, THREADS_WRITERS, VERDICTS, WORKER_ROLES, roles_script
+from brigade_lib.store import CHILD_ROLES, EDITS_VERDICT, OWING_STATES, REASONS, REASON_VERDICTS, ROUND_BUDGET, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, THREADS_WRITERS, UNRECORDED_REASON, VERDICTS, WORKER_ROLES, roles_script
 
 CLAIMS_LINE = re.compile(r"^[ \t#>*+\-_`\d.)]*Claims check", re.M)
 CLAIMS_STATES = ("in-review", "passed")
@@ -136,6 +136,65 @@ def pass_check(restaurant, dish_id, sha):
     if latest["verdict"] != "pass":
         return False, f"{dish_id} at {sha}: {latest['verdict']} ({latest['note'] or 'no note'})"
     return True, f"{dish_id} at {sha} passed review by {latest['verifier']}"
+
+
+def reviewed_items(rows, last):
+    """The last `last` items that have a verdict, newest first, each with its non-member rows.
+
+    An item is a dish with at least one non-member row of pass.tsv. Its rows keep the table's order, so its
+    first row is its first verdict. An item's author is the author cell of that first verdict row.
+    """
+    by_dish = {}
+    for row in rows:
+        if not row["member"]:
+            by_dish.setdefault(row["dish"], []).append(row)
+    newest_first = sorted(by_dish.items(), key=lambda pair: pair[1][-1]["at"], reverse=True)
+    return newest_first[:last]
+
+
+def reason_counts(items):
+    """How many send-back rows of these items carry each reason, and how many carry none.
+
+    A row whose reason cell is empty, and a row whose reason cell is not one of REASONS, carries none.
+    """
+    counts = dict.fromkeys(REASONS, 0)
+    counts[UNRECORDED_REASON] = 0
+    for _, item_rows in items:
+        for row in item_rows:
+            if row["verdict"] == "send-back":
+                counts[row["reason"] if row["reason"] in REASONS else UNRECORDED_REASON] += 1
+    return counts
+
+
+def pass_rate(passed, items):
+    return f"{passed} of {items} ({100 * passed / items:.1f}%)"
+
+
+def pass_stats(restaurant, last):
+    """The first-pass rate overall and per author, and send-back counts by reason, over the last `last` items.
+
+    An item's first pass is its earliest non-member row, and it is a first pass when that row's verdict is
+    `pass`; any other verdict, including pass-with-edits and blocked, is not. An item's author is that row's
+    author. Send-back counts cover every non-member row of the selected items whose verdict is send-back, and
+    a row with no reason counts as unrecorded. Items are newest first by their last verdict.
+    """
+    with restaurant.read_lock(create=False):
+        items = reviewed_items(restaurant.rows("pass.tsv"), last)
+    if not items:
+        return "no items with a verdict"
+    first = [item_rows[0] for _, item_rows in items]
+    lines = [f"last {len(items)} item{'' if len(items) == 1 else 's'} with a verdict",
+             f"first pass overall: {pass_rate(sum(row['verdict'] == 'pass' for row in first), len(items))}"]
+    by_author = {}
+    for row in first:
+        by_author.setdefault(row["author"], []).append(row["verdict"] == "pass")
+    for author in sorted(by_author):
+        passes = by_author[author]
+        lines.append(f"first pass {author}: {pass_rate(sum(passes), len(passes))}")
+    counts = reason_counts(items)
+    named = [f"{reason} {counts[reason]}" for reason in (*REASONS, UNRECORDED_REASON) if counts[reason]]
+    lines.append(f"send-backs: {', '.join(named) if named else 'none'}")
+    return "\n".join(lines)
 
 
 def review_report(restaurant, dish_id, report):
@@ -289,10 +348,12 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
 
 
 def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False, report="",
-                member=False, late=False, edits="", reviewer_thread=""):
+                member=False, late=False, edits="", reviewer_thread="", reason=""):
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
+    if reason and verdict not in REASON_VERDICTS:
+        raise BrigadeError(f"--reason goes only with --verdict {', '.join(REASON_VERDICTS)}")
     if reviewer_thread and member:
         raise BrigadeError("--member takes no --reviewer-thread; record a panel member's row with "
                            f"thread {dish_id} --role \"panel member\" --thread <id> --seat <provider/model>")
@@ -322,7 +383,7 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
         raise BrigadeError(report_threads_refusal(restaurant, dish_id, unreadable))
     restaurant.append("pass.tsv", {"at": seam.now(), "dish": dish_id, "pr": pr, "sha": sha, "verdict": verdict,
                                    "author": author, "verifier": verifier, "note": note, "report": report,
-                                   "member": "yes" if member else ""})
+                                   "member": "yes" if member else "", "reason": reason})
     rows = [("reviewer", reviewer_thread, verifier)] if reviewer_thread else []
     rows += [(child["role"], child["thread"], child["seat"]) for child in children]
     write_threads(restaurant, dish_id, rows)

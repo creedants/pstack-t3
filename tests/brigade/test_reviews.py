@@ -107,8 +107,8 @@ class ReviewsTest(BrigadeTest):
                          "brigade: D1 at def: send-back (new row)")
         self.record("ghi", "pass")
         self.assertEqual(table.read_text().splitlines()[1], old)
-        self.assertEqual(self.pass_rows()[2][3:], ["ghi", "pass", CLAUDE, CODEX, "", "", ""])
-        for fields, line in ((old.split("\t")[:7], 5), ([*old.split("\t"), "r.md", "", "extra"], 5)):
+        self.assertEqual(self.pass_rows()[2][3:], ["ghi", "pass", CLAUDE, CODEX, "", "", "", ""])
+        for fields, line in ((old.split("\t")[:7], 5), ([*old.split("\t"), "r.md", "", "extra", "extra"], 5)):
             table.write_text(table.read_text() + "\t".join(fields) + "\n")
             self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
                              f"brigade: bridge-kit/perf/pass.tsv line {line} is malformed; fix or remove it")
@@ -188,7 +188,7 @@ class ReviewsTest(BrigadeTest):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(json.loads(out), {"verdict": "pass", "author": CLAUDE, "verifier": CODEX, "note": "", "crossFamily": True})
         self.assertEqual([row[4:] for row in self.pass_rows()],
-                         [["send-back", CLAUDE, "grok/grok-4.7", "nit", "", "yes"], ["pass", CLAUDE, CODEX, "", "", ""]])
+                         [["send-back", CLAUDE, "grok/grok-4.7", "nit", "", "yes", ""], ["pass", CLAUDE, CODEX, "", "", "", ""]])
 
     def test_a_member_row_follows_the_family_rule_and_takes_no_late_flag(self):
         self.fired_bug_fix()
@@ -722,7 +722,8 @@ class ReviewsTest(BrigadeTest):
         self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"))
         self.assertEqual(self.record_edits("abc", "--edits", "reports/D1-review-1.md"), "D1 sent-back")
         self.assertEqual(self.dish_fields("state", "sha"), ("sent-back", "abc"))
-        self.assertEqual([row[3:5] + row[8:] for row in self.pass_rows()], [["abc", "pass-with-edits", "D1-review-1.md", ""]])
+        self.assertEqual([row[3:5] + row[8:] for row in self.pass_rows()],
+                         [["abc", "pass-with-edits", "D1-review-1.md", "", ""]])
 
     def test_pass_with_edits_rows_do_not_count_toward_the_round_budget(self):
         self.started()
@@ -1306,3 +1307,74 @@ class ReviewsTest(BrigadeTest):
         at_budget = self.next_sheet("review", "D1", "--verdict", "pass-with-edits")
         self.assertNotIn("run dish D1 --state in-progress", at_budget)
         self.assertIn("run 86 add --dish D1 --round-budget", at_budget)
+
+    def test_a_reason_is_refused_with_a_verdict_other_than_send_back(self):
+        self.fired_bug_fix()
+        before = (self.at / "pass.tsv").read_bytes()
+        refusal = "brigade: --reason goes only with --verdict send-back"
+        for verdict in ("pass", "blocked", "pass-with-edits"):
+            with self.subTest(verdict=verdict):
+                self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", verdict,
+                                              "--author", CLAUDE, "--verifier", CODEX, "--reason", "scope", ok=False), refusal)
+        self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+
+    def test_a_reason_outside_the_list_is_refused_and_writes_no_row(self):
+        self.fired_bug_fix()
+        before = (self.at / "pass.tsv").read_bytes()
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                     "--author", CLAUDE, "--verifier", CODEX, "--reason", "nonsense", ok=False)
+        self.assertEqual((self.at / "pass.tsv").read_bytes(), before)
+        self.assertEqual(self.pass_rows(), [])
+
+    def test_a_send_back_stores_its_reason(self):
+        self.fired_bug_fix()
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                     "--author", CLAUDE, "--verifier", CODEX, "--reason", "missing-test")
+        self.assertEqual(self.pass_rows()[-1][-1], "missing-test")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
+                         "brigade: D1 at abc: send-back (no note)")
+
+    def test_a_row_written_before_the_reason_column_reads_as_empty_and_counts_as_unrecorded(self):
+        self.fired_bug_fix()
+        stamp = "2026-10-08T00:00:00+00:00"
+        table = self.at / "pass.tsv"
+        table.write_text("at\tdish\tpr\tsha\tverdict\tauthor\tverifier\tnote\treport\tmember\n"
+                         + f"{stamp}\tD1\t\ts1\tsend-back\t{CLAUDE}\t{CODEX}\t\t\t\n"
+                         + f"{stamp}\tD1\t\ts2\tpass\t{CLAUDE}\t{CODEX}\t\t\t\n")
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--reason", "scope"), "D1 sent-back")
+        self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "s2"), f"D1 at s2 passed review by {CODEX}")
+        self.assertEqual(self.brigade("pass", "stats"), "\n".join([
+            "last 1 item with a verdict",
+            "first pass overall: 0 of 1 (0.0%)",
+            f"first pass {CLAUDE}: 0 of 1 (0.0%)",
+            "send-backs: scope 1, unrecorded 1",
+        ]))
+
+    def test_pass_stats_prints_the_first_pass_rate_per_author_and_the_send_back_reasons(self):
+        self.fired_bug_fix()
+        self.record("abc", "pass", author=CODEX, verifier=CLAUDE)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "t")
+        self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Fix t")
+        self.brigade("pass", "record", "D2", "--sha", "d2a", "--verdict", "send-back",
+                     "--author", CLAUDE, "--verifier", CODEX, "--reason", "missing-test")
+        self.brigade("pass", "record", "D2", "--sha", "d2b", "--verdict", "send-back",
+                     "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "u")
+        self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Fix u")
+        self.edits_report(self.edit_block("1", "src/greeting.txt", "helo", "hello"), name="D3-review-1.md")
+        self.brigade("pass", "record", "D3", "--sha", "d3", "--verdict", "pass-with-edits",
+                     "--author", CLAUDE, "--verifier", CODEX, "--edits", "D3-review-1.md")
+        self.assertEqual(self.brigade("pass", "stats", "--last", "3"), "\n".join([
+            "last 3 items with a verdict",
+            "first pass overall: 1 of 3 (33.3%)",
+            f"first pass {CLAUDE}: 0 of 2 (0.0%)",
+            f"first pass {CODEX}: 1 of 1 (100.0%)",
+            "send-backs: missing-test 1, unrecorded 1",
+        ]))
+
+    def test_pass_stats_prints_no_items_with_a_verdict_when_no_pass_row_exists(self):
+        self.open()
+        before = {p.relative_to(self.at): (p.read_bytes(), p.stat().st_mtime_ns) for p in self.at.rglob("*") if p.is_file()}
+        self.assertEqual(self.brigade("pass", "stats"), "no items with a verdict")
+        self.assertEqual({p.relative_to(self.at): (p.read_bytes(), p.stat().st_mtime_ns) for p in self.at.rglob("*") if p.is_file()}, before)
