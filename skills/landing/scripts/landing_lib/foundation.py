@@ -186,23 +186,29 @@ def covered(path, paths):
     return any(p == "" or path == p or path.startswith(p + "/") for p in paths)
 
 
-GENERATED_PATHS = ("skills", "docs/cli", "docs/skills.md")
+def generated_path(value):
+    """One repository-relative generated path. Strips trailing slashes before refusing an absolute path or a '.', '..', or empty component."""
+    text = value.strip().replace("\\", "/").rstrip("/")
+    parts = text.split("/")
+    if not text or text.startswith("/") or any(part in ("", ".", "..") for part in parts):
+        raise LandError(f"generated path {value!r} must be a repository-relative path with no '.', '..', or empty component")
+    return "/".join(parts)
 
 
-def is_generated(path):
-    return covered(path, GENERATED_PATHS)
+def is_generated(path, generated=()):
+    return covered(path, generated)
 
 
-def source_paths(names):
+def source_paths(names, generated=()):
     """Git names that are sources. Git names need no canonicalization."""
-    return [path for path in names if not is_generated(path)]
+    return [path for path in names if not is_generated(path, generated)]
 
 
-def fingerprint(repo, base, head):
+def fingerprint(repo, base, head, generated=()):
     """Hash of the source change. Sources come from NUL-delimited names. Their diff uses literal pathspecs."""
     raw = git("diff", "-z", "--name-only", "--no-renames", base, head, cwd=repo, exact=True).stdout
     names = [path for path in raw.split("\0") if path]
-    sources = source_paths(names)
+    sources = source_paths(names, generated)
     if not sources:
         return ""
     specs = [f":(literal){path}" for path in sources]

@@ -290,8 +290,8 @@ class LandingTest(LandingTestBase):
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
         with self.raw_db() as db:
             keys = [key for key, in db.execute("SELECT key FROM contract ORDER BY key")]
-        self.assertEqual(keys, ["batch", "checks", "commonDir", "mergeMethod", "mode", "paused", "remote", "repo", "setup", "timeout",
-                                "tip", "trunk"])
+        self.assertEqual(keys, ["batch", "checks", "commonDir", "generated", "mergeMethod", "mode", "paused", "rebuild", "remote", "repo",
+                                "setup", "timeout", "tip", "trunk"])
         self.configure_owner()
         self.worker("w2", {"b.txt": "agent\n"})
         sh("git", "commit", "-q", "--amend", "--author", "Owner <owner@example.com>", "-m", "w2", cwd=self.base / "w2")
