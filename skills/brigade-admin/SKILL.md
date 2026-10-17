@@ -39,7 +39,7 @@ When the user asks the admin to open a coordinator, it runs [Open a restaurant](
 ## Admin first service
 
 1. `t3_thread_organize` with `action: "pin"` and no `threadId`, acting on the caller on purpose.
-2. Create three schedules with `schedule_task`, bound to this thread, using the intake interval and the morning and evening times from the start message, and record each under the name its bullet gives with `$B set --schedule <name>=<id>`. Each prompt says "Use the brigade-admin skill. You are the executive admin for the store at `<store>/<project>/.admin`. Reporting level: `<level>`. Run a service."
+2. Create three schedules with `schedule_task`, bound to this thread, using the intake interval and the morning and evening times from the start message, and record each under the name its bullet gives with `$B set --schedule <name>=<id>`. Each prompt says "Use the brigade-admin skill. You are the executive admin for the store at `<store>/<project>/.admin`. Reporting level: `<level>`. Run a service." Read `<level>` from the admin store's `restaurant.json` key `reporting`, the same value `$B status` prints after `reporting:`.
    - `intake`: `{"type": "interval", "everyMs": <the start message's interval>}`. Each service also runs the idle check, which must run before a coordinator's 6-hour leases lapse.
    - `morning`: `{"type": "fixed_time", "timeOfDay": "<the morning time>"}`, for routing and checks.
    - `evening`: `{"type": "fixed_time", "timeOfDay": "<the evening time>"}`, after the coordinators' 18:00 reports. The prompt adds "Write the update."
