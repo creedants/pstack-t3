@@ -112,7 +112,7 @@ def run_failing(home, checkout, call, path, *args):
     ))
 
 def interleave_removal(home, checkout, paths, call, *args, occupy=None):
-    """Run `call` once, just before this installer first moves or deletes any of `paths`, then write `occupy` there."""
+    """Run `call` once, just before this installer first renames or unlinks any of `paths`, then write `occupy` there."""
     wrapper, installer = _wrapper(home, "interleave", checkout)
     wrapper.write_text(
         "import importlib.util, os, subprocess, sys\n"

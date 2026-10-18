@@ -93,7 +93,7 @@ AWAY = ('{file}: claims {n} links here for checkout {checkout}, and no directory
         'and removes no link they name and no row of {manifest}')
 
 def command(args, *words):
-    """One shell command for a person to copy and run from this checkout. Every argument is quoted for a POSIX shell."""
+    """One shell command for a person to copy and run from this checkout. Every argument is quoted for a POSIX shell as needed."""
     project = (f"--project={args.project}",) if args.project else ()
     return shlex.join(("python3", "scripts/install.py", *words, *project))
 
@@ -220,7 +220,7 @@ def audit(args, scope, user, names):
     return Audit(tuple(stale + away), tuple(unread))
 
 def link_health(harness, directory, names, scope, user):
-    """Print what `harness` loads from `directory`. Return whether it loads every skill of this checkout."""
+    """Print what `harness` loads from `directory`. Return whether every skill is in place with no competing copy."""
     if Path(os.path.realpath(directory)) == Path(os.path.realpath(layout.SKILLS)):
         print(f"{harness:7} {directory}: resolves to the pstack-t3 skills tree itself")
         return True

@@ -38,7 +38,7 @@ class PackageTest(unittest.TestCase):
                         self.assertIn(alias.name, ("layout", "records", "plans", "moves", "restore", "strays", "run", "doctor"),
                                       f"{stem}: from-import names {alias.name}")
 
-    def test_no_two_modules_define_the_same_name(self):
+    def test_no_two_modules_define_the_same_function_or_class(self):
         seen = {}
         for stem, module in package_modules().items():
             for node in module.body:

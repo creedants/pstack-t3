@@ -85,7 +85,7 @@ class Part09Test(OwnershipCase):
             self.assertFalse(os.path.lexists(backup))
             self.assert_no_copy_left(swarm)
             self.assert_empty_records()
-    def test_an_entry_that_takes_a_withdrawn_backups_path_is_never_deleted(self):
+    def test_a_link_that_takes_a_withdrawn_backups_path_is_never_deleted(self):
             a, b = self.base()
             rows = read_legacy(self.home)["backups"]
             swarm = provider_link(self.home, "grok", "swarm")

@@ -173,7 +173,7 @@ class Part05Test(OwnershipCase):
                     a = make_checkout(self.home, "a")
                     self.ok(run(self.home, a, "--harness", "grok"))
                     parent = provider_link(self.home, "grok", "swarm").parent
-                    # Every hidden name an uninstall could pick first is already taken by an entry it did not create.
+                    # Two planted entries already hold the colliding names.
                     plant = (
                         "import secrets, tempfile\n"
                         "secrets.token_hex = lambda n: 'deadbeef'\n"
@@ -235,7 +235,7 @@ class Part05Test(OwnershipCase):
                     )
                     self.assertEqual((aside[0] / "precious").read_bytes(), b"directory bytes\x00")
                     self.assert_claims(a, [str(swarm)])
-    def test_a_foreign_directory_moved_aside_goes_back_to_its_empty_path(self):
+    def test_a_foreign_directory_moved_aside_goes_back_to_its_empty_path_or_is_kept_aside(self):
             for rename in (None, "platform", "symbol"):
                 with self.subTest(rename=rename):
                     self.use_fresh()
