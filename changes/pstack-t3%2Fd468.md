@@ -1,0 +1,6 @@
+- kind feature
+- agent-written files hold at most 5000 tokens per file
+- size-baseline.json names the allowance of each larger file
+- the queue bounces an entry whose rebased change grows a file past its allowance
+- land.py size judges changed worktree files and staged files with staged and every file with all
+- land.py size with shrink lowers stored allowances that fell and never raises one
