@@ -1,0 +1,4 @@
+- kind fix
+- tests start a new file for the feature and share helpers
+- moved 26 shared docs paths leases catalog and timebox tests from tests/brigade/test_items.py to tests/brigade/test_items_paths.py
+- lowered tests/brigade/test_items.py allowance to 22595 and added tests/brigade/test_items_paths.py at 7035
