@@ -292,12 +292,6 @@ def gate_outside(restaurant, ident, sha):
     if not lease:
         return None
     try:
-        generated.read(project_root)
-    except BrigadeError:
-        raise
-    except Exception:
-        pass
-    try:
         status_text = read_status(project_root)
     except BrigadeError as error:
         if "no landing contract" in str(error):

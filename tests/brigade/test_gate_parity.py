@@ -38,3 +38,9 @@ class GateParityTest(BrigadeTest):
         sha = self.worker_commit("perf/d1", {"src/a.py": "x\n"})
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
         self.assertEqual(self.submit_entry(sha, "L1"), "E1")
+
+    def test_mapless_review_and_submit_succeeds(self):
+        self.started()
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
+        self.assertEqual(self.submit_entry(sha, "L1"), "E1")
