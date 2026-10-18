@@ -3,4 +3,3 @@
 - Every step of that job carries `continue-on-error: true`, including the checkout, Python setup, and `pip install pyyaml` steps, so no step failure makes the job check fail.
 - Its test step runs `python3 scripts/run_tests.py` with no `--part`, which selects the whole suite with the same runner the Linux part jobs call with `--part i/4`.
 - The job runs the generated skills check step the Linux gate jobs run.
-- `tests/test_run_tests.py` pins the new macOS job in both branches: the job carries no `if`, all five steps carry `continue-on-error: true`, one step runs `python3 scripts/run_tests.py` with neither `--part` nor `--real-process-share`, and one step is named `Generated skills match the sources`.
