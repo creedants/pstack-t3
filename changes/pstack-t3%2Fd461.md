@@ -7,3 +7,6 @@
 - Tests pin added and overrides and vendor expansions
 - Tests cover protection only and rulesets only and both and neither
 - Build regenerates with no diff
+- Generated map uses trailing ! for index and trailing ^ to skip doc items
+- Doc items keep CLI pages and skip catalog pages
+- Generated roots with no map refuse and name land.py init --generated-map

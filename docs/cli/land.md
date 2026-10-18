@@ -43,7 +43,7 @@ write the repository's landing contract
 | `--merge-heartbeat-ms MERGE_HEARTBEAT_MS` |  |  |  | merge wait schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 900000. A value below 900000 is refused before the contract changes |
 | `--cap CAP` |  |  |  | most changes in flight on the repository at once; 0 clears it |
 | `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
-| `--generated-map MAP` |  |  |  | comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages. An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none |
+| `--generated-map MAP` |  |  |  | comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages and a trailing ^ to skip doc items, such as src=dst!^ for a catalog page. An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none |
 | `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |
 
 ## land.py cap

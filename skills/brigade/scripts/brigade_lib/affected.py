@@ -562,6 +562,8 @@ def _index(root, layout, gen_map=None):
             gen_map = generated.read(base)
         except KeyboardInterrupt:
             raise
+        except BrigadeError:
+            raise
         except Exception:
             gen_map = generated.EMPTY
     files = _test_files(base)
@@ -704,6 +706,8 @@ def _select(root, paths, layout, change_dir=""):
     try:
         gen_map = generated.read(base)
     except KeyboardInterrupt:
+        raise
+    except BrigadeError:
         raise
     except Exception:
         gen_map = generated.EMPTY

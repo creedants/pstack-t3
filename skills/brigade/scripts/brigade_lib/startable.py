@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import generated
 from brigade_lib.leases import STANDINGS, _claim_norm, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
-from brigade_lib.shared import age, clean, slug
+from brigade_lib.shared import BrigadeError, age, clean, slug
 from brigade_lib.store import LOW_FLAG_DAYS, PRIORITIES_BY_RANK, low_reserve_of
 from brigade_lib.tickets import EVERY_ROW, Label, label_words, paths_of, priority_of, read_labels
 
@@ -219,6 +219,8 @@ def startable(restaurant):
     try:
         gen_map = generated.read(meta["projectRoot"])
     except KeyboardInterrupt:
+        raise
+    except BrigadeError:
         raise
     except Exception:
         gen_map = generated.EMPTY
