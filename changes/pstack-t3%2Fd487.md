@@ -1,4 +1,4 @@
 - kind polish
 - Split brigade SKILL.md into core plus reference/
 - Split brigade-admin SKILL.md into core plus reference/
-- Deduplicate the watch pass record pointer
+- Reduce the watch pointer copies from four to three
