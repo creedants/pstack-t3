@@ -1,7 +1,8 @@
 - kind feature
 - `set --affected-tests`, `set --shared-docs`, and `set --doc-timebox` record `affectedTests`, `sharedDocs`, and `docTimebox`, and empty string clears each one
 - text starting with `{` or `[` parses as inline JSON, any other text reads as a UTF-8 file, and `-` reads stdin
-- a parse or read failure refuses with the flag name and writes nothing
+- a parse or read failure refuses with the flag name and writes nothing. A file read catches ValueError plus OSError. A parse catches ValueError.
 - `validate_settings` judges each value with `layout` and `doc_policy`, so a refused value writes nothing
-- `store-config.md` holds the three keys and this repository values as an example, and `SKILL.md` links to it with no template
+- `store-config.md` holds the three keys and this repository values as an example. The `affectedTests` block is a key fragment. Replace the placeholder interpreter path. Pass it with `set --affected-tests`. The `sharedDocs` block equals `DOC_SETTINGS`. A present value that does not parse is refused when `fire` leases paths. `fire` with no paths leases nothing and reads nothing. `SKILL.md` links to it with no template
 - the `dish --state in-review` paragraph matches `gate_outside`, `gate_recheck`, and `handle_dish`
+- `tests/brigade/test_setup.py` covers a non-UTF-8 file and a NUL path. `tests/brigade/test_items.py` reads `store-config.md` for the sharedDocs value

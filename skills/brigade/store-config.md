@@ -36,7 +36,7 @@ It is an optional repository-relative directory path. It defaults to unset. When
 
 ## Example
 
-This section is an example. It holds this repository values. It names no default.
+This section is an example. It holds this repository values. It names no default. The `affectedTests` block is a key fragment. Replace the placeholder interpreter path. Pass it with `set --affected-tests`.
 
 ```json
 "affectedTests": {
