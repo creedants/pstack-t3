@@ -1911,14 +1911,15 @@ class PreviewToolDocTest(unittest.TestCase):
 
 class StalledChildDocTest(unittest.TestCase):
     def test_delegation_step_5_bounds_an_open_child(self):
-        text = (ROOT / "t3/runtime.md").read_text()
-        step = text.split("5. Collect results.", 1)[1].split("6. You own every child's output.", 1)[0]
-        self.assertIn("t3_thread_wait", step)
-        self.assertIn("timeoutMs: 300000", step)
-        self.assertIn("does not end its turn while a child is open", step)
+        waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
+        self.assertIn("t3_thread_wait", waiting)
+        self.assertIn("timeoutMs: 300000", waiting)
+        self.assertIn("does not end its turn while a child is open", waiting)
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_delegation_step_5_rechecks_a_final_result_after_two_minutes(self):
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
         ten = "A child with no new item for 10 minutes is stalled."
         two = "no pending tool or child run, and no new activity for two minutes is stalled."
         for phrase in (
@@ -1931,11 +1932,13 @@ class StalledChildDocTest(unittest.TestCase):
             "Otherwise the 10-minute rule above decides that child.",
             ten,
         ):
-            self.assertIn(phrase, step)
-        self.assertLess(step.index(ten), step.index(two))
+            self.assertIn(phrase, waiting)
+        self.assertLess(waiting.index(ten), waiting.index(two))
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_delegation_step_5_waits_out_an_ended_run(self):
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
         two = "no pending tool or child run, and no new activity for two minutes is stalled."
         ended = "A child's run can end while its task stays open."
         now = "If you need a result now"
@@ -1951,16 +1954,20 @@ class StalledChildDocTest(unittest.TestCase):
             "because the two-minute rule above needs an open run",
             "Count 10 minutes from the child's last activity item.",
         ):
-            self.assertIn(phrase, step)
-        self.assertLess(step.index(two), step.index(ended))
-        self.assertLess(step.index(ended), step.index(now))
+            self.assertIn(phrase, waiting)
+        self.assertLess(waiting.index(two), waiting.index(ended))
+        self.assertLess(waiting.index(ended), waiting.index(now))
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_delegation_step_5_holds_against_the_delegate_task_tool_text(self):
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
         stay = "does not end its turn while a child is open"
         holds = "This holds even though the `delegate_task` tool text says to end the turn."
-        self.assertIn(holds, step)
-        self.assertLess(step.index(stay), step.index(holds))
+        self.assertIn(holds, waiting)
+        self.assertLess(waiting.index(stay), waiting.index(holds))
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_failure_handling_keeps_the_two_minute_clock_out(self):
         section = runtime_section("### Failure handling", "### Fresh children by default")
@@ -2039,14 +2046,21 @@ class StalledChildDocTest(unittest.TestCase):
         for phrase in (
             "Decide completion by `workState` alone.",
             "it does not reopen the task",
-            "0.0.46-nightly.20261008.2813",
-            "startup recovery",
-            "a turn held in a stopped queue does not count",
             "A stalled child",
         ):
             self.assertIn(phrase, section)
+        host = (ROOT / "t3/added/pstack-runtime/host.md").read_text()
+        nightlies = host.split("### Pre-0.1.0 nightlies", 1)[1].split("\n## ", 1)[0]
+        for phrase in (
+            "0.0.46-nightly.20261008.2813",
+            "startup recovery",
+            "a turn held in a stopped queue does not count",
+        ):
+            self.assertIn(phrase, nightlies)
+        waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
+        self.assertIn("`hasPendingChildRuns` does not change that.", waiting)
         step = runtime_section("5. Collect results.", "\n6. You own")
-        self.assertIn("`hasPendingChildRuns` does not change that.", step)
+        self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_local_state_reads_a_finished_result_after_restart(self):
         section = runtime_doc_section("failures.md", "## After a restart")
@@ -2075,20 +2089,22 @@ class OpenCodeLongCommandDocTest(unittest.TestCase):
         self.assertIn(
             "When an OpenCode child's task is terminal and the report file its brief named is missing, "
             "the task is not finished. Read its activity with `t3_thread_read`. "
-            "While a later turn on its thread still runs, wait on it per step 5. "
+            "While a later turn on its thread still runs, wait on it per [waiting.md](waiting.md). "
             "Otherwise handle it per [Failure handling](#failure-handling).",
             rule,
         )
 
     def test_step_5_two_minute_rule_skips_a_background_wait(self):
-        step = runtime_section("5. Collect results.", "\n6. You own")
-        bullet = runtime_bullet(step, "   - A child with a final assistant message that holds the result")
+        waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
+        bullet = runtime_bullet(waiting, "   - A child with a final assistant message that holds the result")
         self.assertIn(
             "A message that says more work follows does not hold the result. "
             "A last message that says the child waits on a background command does not hold the result either, "
             "so this two-minute rule does not apply to it.",
             bullet,
         )
+        step = runtime_section("5. Collect results.", "\n6. You own")
+        self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_the_paragraph_is_stated_once(self):
         text = (ROOT / "t3/runtime.md").read_text()

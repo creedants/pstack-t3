@@ -21,4 +21,4 @@ Read this file before you wait on a child.
 
 ## Blocking waits
 
-   - `mode: "wait"` blocks for at most `timeoutMs`, ten minutes by default. Use it only for short children whose result gates the very next step. `waitTimedOut: true` does not cancel the child. Keep the `taskId`. On older hosts, see [Older hosts](host.md#older-hosts). The task is still open. Answer the question per [Pending requests](SKILL.md#pending-requests). The task's completion still wakes this thread.
+   - `mode: "wait"` blocks for at most `timeoutMs`, ten minutes by default. Use it only for short children whose result gates the very next step. `waitTimedOut: true` does not cancel the child. Keep the `taskId`. On older hosts, see [Older hosts](host.md#older-hosts). The task is still open. Answer the question that blocks the child per [Pending requests](SKILL.md#pending-requests). The task's completion still wakes this thread.
