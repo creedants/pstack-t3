@@ -1,6 +1,7 @@
 import os
 import posixpath
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,7 +134,7 @@ def parse_status(text):
 
 
 def parse_lease_row(text, lease):
-    """Held lease for this id from land.py lease list text or None."""
+    """Held lease for this id from land.py lease list text or None. An empty path is the whole repository and is kept."""
     for line in str(text).splitlines():
         if not line.startswith(lease + " "):
             continue
@@ -145,8 +146,20 @@ def parse_lease_row(text, lease):
         paths_text = after[1] if len(after) == 2 else ""
         if paths_text.strip() == "(whole repo)":
             paths = ("",)
+        elif paths_text.strip() == "":
+            paths = ()
         else:
-            paths = tuple(part.strip() for part in paths_text.split(",") if part.strip() != "")
+            found = []
+            seen_root = False
+            for raw in paths_text.split(","):
+                part = raw.strip()
+                if part == "":
+                    if not seen_root:
+                        seen_root = True
+                        found.append("")
+                else:
+                    found.append(part)
+            paths = tuple(found)
         return HeldLease(lease, state, paths)
     return None
 
@@ -308,7 +321,7 @@ def gate_outside(restaurant, ident, sha):
         names = ", ".join(decision.uncovered)
         raise BrigadeError(
             f"{ident} at {sha[:12]} changes paths outside {lease}: {names}; "
-            f"run dish {ident} --add-paths {names} or split the change"
+            f"run dish {ident} --add-paths {shlex.quote(','.join(decision.uncovered))} or split the change"
         )
     return GateInput(lease, paths, sha)
 

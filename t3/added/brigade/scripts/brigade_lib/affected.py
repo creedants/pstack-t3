@@ -846,7 +846,7 @@ def _settings(root, meta, store=None):
     When meta is given that store alone supplies all four values.
     Otherwise matching stores are every readable restaurant.json under store root in sorted path order whose projectRoot resolves to root.
     Unreadable or non JSON stores are skipped.
-    Build and check take the first non-empty value after stripping.
+    Build and check take the first string that is non-empty after stripping and is not "none".
     Later different values are ignored without warning.
     ChangeNoteDir compares every matched store with unset as empty and refuses on difference.
     AffectedTests compares only stores that record it by raw value and refuses on difference.

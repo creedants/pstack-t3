@@ -1246,7 +1246,9 @@ class BrigadeTest(unittest.TestCase):
             if text is None:
                 (path / name).unlink()
             else:
-                (path / name).write_text(text)
+                full = path / name
+                full.parent.mkdir(parents=True, exist_ok=True)
+                full.write_text(text)
         git("git", "add", "-A", cwd=path)
         git("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", branch, cwd=path)
         return git("git", "rev-parse", "HEAD", cwd=path)
