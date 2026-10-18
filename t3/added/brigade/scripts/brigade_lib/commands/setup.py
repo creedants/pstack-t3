@@ -33,6 +33,16 @@ COMMANDS = ("open", "set")
 
 
 def _json_setting(args, name, flag):
+    value = _read_json_setting(args, name, flag)
+    key, reader = ("affectedTests", layout) if name == "affected_tests" else ("sharedDocs", doc_policy)
+    try:
+        reader({key: value})
+    except BrigadeError as error:
+        raise BrigadeError(f"{flag} {error}") from error
+    return value
+
+
+def _read_json_setting(args, name, flag):
     cached = f"_json_cache_{name}"
     if hasattr(args, cached):
         return getattr(args, cached)
