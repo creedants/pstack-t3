@@ -1682,7 +1682,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.assertEqual(meta["docTimebox"], 30)
 
     def test_the_skill_documents_the_shared_docs_value_this_suite_seeds(self):
-        text = (ROOT / "t3/added/brigade/SKILL.md").read_text()
+        text = (ROOT / "t3/added/brigade/store-config.md").read_text()
         blocks = [block for block in re.findall(r"```json\n(.*?)```", text, re.S) if "sharedDocs" in block]
         self.assertEqual(len(blocks), 1)
         self.assertEqual(json.loads(blocks[0]), DOC_SETTINGS)

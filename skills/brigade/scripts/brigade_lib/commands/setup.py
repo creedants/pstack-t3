@@ -45,7 +45,7 @@ def _json_setting(args, name, flag):
         text = raw
         try:
             value = json.loads(text)
-        except json.JSONDecodeError as error:
+        except ValueError as error:
             raise BrigadeError(f"{flag} {error}") from error
         setattr(args, cached, value)
         return value
@@ -53,17 +53,17 @@ def _json_setting(args, name, flag):
     if stripped[:1] in ("{", "["):
         try:
             value = json.loads(text)
-        except json.JSONDecodeError as error:
+        except ValueError as error:
             raise BrigadeError(f"{flag} {error}") from error
         setattr(args, cached, value)
         return value
     try:
         raw = Path(stripped).read_text(encoding="utf-8")
-    except OSError as error:
+    except (ValueError, OSError) as error:
         raise BrigadeError(f"{flag} {error}") from error
     try:
         value = json.loads(raw)
-    except json.JSONDecodeError as error:
+    except ValueError as error:
         raise BrigadeError(f"{flag} {error}") from error
     setattr(args, cached, value)
     return value

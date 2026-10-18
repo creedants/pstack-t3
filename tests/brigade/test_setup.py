@@ -171,6 +171,22 @@ class AffectedTestsSetupTest(BrigadeTest):
         self.assertIn("--affected-tests", error)
         self.assertEqual(self.store_files(), before)
 
+    def test_set_refuses_a_non_utf8_affected_tests_file_and_writes_nothing(self):
+        self.open()
+        path = self.at / "affected.json"
+        path.write_bytes(b"\xff\xfe{\n")
+        before = self.store_files()
+        error = self.brigade("set", "--affected-tests", str(path), code=1)
+        self.assertIn("--affected-tests", error)
+        self.assertEqual(self.store_files(), before)
+
+    def test_set_refuses_a_nul_byte_in_the_affected_tests_path_and_writes_nothing(self):
+        self.open()
+        before = self.store_files()
+        error = self.brigade("set", "--affected-tests", "a\0b", code=1)
+        self.assertIn("--affected-tests", error)
+        self.assertEqual(self.store_files(), before)
+
     def test_set_clears_affected_tests_with_empty_string(self):
         self.open()
         layout = {"always": "tests.test_pstack_t3", "entryPoints": ["a.py"]}
