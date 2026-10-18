@@ -163,7 +163,8 @@ def frame_cuts(page, limit):
     if height(page) <= limit:
         return page, page
     page = replace(page, name=clip(page.name, NAME_BYTES))
-    # Room for the notes a cut can add, and for the attempt-line note when the page has attempt lines, so the result needs no second pass.
+    # Room for the notes a cut can add, and for the attempt-line note when the page has attempt lines.
+    # Reclaimed room retries rejected rows below.
     has_lines = any(item.lines or item.fold.summary or item.fold.lines for item in items_of(page))
     worst = replace(page.hidden, dropped_items=page.hidden.dropped_items or 1, cut_agents=page.hidden.cut_agents or 1, cut_in_flight=page.hidden.cut_in_flight or 1,
                     cut_lines=(page.hidden.cut_lines or 1) if has_lines else page.hidden.cut_lines)
