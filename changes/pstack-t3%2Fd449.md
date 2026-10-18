@@ -1,0 +1,3 @@
+- kind fix
+- `t3/added/brigade/scripts/activity.py` `fit()` tries the trimmed page's frame cuts and then the fold page's frame cuts when a page is still over the byte budget at the fold where the frame folds end, and keeps the first cut whose document is at most the budget and whose height is at most the frame.
+- `tests/test_activity.py` covers a page over the byte budget whose trimmed page fits the frame while the fold page's frame cut fits both bytes and height.
