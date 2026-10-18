@@ -5,7 +5,7 @@ Orders the fragments by the commit that added each one, writes their bullets
 under a new `## X.Y.Z (YYYY-MM-DD)` heading, and deletes the fragments. It
 never stages, commits, tags, pushes, or calls gh. It prints those steps.
 
-When the changelog would pass 5000 tokens it moves older versions into docs/changelog/ and leaves an ## Archive link block. When the new section and the Archive block cannot fit together it archives the new section too and leaves only the header and the Archive block. Archived copies prefix inline link destinations whose link text holds no code span with ../../. Archived bytes equal the original section except for rebased relative link destinations.
+When the changelog would pass 5000 tokens it moves older versions into docs/changelog/ and leaves an ## Archive link block. When the new section and the Archive block cannot fit together it archives the new section too and leaves only the header and the Archive block. Rebase exactly the inline links `[label](dest)` whose dest is a relative path: not empty, no scheme or colon, not starting with `/`, `#`, `<`, or `../../`. The label may contain code spans. Archived bytes equal the original section except for rebased relative link destinations.
 
 A failed write or delete, or a SIGINT, SIGTERM, or SIGHUP, puts CHANGELOG.md and every fragment back
 as the script read them. The script then checks them and prints `nothing changed` only when they match.
@@ -30,7 +30,7 @@ KINDS = ("feature", "fix", "polish", "upkeep", "study")
 GROUPS = (("### New", ("feature",)), ("### Fixed", ("fix",)), ("### Changed", ("upkeep",)), (None, ("polish", "study")))
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 LINK_RE = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)([^)]*\))")
-CODERE = re.compile(r"(`+[^`\n]*?`+)")
+TICKS = re.compile(r"`+")
 UNDO = "git restore --staged --worktree CHANGELOG.md changes/"
 LIMIT_TOKENS = 5000
 ARCHIVE = "docs/changelog"
@@ -116,23 +116,44 @@ def parts(section):
   out.append("".join(lines[cur:nxt]))
   cur = nxt
  return tuple(out)
+def fenced(f, line):
+ s = line.lstrip()
+ c = s[:1]
+ n = len(s) - len(s.lstrip(c))
+ if c not in "`~" or n < 3:
+  return f
+ if f is None:
+  return (c, n)
+ return None if c == f[0] and n >= f[1] and not s[n:].strip() else f
+def spans(line):
+ runs = [m.span() for m in TICKS.finditer(line)]
+ i = 0
+ while i < len(runs):
+  w = runs[i][1] - runs[i][0]
+  j = i + 1
+  while j < len(runs) and runs[j][1] - runs[j][0] != w:
+   j += 1
+  if j < len(runs):
+   yield (runs[i][0], runs[j][1])
+   i = j + 1
+  else:
+   i += 1
+def rebase_line(line):
+ z = list(spans(line))
+ def fix(m):
+  d = m[2]
+  p = (m.start() + (m[0][0] == "!"), m.start(2))
+  if not d or ":" in d or d[0] in "/#<" or d[:6] == "../../" or any(x <= q < y for q in p for x, y in z):
+   return m[0]
+  return m[1] + "../../" + d + m[3]
+ return LINK_RE.sub(fix, line)
 def rebase_links(section):
- o = []
- f = False
- for r in section.splitlines(keepends=True):
-  s = r.lstrip()
-  if s.startswith("```") or s.startswith("~~~"):
-   f = not f
-   o.append(r)
-   continue
-  if f:
-   o.append(r)
-   continue
-  p = CODERE.split(r)
-  for i in range(0, len(p), 2):
-   p[i] = LINK_RE.sub(lambda m: m.group(1) + "../../" + m.group(2) + m.group(3) if m.group(2) and not m.group(2).startswith("../../") and "://" not in m.group(2) and ":" not in m.group(2) and m.group(2)[0] not in "/#<" else m.group(0), p[i])
-  o.append("".join(p))
- return "".join(o)
+ o = ""
+ f = None
+ for r in section.splitlines(1):
+  was, f = f, fenced(f, r)
+  o += r if was or f else rebase_line(r)
+ return o
 def read_shelf(files):
  grouped: dict = {}
  for rel, text in files.items():
@@ -462,7 +483,8 @@ def main(argv=None):
   print()
   for original in cut.created:
    print(f"{cw} {original.path.relative_to(ROOT).as_posix()}")
- print(f"\n{ww} this section to CHANGELOG.md" if not archived else f"{ww} this section to CHANGELOG.md")
+ target = "this section to CHANGELOG.md" if cut.section in cut.changelog else "this section to docs/changelog/ and the index to CHANGELOG.md"
+ print(("\n" if not archived else "") + f"{ww} {target}")
  for fragment in cut.fragments:
   print(f"{dw} changes/{fragment.path.name}")
  if args.dry_run:

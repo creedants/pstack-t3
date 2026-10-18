@@ -1,32 +1,71 @@
+import re
 import unittest
 from pathlib import Path
 from .support import setUpModule, ReleaseCase, commit, run, repository, release
+_TICKS = re.compile(r"`+")
+_LINK = re.compile(r"!?\[([^\]\n]*)\]\(([^)\s]+)(?:[^)]*)\)")
+def _open_fence(line):
+  stripped = line.lstrip()
+  if len(stripped) < 3 or stripped[0] not in "`~":
+    return None
+  run = len(stripped) - len(stripped.lstrip(stripped[0]))
+  if run < 3:
+    return None
+  return (stripped[0], run)
+def _shut_fence(fence, line):
+  stripped = line.lstrip()
+  if not stripped.startswith(fence[0]):
+    return False
+  run = len(stripped) - len(stripped.lstrip(fence[0]))
+  return run >= fence[1] and not stripped[run:].strip()
+def _spans(line):
+  runs = [match.span() for match in _TICKS.finditer(line)]
+  out = []
+  pos = 0
+  while pos < len(runs):
+    width = runs[pos][1] - runs[pos][0]
+    mate = None
+    for cand in range(pos + 1, len(runs)):
+      if runs[cand][1] - runs[cand][0] == width:
+        mate = cand
+        break
+    if mate is None:
+      pos += 1
+    else:
+      out.append((runs[pos][0], runs[mate][1]))
+      pos = mate + 1
+  return out
+def _covered(spans, at):
+  return any(start <= at < end for start, end in spans)
 def active_relative_targets(text):
   targets = []
-  in_fence = False
+  fence = None
   for raw in text.splitlines():
-    stripped = raw.lstrip()
-    if stripped.startswith("```") or stripped.startswith("~~~"):
-      in_fence = not in_fence
+    if fence is None:
+      opened = _open_fence(raw)
+      if opened is not None:
+        fence = opened
+        continue
+    else:
+      if _shut_fence(fence, raw):
+        fence = None
       continue
-    if in_fence:
-      continue
-    segs = release.CODERE.split(raw)
-    for i in range(0, len(segs), 2):
-      for m in release.LINK_RE.finditer(segs[i]):
-        dest = m.group(2)
-        if not dest:
-          continue
-        if "://" in dest:
-          continue
-        if ":" in dest:
-          continue
-        if dest[0] in "/#<":
-          continue
-        if dest.startswith("../../"):
-          targets.append(dest)
-          continue
+    zones = _spans(raw)
+    for m in _LINK.finditer(raw):
+      dest = m.group(2)
+      if not dest:
+        continue
+      if ":" in dest:
+        continue
+      if dest[0] in "/#<":
+        continue
+      if dest.startswith("../../"):
         targets.append(dest)
+        continue
+      opener = m.start() + (m.group(0)[0] == "!")
+      if _covered(zones, opener) or _covered(zones, m.start(2)):
+        continue
+      targets.append(dest)
   return targets
 class ArchiveLinksTest(ReleaseCase):
   def test_every_active_relative_link_resolves(self):

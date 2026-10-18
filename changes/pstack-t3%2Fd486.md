@@ -7,5 +7,5 @@
 - the current CHANGELOG.md is migrated into docs/changelog/ with every file under 5000 tokens
 - archived bytes equal the original section except for rebased relative link destinations
 - scripts/release.py archives the new section too when the new section and the Archive block cannot fit together and leaves only the header and the Archive block
-- archived copies prefix ../../ to inline link destinations whose link text holds no code span outside fenced code blocks and inline code spans unless the destination is empty or starts with / or # or < or contains a colon or starts with ../../
+- archived copies rebase exactly the inline links `[label](dest)` whose dest is a relative path: not empty, no scheme or colon, not starting with `/`, `#`, `<`, or `../../`; the label may contain code spans
 - scripts/release.py names docs/changelog/ in the dirty message when the archive is dirty
