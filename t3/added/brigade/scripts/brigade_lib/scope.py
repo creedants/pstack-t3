@@ -280,7 +280,7 @@ def widen(restaurant, ident, add_text):
 
 
 def gate_outside(restaurant, ident, sha):
-    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract or trunk ref is missing. A leased dish under a contract refuses review when a git step fails."""
+    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract or status names no trunk ref. Failures in fetch, merge-base, or diff refuse review."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
     with restaurant.checked():
@@ -312,21 +312,23 @@ def gate_outside(restaurant, ident, sha):
         except BrigadeError as error:
             raise BrigadeError(
                 f"{ident} cannot check coverage. {error}. "
-                f"Fetch {remote} {trunk} and run dish {ident} --state in-review again"
+                f"Fetch {remote} {trunk} and run dish {ident} --state in-review --sha {shlex.quote(sha)} again"
             ) from error
     try:
         base = git_run(repo, "merge-base", trunk_ref, sha)
     except BrigadeError as error:
         raise BrigadeError(
             f"{ident} at {sha} cannot check coverage. {error}. "
-            f"Pass a SHA that exists and run dish {ident} --state in-review again"
+            f"Repair the git error above and restore {trunk_ref} if missing. "
+            f"Pass a SHA that exists with --sha when retrying dish {ident} --state in-review"
         ) from error
     try:
         changed = changed_paths(repo, base, sha)
     except BrigadeError as error:
         raise BrigadeError(
             f"{ident} at {sha} cannot check coverage. {error}. "
-            f"Pass a SHA that exists and run dish {ident} --state in-review again"
+            f"Repair the git error above and restore {trunk_ref} if missing. "
+            f"Pass a SHA that exists with --sha when retrying dish {ident} --state in-review"
         ) from error
     files = source_paths(changed, generated)
     lease_paths = list(held.paths)

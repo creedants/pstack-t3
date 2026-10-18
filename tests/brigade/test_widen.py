@@ -49,7 +49,7 @@ class WidenTest(BrigadeTest):
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-review")
 
-    def test_in_review_refuses_fetch_failure_fails_when_remote_fetch_is_refused(self):
+    def test_in_review_refuses_fetch_failure_fails_when_failed_fetch_enters_review(self):
         import json
         import subprocess
         from contextlib import closing
@@ -86,14 +86,14 @@ class WidenTest(BrigadeTest):
         self.assertEqual(self.store_files(), before)
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-progress")
 
-    def test_in_review_skips_no_lease_fails_when_bad_sha_has_no_gate(self):
+    def test_in_review_skips_no_lease_fails_when_no_lease_is_refused(self):
         self.started()
         self.hand_edit("dishes.tsv", "D1", lease="", paths="")
         bad = "0" * 40
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", bad), "D1 in-review")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-review")
 
-    def test_in_review_skips_no_contract_fails_when_bad_sha_has_no_contract(self):
+    def test_in_review_skips_no_contract_fails_when_no_contract_is_refused(self):
         self.fired_bug_fix()
         self.hand_edit("dishes.tsv", "D1", lease="L1", paths="README.md")
         bad = "0" * 40
