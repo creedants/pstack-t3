@@ -1,0 +1,2 @@
+- kind polish
+- every file stays under 5000 tokens, so roles.py splits into a thin facade plus _roles domain modules and the two roles test files split into tests/roles with no behavior change

@@ -200,6 +200,8 @@ def render(destination):
     runtime = destination / "pstack-runtime"
     copy_file(T3 / "runtime.md", runtime / "SKILL.md")
     copy_file(T3 / "scripts/roles.py", runtime / "scripts/roles.py")
+    for module in sorted((T3 / "scripts/_roles").glob("*.py")):
+        copy_file(module, runtime / "scripts/_roles" / module.name)
     for persona in sorted((T3 / "agents").glob("*.md")):
         copy_file(persona, runtime / "agents" / persona.name)
     copy_file(T3 / "setup.md", destination / "setup-pstack" / "SKILL.md")
