@@ -227,7 +227,7 @@ class OwnershipCase(unittest.TestCase):
             for name in names:
                 self.assertFalse(os.path.lexists(provider_link(self.home, harness, name)))
     def holders(self):
-            """Every path under the home whose name starts with `.pstack-t3-`."""
+            """The sorted `.pstack-t3-*` matches under the home."""
             return sorted(str(path) for path in self.home.rglob(".pstack-t3-*"))
     def two(self):
             return make_checkout(self.home, "a"), make_checkout(self.home, "b")
