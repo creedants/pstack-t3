@@ -1,2 +1,2 @@
 - kind polish
-- Every file under t3/added/brigade/scripts/brigade_lib/ and tests/brigade/ is under 5000 tokens (tokens = bytes // 4).
+- The affected, edits, leases, and reviews modules in brigade_lib and their tests are split into submodules and test packages that are each under 5000 tokens (tokens = bytes // 4).
