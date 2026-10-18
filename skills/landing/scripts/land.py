@@ -133,7 +133,7 @@ def parser():
                    help="command that regenerates the generated paths while landing, such as \"python3 scripts/build.py\". "
                         "An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none")
     p.add_argument("--max-file-tokens", type=int, default=None, dest="max_file_tokens",
-                   help="default token maximum using bytes // 4. "
+                   help="token maximum using bytes // 4. "
                         "Omitted keeps the stored limit; a first init stores none")
     p.add_argument("--size-baseline", metavar="PATH", default=None, dest="size_baseline",
                    help="repository-relative baseline path. "

@@ -569,7 +569,7 @@ def check_candidate_size(store, base, candidate):
     """Why the candidate fails the size limit, or None.
 
     The check runs at land time, not at submit time, so the rebased change is
-    what is judged. The limit comes from the baseline file committed at the
+    what is judged. The limit comes from the contract maximum, or from the baseline file committed at the
     trunk tip, read with git show. The contract points at that file with sizeBaseline and may set the maximum with sizeMaxTokens, which overrides the baseline maxFileTokens.
     """
     contract = store.contract
