@@ -1704,6 +1704,8 @@ class LandingTest(unittest.TestCase):
             args += ["--base", extra["base"]]
         if "generated" in extra:
             args += ["--generated", extra["generated"]]
+        if "generated_map" in extra:
+            args += ["--generated-map", extra["generated_map"]]
         if "rebuild" in extra:
             args += ["--rebuild", extra["rebuild"]]
         return self.land(*args)
@@ -2048,6 +2050,14 @@ if args[:1] == ["api"] and any("required_status_checks" in arg for arg in args):
         sys.stdout.write(text if text.endswith("\n") else text + "\n")
         sys.exit(0)
     print("required checks unavailable", file=sys.stderr)
+    sys.exit(1)
+if args[:1] == ["api"] and any("/rules/branches/" in arg for arg in args):
+    required = base / "rules-required.json"
+    if required.exists():
+        text = required.read_text()
+        sys.stdout.write(text if text.endswith("\n") else text + "\n")
+        sys.exit(0)
+    print("rules unavailable", file=sys.stderr)
     sys.exit(1)
 if args[:1] == ["api"] and any("/branches/" in arg for arg in args):
     endpoint = next(arg for arg in args if "/branches/" in arg)
