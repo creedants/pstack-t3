@@ -21,7 +21,7 @@ Land many agents' work on one repository through one queue.
 ## land.py init
 
 ```text
-land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--pr-item-line PR_ITEM_LINE] [--heartbeat-ms HEARTBEAT_MS] [--merge-heartbeat-ms MERGE_HEARTBEAT_MS] [--cap CAP] [--generated PATHS] [--rebuild COMMAND]
+land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--pr-item-line PR_ITEM_LINE] [--heartbeat-ms HEARTBEAT_MS] [--merge-heartbeat-ms MERGE_HEARTBEAT_MS] [--cap CAP] [--generated PATHS] [--generated-map MAP] [--rebuild COMMAND]
 ```
 
 write the repository's landing contract
@@ -43,6 +43,7 @@ write the repository's landing contract
 | `--merge-heartbeat-ms MERGE_HEARTBEAT_MS` |  |  |  | merge wait schedule interval in milliseconds. Omitted, a rerun keeps the stored value and a first init stores 900000. A value below 900000 is refused before the contract changes |
 | `--cap CAP` |  |  |  | most changes in flight on the repository at once; 0 clears it |
 | `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
+| `--generated-map MAP` |  |  |  | comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages. An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none |
 | `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |
 
 ## land.py cap
@@ -263,7 +264,7 @@ clear a pause after you did what its reason says
 ## land.py status
 
 ```text
-land.py [flags] status [--holder HOLDER] [--sha SHA] [id]
+land.py [flags] status [--holder HOLDER] [--sha SHA] [--json] [id]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -271,6 +272,7 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [id]
 | `id` |  |  |  |  |
 | `--holder HOLDER` |  |  |  | list this holder's entries; a value ending in / matches every holder under it |
 | `--sha SHA` |  |  |  | with --holder, only entries at exactly this commit |
+| `--json` |  |  |  | print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, and map |
 
 ## land.py slot
 
