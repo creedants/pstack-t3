@@ -1,0 +1,4 @@
+- kind polish
+- `tests/test_roles_cli.py` pins the variant mapping in full mode so high stays high.
+- `tests/test_roles_cli.py` pins the panel order in full mode so inherit stays first.
+- `tests/test_roles_cli.py` starts the replace reset pin from full so only a reset passes.

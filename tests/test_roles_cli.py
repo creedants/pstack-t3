@@ -797,9 +797,9 @@ class ModeCliTest(unittest.TestCase):
     def test_replace_without_mode_resets_to_light(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
-            first = repo.write("--mode", "light")
+            first = repo.write("--mode", "full")
             self.assertEqual(first.returncode, 0, first.stderr)
-            self.assertEqual(json.loads(repo.user.read_text())["mode"], "light")
+            self.assertEqual(json.loads(repo.user.read_text())["mode"], "full")
             second = repo.write("--replace", "--budget", "small")
             self.assertEqual(second.returncode, 0, second.stderr)
             document = json.loads(repo.user.read_text())
@@ -2189,13 +2189,14 @@ class BackupCliTest(unittest.TestCase):
             "--provider", "grok",
             "--model", "grok-4.7",
             "--options", '{"variant": "high"}',
+            "--brief-mode", "full",
         )
         self.assert_backup(completed, {
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
-            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
         })
 
     def test_a_seat_with_no_level_gets_medium_under_the_light_default(self):
@@ -3440,13 +3441,12 @@ class RuntimeModeCliTest(unittest.TestCase):
 
     def test_auto_replaces_the_muse_seat_of_a_panel_in_place(self):
         opus = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
-        medium = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}
         entry, _user = self.entry(
             "arena runners",
-            roles_file={"roles": {"arena runners": [MUSE_DRIVER_SEAT, opus]}},
+            roles_file={"roles": {"arena runners": [MUSE_DRIVER_SEAT, opus]}, "mode": "full"},
             mode="auto",
         )
-        self.assertEqual(entry["seats"], [medium, medium])
+        self.assertEqual(entry["seats"], ["inherit", opus])
 
     def test_auto_drops_a_review_backups_seat_on_a_muse_driver(self):
         opus = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
