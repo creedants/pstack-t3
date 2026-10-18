@@ -378,7 +378,7 @@ def _diff_names(repo, *args):
 
 
 def _worktree_sizes(root, names):
-    """Byte counts of the names that are regular files in this worktree."""
+    """Byte counts of the names that are regular files, following symlinks, in this worktree."""
     sizes = {}
     for path in names:
         try:

@@ -191,12 +191,12 @@ def refused_policy_change(base_raw, cand_raw, ceiling=None):
         base_files = {}
     if not isinstance(cand_files, dict):
         return "size baseline cannot be read"
-    if isinstance(base_max, int) and not isinstance(base_max, bool) and base_max >= 1:
+    if isinstance(ceiling, int) and not isinstance(ceiling, bool) and ceiling >= 1:
+        base_ceiling = ceiling
+    elif isinstance(base_max, int) and not isinstance(base_max, bool) and base_max >= 1:
         base_ceiling = base_max
     else:
         base_ceiling = DEFAULT_MAX_TOKENS
-    if isinstance(ceiling, int) and not isinstance(ceiling, bool) and ceiling >= 1:
-        base_ceiling = min(base_ceiling, ceiling)
     for name, value in cand_files.items():
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             continue

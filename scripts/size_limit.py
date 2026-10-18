@@ -102,7 +102,7 @@ def _generated_list(contract):
 
 
 def _walk_sizes(root):
-    """Byte counts of regular files under this root, keyed by POSIX relative path."""
+    """Byte counts of regular files, following symlinks, under this root, keyed by POSIX relative path."""
     sizes = {}
     for current, dirs, files in os.walk(root):
         if ".git" in dirs:
