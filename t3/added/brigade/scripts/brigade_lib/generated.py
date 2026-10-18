@@ -285,7 +285,7 @@ def _forward_skills(gen_map, norm):
 
 
 def twins(gen_map, norm):
-    """One twin class holds the path and its skills copies. Doc pages are never twins."""
+    """One twin class holds the path and its skills copies. Only skills copies are twins."""
     try:
         if gen_map is None or not gen_map.rules:
             return (norm,)
