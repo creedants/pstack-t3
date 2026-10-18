@@ -6,6 +6,6 @@
 - scripts/release.py prints git add with docs/changelog/ only when the run archived something
 - the current CHANGELOG.md is migrated into docs/changelog/ with every file under 5000 tokens
 - archived bytes equal the original section except for rebased relative link destinations
-- scripts/release.py archives the new section too when the new section alone cannot fit and leaves only the Archive block
-- archived copies prefix ../../ to relative link destinations outside fenced code blocks and inline code spans unless the destination is empty or starts with / or # or < or contains a colon or starts with ../../
+- scripts/release.py archives the new section too when the new section and the Archive block cannot fit together and leaves only the header and the Archive block
+- archived copies prefix ../../ to inline link destinations outside fenced code blocks and inline code spans unless the destination is empty or starts with / or # or < or contains a colon or starts with ../../
 - scripts/release.py names docs/changelog/ in the dirty message when the archive is dirty
