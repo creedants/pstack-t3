@@ -1,0 +1,7 @@
+- kind polish
+- docs/guide.md keeps sections 1 through 7 plus tips and install paths and links to six parts in docs/guide/.
+- docs/guide/reference.md holds the usage limit detail and the reference sections.
+- docs/multi-coordinator.md keeps summary plus method plus design rules plus out of scope plus map and links to seven parts in docs/multi-coordinator/.
+- docs/light-mode.md keeps setting plus decision and links to two parts in docs/light-mode/.
+- docs/capacity.md keeps hardware plus summary and links to two parts in docs/capacity/.
+- every file under docs plus README.md stays under 20000 bytes and scripts/check.py prints ok.
