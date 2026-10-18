@@ -314,12 +314,14 @@ class WakeTest(BrigadeTest):
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
         self.unchanged(before)
         self.assertEqual(self.brigade("dish", "D1", "--thread", "w3", "--reported"), "D1 in-progress")
-        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", "a3"), "D1 in-review")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
 
     def test_a_blank_dish_decision_does_not_hold_the_item(self):
         self.started()
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", sha)
         self.assertEqual(self.brigade("86", "add", "--question", "Ship it?", "--options", "yes, no", "--default", "no"), "Q1")
         self.assertEqual(self.brigade("86", "list"), "Q1: Ship it? Options: yes, no. Default: no.")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
@@ -368,7 +370,8 @@ class WakeTest(BrigadeTest):
 
     def test_a_blank_dish_decision_still_closes_on_any_text(self):
         self.started()
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", sha)
         self.assertEqual(self.brigade("86", "add", "--question", "Ship it?",
                                       "--options", "keep parked", "--default", "keep parked"), "Q1")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "keep parked"), "Q1 answered")

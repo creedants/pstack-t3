@@ -443,7 +443,8 @@ class BriefsTest(BrigadeTest):
         self.assertEqual(self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--verify", "v", "--base", "origin/main", ok=False),
                          self.NO_FIX_ROUND)
         self.unchanged(before)
-        self.brigade("dish", "D1", "--state", "in-review")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", sha)
         self.assertEqual(self.brigade(*self.FIX_BRIEF, ok=False), self.NO_FIX_ROUND)
         self.assertEqual((self.at / "briefs" / "D1.md").read_bytes(), written)
         self.brigade(*self.ROUND_BUDGET)

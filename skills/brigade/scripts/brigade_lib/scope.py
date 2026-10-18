@@ -280,7 +280,7 @@ def widen(restaurant, ident, add_text):
 
 
 def gate_outside(restaurant, ident, sha):
-    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract or trunk ref is missing or git step fails."""
+    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract or status names no trunk ref. Failures in fetch, merge-base, or diff refuse review."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
     with restaurant.checked():
@@ -305,14 +305,31 @@ def gate_outside(restaurant, ident, sha):
     if held is None or held.state != "active":
         raise BrigadeError(f"{lease} is not an active lease held by {holder_name}; claim one before review")
     repo = Path(project_root)
-    try:
-        if mode != "local":
-            remote, trunk = split_remote_trunk(trunk_ref)
+    if mode != "local":
+        remote, trunk = split_remote_trunk(trunk_ref)
+        try:
             git_run(repo, "fetch", remote, trunk)
+        except BrigadeError as error:
+            raise BrigadeError(
+                f"{ident} cannot check coverage. {error}. "
+                f"Fetch {remote} {trunk} and run dish {ident} --state in-review --sha {shlex.quote(sha)} again"
+            ) from error
+    try:
         base = git_run(repo, "merge-base", trunk_ref, sha)
+    except BrigadeError as error:
+        raise BrigadeError(
+            f"{ident} at {sha} cannot check coverage. {error}. "
+            f"Repair the git error above and restore {trunk_ref} if missing. "
+            f"Pass a SHA that exists with --sha when retrying dish {ident} --state in-review"
+        ) from error
+    try:
         changed = changed_paths(repo, base, sha)
-    except BrigadeError:
-        return None
+    except BrigadeError as error:
+        raise BrigadeError(
+            f"{ident} at {sha} cannot check coverage. {error}. "
+            f"Repair the git error above and restore {trunk_ref} if missing. "
+            f"Pass a SHA that exists with --sha when retrying dish {ident} --state in-review"
+        ) from error
     files = source_paths(changed, generated)
     lease_paths = list(held.paths)
     outside = [path for path in files if not covered(path, lease_paths)]

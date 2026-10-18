@@ -1,4 +1,4 @@
-from .support import BrigadeTest, setUpModule
+from .support import BrigadeTest, setUpModule, SCRIPT, _owner_words, call_in_process
 
 
 class WidenTest(BrigadeTest):
@@ -47,4 +47,55 @@ class WidenTest(BrigadeTest):
         self.started()
         sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-review")
+
+    def test_in_review_refuses_fetch_failure_fails_when_failed_fetch_enters_review(self):
+        import json
+        import subprocess
+        from contextlib import closing
+        self.started()
+        with closing(self.landing_db()) as db, db:
+            db.execute("UPDATE contract SET value = ? WHERE key = 'mode'", (json.dumps("merge"),))
+            db.execute("UPDATE contract SET value = ? WHERE key = 'trunk'", (json.dumps("main"),))
+            db.execute("UPDATE contract SET value = ? WHERE key = 'remote'", (json.dumps("origin"),))
+        subprocess.run(["git", "remote", "add", "origin", "file:///nonexistent-pstack-remote"],
+                       cwd=self.project, capture_output=True)
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        before = self.store_files()
+        outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                 *_owner_words(self.at),
+                                                 "dish", "D1", "--state", "in-review", "--sha", sha])
+        self.assertEqual(outcome.code, 1)
+        out = outcome.stderr_text().strip()
+        self.assertIn("D1 cannot check coverage", out)
+        self.assertIn("fetch", out)
+        self.assertIn("Fetch origin main", out)
+        self.assertIn("in-review", out)
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-progress")
+
+    def test_in_review_refuses_bad_sha_fails_when_unknown_sha_reaches_review(self):
+        self.started()
+        bad = "0" * 40
+        before = self.store_files()
+        out = self.brigade("dish", "D1", "--state", "in-review", "--sha", bad, ok=False)
+        self.assertIn(f"D1 at {bad} cannot check coverage", out)
+        self.assertIn("merge-base", out)
+        self.assertIn("Pass a SHA that exists", out)
+        self.assertIn("in-review", out)
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-progress")
+
+    def test_in_review_skips_no_lease_fails_when_no_lease_is_refused(self):
+        self.started()
+        self.hand_edit("dishes.tsv", "D1", lease="", paths="")
+        bad = "0" * 40
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", bad), "D1 in-review")
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-review")
+
+    def test_in_review_skips_no_contract_fails_when_no_contract_is_refused(self):
+        self.fired_bug_fix()
+        self.hand_edit("dishes.tsv", "D1", lease="L1", paths="README.md")
+        bad = "0" * 40
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", bad), "D1 in-review")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-review")

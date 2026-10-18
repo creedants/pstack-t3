@@ -632,7 +632,8 @@ class ReviewsTest(BrigadeTest):
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.send_back("a0", "--late"),
                          "D1: late send-back on record; D1 stays in-progress; 3 send-backs, decision pending")
-        self.passed("a3")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.passed(sha)
         self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")
         self.brigade("dish", "D1", "--state", "queued")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
@@ -643,7 +644,8 @@ class ReviewsTest(BrigadeTest):
     def test_a_detour_through_review_starts_no_fix_round(self):
         self.started()
         self.sent_back(3)
-        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review"), "D1 in-review")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
         before = self.unchanged()
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "fresh-worker", ok=False),
