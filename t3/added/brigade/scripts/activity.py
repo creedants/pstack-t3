@@ -2269,7 +2269,7 @@ def within_budget(page, budget, clean, render, brief=False, ledger=limit_ledger)
 def fit(page, budget, clean, frame=None):
     """The page and its document after the first fold that leaves it at most budget bytes, or after the last fold.
     Each fold's page is measured with within_budget() with ledger=newest_ledger(), which keeps the most attempt lines whose document fits, a suffix of each work item's lines, and, when no count fits, bounds its fold summaries to their counts.
-    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose height() after within_budget() is at most frame and whose document is at most budget bytes stays, or on the last fold the first cut whose height() after within_budget() is at most frame. An over-budget page at a fold that reaches FRAME_FOLDS tries those frame cuts before the next fold, and the first cut whose document is at most budget bytes and whose height() is at most frame is returned. An over-budget cut keeps the most attempt lines whose document fits with newest_ledger(), and, when no count fits, bounds its fold summaries to their counts and keeps the most attempt lines of that page whose document fits, or no attempt line when no count of it fits. When neither cut stays before the last fold the next fold runs, and when no cut stays on the last fold that fold's own page and document are returned.
+    With frame, a page whose height() is over frame takes the next fold too until FRAME_FOLDS folds are applied. After that frame_cuts() cuts it, and the first cut whose height() after within_budget() is at most frame and whose document is at most budget bytes stays, or on the last fold the first cut whose height() after within_budget() is at most frame. An over-budget page at a fold that reaches FRAME_FOLDS tries the trimmed page's frame cuts and then the fold page's frame cuts before the next fold, and the first cut whose document is at most budget bytes and whose height() is at most frame is returned. An over-budget cut keeps the most attempt lines whose document fits with newest_ledger(), and, when no count fits, bounds its fold summaries to their counts and keeps the most attempt lines of that page whose document fits, or no attempt line when no count of it fits. When neither cut stays before the last fold the next fold runs, and when no cut stays on the last fold that fold's own page and document are returned.
     """
     for done, fold in enumerate((None, *FOLDS)):
         page = fold(page) if fold else page
@@ -2283,6 +2283,13 @@ def fit(page, budget, clean, frame=None):
                     body, rendered, cut_fits = within_budget(cut, budget, clean, render_html, ledger=newest_ledger)
                     if cut_fits and height(body) <= frame:
                         return body, rendered
+                if page is not trimmed:
+                    for cut in frame_cuts(page, frame):
+                        if cut is None:
+                            continue
+                        body, rendered, cut_fits = within_budget(cut, budget, clean, render_html, ledger=newest_ledger)
+                        if cut_fits and height(body) <= frame:
+                            return body, rendered
             continue
         page = trimmed
         if frame is None or height(page) <= frame:
