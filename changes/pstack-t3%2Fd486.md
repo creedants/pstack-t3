@@ -1,7 +1,7 @@
 - kind polish
 - scripts/release.py moves older changelog versions into docs/changelog/ when the changelog would pass 5000 tokens
 - scripts/release.py keeps newest versions that fit in CHANGELOG.md with an Archive link block
-- scripts/release.py splits a version section at bullet boundaries so every archive part fits
+- scripts/release.py splits a version section at bullet boundaries
 - scripts/release.py refuses a hand edited Archive block and an orphan archive part
 - scripts/release.py prints git add with docs/changelog/ only when the run archived something
 - the current CHANGELOG.md is migrated into docs/changelog/ with every file under 5000 tokens

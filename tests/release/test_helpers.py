@@ -24,7 +24,7 @@ class PartsTest(ReleaseCase):
         section = "## 0.1.0 (2026-10-09)\n\n- a\n"
         self.assertEqual(release.parts(section), (section,))
 
-    def test_parts_splits_at_bullet_boundaries_so_every_part_fits(self):
+    def test_parts_splits_at_bullet_boundaries(self):
         bullets = "".join(f"- bullet {i} {'x' * 80}\n" for i in range(300))
         section = "## 0.2.0 (2026-10-06)\n\n" + bullets
         self.assertFalse(release.fits(section))
