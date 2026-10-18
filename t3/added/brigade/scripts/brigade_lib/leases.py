@@ -24,7 +24,7 @@ from brigade_lib import seam
 from brigade_lib.compact import refuse_setting
 from brigade_lib.layout import _layout, _one
 from brigade_lib.shared import BrigadeError, slug
-from brigade_lib.store import COUNTED_STATES, KINDS, MODES, holder_prefix, is_admin
+from brigade_lib.store import COUNTED_STATES, KINDS, MODES, change_note_dir, holder_prefix, is_admin
 from brigade_lib.tickets import tracked_paths
 
 NOT_STOPPED = "the old run has not been confirmed stopped; wait for it with t3_thread_wait, then pass --stopped <run id>"
@@ -211,18 +211,32 @@ def running_workers(restaurant):
     return sum(row["state"] in COUNTED_STATES for row in restaurant.rows("dishes.tsv"))
 
 
-def changelog_fragment(branch):
+def fragment_for(meta, branch):
+    """The change-note fragment this branch leases, or None when the store records none.
+
+    The fragment is the store's changeNoteDir holding <branch with % as %25 then / as %2F>.md.
+    A store with no changeNoteDir leases no fragment. An empty branch leases nothing without reading the key.
+    A malformed changeNoteDir is refused when the branch is present.
+    """
+    if not branch:
+        return None
+    directory = change_note_dir(meta)
+    if not directory:
+        return None
     encoded = branch.replace("%", "%25").replace("/", "%2F")
-    return f"changes/{encoded}.md"
+    return f"{directory}/{encoded}.md"
 
 
-def with_fragment(paths, branch):
-    if not paths or not branch:
+def with_fragment(paths, fragment):
+    """The leased paths with the change-note fragment appended, or unchanged when there is none.
+
+    A fragment already listed verbatim is not appended again.
+    """
+    if not paths or not fragment:
         return paths
-    frag = changelog_fragment(branch)
     parts = [part for part in paths.split(",") if part]
-    if frag not in parts:
-        parts.append(frag)
+    if fragment not in parts:
+        parts.append(fragment)
     return ",".join(parts)
 
 
@@ -259,9 +273,11 @@ def missing_checkout_paths(project_root, raw_list):
     return sorted(seen)
 
 
-def claim_paths(project_root, paths, branch, doc_item=False):
+def claim_paths(meta, paths, branch, doc_item=False):
     if not paths:
         return Claim("", ())
+    fragment = fragment_for(meta, branch)
+    project_root = meta.get("projectRoot", "")
     raw_list = [part for part in paths.split(",") if part]
     if not raw_list:
         return Claim("", ())
@@ -272,7 +288,7 @@ def claim_paths(project_root, paths, branch, doc_item=False):
     except Exception:
         lay = None
     if lay is None:
-        return Claim(with_fragment(paths, branch), ())
+        return Claim(with_fragment(paths, fragment), ())
     seen = set()
     for raw in raw_list:
         made = _claim_norm(raw)
@@ -293,7 +309,7 @@ def claim_paths(project_root, paths, branch, doc_item=False):
             if one not in seen:
                 seen.add(one)
                 extras.append(one)
-    return Claim(with_fragment(",".join([*raw_list, *extras]), branch), tuple(extras))
+    return Claim(with_fragment(",".join([*raw_list, *extras]), fragment), tuple(extras))
 
 
 def fired_line(dish, lease, holder_name, added):
@@ -413,7 +429,7 @@ def lease_block(project_root, holder_name, paths, fallback_kind="lease"):
     return fallback_kind, f"waiting on the landing queue ({out or err or 'lease check failed'})"
 
 
-def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
+def block_holds(meta, prefix, ident, note, running, cap, next_dish):
     """The block on a waiting ticket that holds now, as (kind, text), or None. Workers come first, as in fire."""
     if running >= cap:
         return "workers", f"waiting for a worker ({running} of {cap} running)"
@@ -421,7 +437,7 @@ def block_holds(project_root, prefix, ident, note, running, cap, next_dish):
     if not requested:
         return None
     known = note.get("branch") or f"{prefix}/{next_dish.lower()}"
-    return lease_block(project_root, f"{prefix}/{ident}", claim_paths(project_root, requested, known, note.get("doc_item", False)).text, note.get("kind") or "lease")
+    return lease_block(meta.get("projectRoot", ""), f"{prefix}/{ident}", claim_paths(meta, requested, known, note.get("doc_item", False)).text, note.get("kind") or "lease")
 
 
 def block_inputs(restaurant):
@@ -432,8 +448,9 @@ def block_inputs(restaurant):
 def recheck_blocks(restaurant, inputs):
     """Each blocked ticket, its note, and the block that holds now or None. land.py runs here, outside the store lock."""
     blocked, running, cap, next_dish = inputs
-    root, prefix = restaurant.meta["projectRoot"], slug(restaurant.meta["restaurant"])
-    return [(ident, note, block_holds(root, prefix, ident, note, running, cap, next_dish)) for ident, note in blocked]
+    meta = restaurant.meta
+    prefix = slug(meta["restaurant"])
+    return [(ident, note, block_holds(meta, prefix, ident, note, running, cap, next_dish)) for ident, note in blocked]
 
 
 def holding_blocks(restaurant):
@@ -504,18 +521,21 @@ def lease_states(project_root):
 
 
 def fragment_lines(restaurant, ident, branch):
-    """The commands that lease the new branch's changelog fragment. They are printed, not run.
+    """The commands that lease the new branch's change-note fragment. They are printed, not run.
 
     land.py cannot add paths to a lease. A claim made here would stay unrecorded when a drop or a new owner
-    wins the store between the claim and its record.
+    wins the store between the claim and its record. None when the store records no change-note
+    directory, or when the item's recorded paths already list the fragment verbatim.
     """
+    fragment = fragment_for(restaurant.meta, branch)
+    if fragment is None:
+        return None
     states = lease_states(restaurant.meta["projectRoot"])
     with restaurant.checked():
         dish = restaurant.find("dishes.tsv", ident)[1]
-    lease, paths = dish["lease"], with_fragment(dish["paths"], branch)
+    lease, paths = dish["lease"], with_fragment(dish["paths"], fragment)
     if not lease or dish["state"] in ("merged", "dropped") or paths == dish["paths"]:
         return None
-    fragment = changelog_fragment(branch)
     if states.get(lease) == "submitted":
         return (f"{ident}: {lease} is submitted, so it cannot take {fragment}; the submitted commit lands as it is. "
                 f"Run dish {ident} --branch {branch} again if its entry bounces")

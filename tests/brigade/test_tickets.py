@@ -290,6 +290,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.brigade("set", "--change-note-dir", "changes")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "Fix the gate")
             self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src")
             refused = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix the gate",
@@ -894,6 +895,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
     def test_a_goal_change_while_fire_claims_its_lease_is_caught_before_the_write_and_the_lease_is_released(self):
         case = self.fake_land()
         self.two_goals()
+        self.brigade("set", "--change-note-dir", "changes")
         self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
         self.brigade("ticket", "add", "--summary", "b", "--kind", "fix", "--goal", "G1")
         proc = self.fire_with_fake_land(case, "--tickets", "T1,T2", "--station", "bug-fix", "--summary", "Do both", "--paths", "src")

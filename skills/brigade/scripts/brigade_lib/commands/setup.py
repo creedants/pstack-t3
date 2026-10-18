@@ -26,7 +26,7 @@ from brigade_lib.compact import _load, drift_line, effective_cap, effective_prov
 from brigade_lib.items import doc_policy
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
-from brigade_lib.store import AUTOFIRE, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, is_admin, liveness_of, low_reserve_of, open_restaurant, parse_liveness_ms, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
+from brigade_lib.store import AUTOFIRE, CHANGE_NOTE_KEY, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, change_note_dir, is_admin, liveness_of, low_reserve_of, open_restaurant, parse_change_note_dir, parse_liveness_ms, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
 from brigade_lib.tickets import cap_pairs, intake_list, review_pairs, set_intake
 
 COMMANDS = ("open", "set")
@@ -82,6 +82,9 @@ def register_set(sub):
                         "ticket can start; 0 holds no low ticket back; \"\" clears it to 1")
     p.add_argument("--liveness-ms", metavar="N",
                    help="the interval a new liveness schedule uses, a whole number of at least 60000; \"\" removes the setting")
+    p.add_argument("--change-note-dir", metavar="DIR",
+                   help="the repository-relative directory holding one change-note fragment per branch, such as changes; "
+                        "\"\" clears it, and an unset key leases no fragment")
     p.add_argument("--context-cap", default=None,
                    help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
@@ -97,7 +100,7 @@ def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
     It checks contextCap, coordinatorProvider, caps, review, lowReserve, livenessMs, affectedTests, sharedDocs,
-    and docTimebox, by calling each setting's reader predicate, so a value accepted here is a value that reader
+    docTimebox, and changeNoteDir, by calling each setting's reader predicate, so a value accepted here is a value that reader
     accepts. A missing key keeps its default.
     """
     effective_cap(meta)
@@ -107,6 +110,7 @@ def validate_settings(meta):
     liveness_of(meta)
     layout(meta)
     doc_policy(meta)
+    change_note_dir(meta)
 
 
 def preflight_settings(prospective, args):
@@ -251,6 +255,11 @@ def setting_changes(restaurant, args):
             drop.append(LIVENESS_KEY)
         else:
             changes[LIVENESS_KEY] = parse_liveness_ms(args.liveness_ms)
+    if args.change_note_dir is not None:
+        if args.change_note_dir == "":
+            drop.append(CHANGE_NOTE_KEY)
+        else:
+            changes[CHANGE_NOTE_KEY] = parse_change_note_dir(args.change_note_dir)
     if args.context_cap is not None:
         if args.context_cap == "":
             drop.append("contextCap")

@@ -316,7 +316,7 @@ def _can_cover_catalog(parts, catalog):
 # Every catalog file entry that does not end in a slash counts even when the index omits it.
 # A SKILL dot md counts only when it ends in slash SKILL dot md and starts with one catalog skill root.
 # The catalog is the store's sharedDocs, so no path is built into the tool.
-# The changelog fragment that with fragment appends is not part of the check.
+# The change-note fragment that with_fragment appends is not part of the check.
 # When git ls files fails, every catalog file entry and file directory prefix still matches by prefix.
 # When git ls files fails, a lease path that is a direct child of a skill root counts as that path plus slash SKILL dot md.
 # When git ls files fails, a lease path equal to a skill root counts as that root with trailing slash.
@@ -476,7 +476,7 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 raise BrigadeError(gate.line)
             dish = restaurant.next_id("dishes.tsv")
             known = branch or f"{slug(restaurant.meta['restaurant'])}/{dish.lower()}"
-            claimed = claim_paths(project_root, paths, known, doc_item) if paths else Claim("", ())
+            claimed = claim_paths(meta, paths, known, doc_item) if paths else Claim("", ())
             leased = claimed.text
             added = claimed.added
             label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)

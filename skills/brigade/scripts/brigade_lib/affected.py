@@ -14,7 +14,7 @@ from brigade_lib.compact import refuse_setting
 from brigade_lib.edits import NO_COMMAND
 from brigade_lib.layout import _layout, _twins
 from brigade_lib.shared import BrigadeError
-from brigade_lib.store import HELD_LOCKS, store_root
+from brigade_lib.store import CHANGE_NOTE_KEY, HELD_LOCKS, change_note_dir, store_root
 
 
 AFFECTED_KEY = "affectedTests"
@@ -684,7 +684,7 @@ def _index(root, layout):
     return _Closed(ordered)
 
 
-def _select(root, paths, layout):
+def _select(root, paths, layout, change_dir=""):
     base = Path(str(root))
     if isinstance(paths, str):
         raws = [part for part in paths.split(",") if part.strip() != ""]
@@ -725,7 +725,7 @@ def _select(root, paths, layout):
             else:
                 missing.add(norm)
             continue
-        if norm.startswith("changes/"):
+        if change_dir and (norm == change_dir or norm.startswith(change_dir + "/")):
             continue
         if norm.startswith("tests/") and norm.endswith(".py"):
             stem = norm[:-3]
@@ -841,17 +841,20 @@ def _build_command(meta):
 
 
 def _settings(root, meta, store=None):
-    """The layout, build command, and check command root's stores recorded.
+    """The layout, build command, check command, and change-note directory root's stores recorded.
 
     meta names the store the caller already holds. Otherwise every store under store, the store root the
     caller resolved, whose projectRoot resolves to root is read. A present and malformed affectedTests is
-    refused, and one recorded differently by two stores is refused because neither can be trusted.
+    refused, and one recorded differently by two stores is refused because neither can be trusted. The same
+    holds for changeNoteDir. An unset key reads as no change-note directory.
     """
     if meta is not None:
-        return layout(meta), _build_command(meta), _check_command(meta)
+        return layout(meta), _build_command(meta), _check_command(meta), change_note_dir(meta)
     pick = None
     picked_path = None
     picked_value = None
+    noted = ""
+    noted_path = None
     build = ""
     check = ""
     for path, one in _stored_restaurants(root, store):
@@ -859,6 +862,11 @@ def _settings(root, meta, store=None):
             build = _build_command(one)
         if not check:
             check = _check_command(one)
+        note = change_note_dir(one)
+        if noted_path is None:
+            noted, noted_path = note, path
+        elif note != noted:
+            raise BrigadeError(f"restaurant.json {CHANGE_NOTE_KEY} differs across {noted_path} and {path}; keep one value")
         if AFFECTED_KEY not in one:
             continue
         got = layout(one)
@@ -866,7 +874,7 @@ def _settings(root, meta, store=None):
             pick, picked_path, picked_value = got, path, one[AFFECTED_KEY]
         elif one[AFFECTED_KEY] != picked_value:
             raise BrigadeError(f"restaurant.json {AFFECTED_KEY} differs across {picked_path} and {path}; keep one value")
-    return pick, build, check
+    return pick, build, check, noted
 
 
 def _fallback(land, check):
@@ -881,7 +889,7 @@ def _fallback(land, check):
 def verify_text(root, paths, land, meta=None, store=None):
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
-    picked, build, check = _settings(root, meta, store)
+    picked, build, check, change_dir = _settings(root, meta, store)
     if picked is None:
         return _fallback(land, check)
     if isinstance(paths, str):
@@ -892,5 +900,5 @@ def verify_text(root, paths, land, meta=None, store=None):
             for part in str(one).split(","):
                 if part.strip() != "":
                     items.append(part)
-    result = _select(root, items, picked)
+    result = _select(root, items, picked, change_dir)
     return _paragraph(result, land, picked, build, check)

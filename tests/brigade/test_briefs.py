@@ -224,6 +224,7 @@ class BriefsTest(BrigadeTest):
             subprocess.run([sys.executable, str(land), "--repo", str(self.project), "init", "--trunk", "lane", "--mode", "local", "--base", "main"],
                            check=True, capture_output=True)
             self.open()
+            self.brigade("set", "--change-note-dir", "changes")
             (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "two")
@@ -390,11 +391,12 @@ class BriefsTest(BrigadeTest):
                          "brigade: D1 has no contract on record; run brief with --contract")
         self.assertEqual(self.brigade("contract", "D9", ok=False), "brigade: no D9 in dishes.tsv")
 
-    def test_fire_leases_the_branch_changelog_fragment_and_dish_records_a_new_lease(self):
+    def test_fire_with_change_note_dir_leases_the_encoded_fragment_and_dish_records_a_new_lease(self):
         from unittest import mock
         self.init_landing()
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
             self.open()
+            self.brigade("set", "--change-note-dir", "changes")
             (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
             self.brigade("set", "--thread", "thread-coord")
             self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
@@ -411,6 +413,22 @@ class BriefsTest(BrigadeTest):
             self.brigade("dish", "D1", "--lease", "L9", "--paths", "src/a.py,changes/docs%2Fa.md")
             text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
             self.assertIn("leased to you as L9: src/a.py,changes/docs%2Fa.md.", text)
+
+    def test_fire_leases_no_fragment_when_change_note_dir_is_unset(self):
+        from unittest import mock
+        self.init_landing()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            self.open()
+            (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
+            self.brigade("set", "--thread", "thread-coord")
+            self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+            self.assertEqual(self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                                          "--branch", "docs/a", "--paths", "src/a.py"),
+                             "D1 (lease L1 held by perf/D1)")
+            self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["paths"], "src/a.py")
+            text = self.brigade("brief", "D1", "--contract", "none", "--goal", "g", "--acceptance", "a", "--verify", "v", "--base", "origin/main")
+            self.assertIn("leased to you as L1: src/a.py.", text)
+            self.assertNotIn("changes/", text)
 
     def test_brief_refuses_an_item_that_owes_its_decision(self):
         self.started()

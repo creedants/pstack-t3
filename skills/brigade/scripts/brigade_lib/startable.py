@@ -116,8 +116,8 @@ def lease_refusals(meta, tickets):
 
     The claim carries the ticket's saved paths and, when the project has a build layout, the generated copies the
     layout maps from them. That is the claim `fire` builds for the same paths, minus the change note. The note is
-    named for the branch a `fire` runs on, which the preview does not know, so a guessed note blocks a ticket
-    whose paths are free.
+    named for the branch a `fire` runs on, which the preview does not know, so the preview passes no branch and
+    claims no fragment. A guessed note would block a ticket whose paths are free.
     """
     root, prefix = meta["projectRoot"], slug(meta["restaurant"])
     asked, refusals = {}, {}
@@ -127,7 +127,7 @@ def lease_refusals(meta, tickets):
         key = (ticket.paths, ticket.doc_item)
         if key not in asked:
             asked[key] = lease_block(root, f"{prefix}/{ticket.id}",
-                                     claim_paths(root, ",".join(ticket.paths), "", ticket.doc_item).text)
+                                     claim_paths(meta, ",".join(ticket.paths), None, ticket.doc_item).text)
         if asked[key]:
             refusals[ticket.id] = clean(asked[key][1])
     return refusals

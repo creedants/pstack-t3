@@ -109,7 +109,7 @@ class AffectedTest(BrigadeTest):
         self.restaurant(self.archive_root(), self.store / "archive" / "perf")
 
     def restaurant(self, root, directory=None, layout=LAYOUT, build="python3 scripts/build.py",
-                   check="python3 scripts/check.py"):
+                   check="python3 scripts/check.py", note=None):
         """Write a restaurant.json whose projectRoot is root, with or without an affectedTests layout."""
         directory = self.at if directory is None else directory
         directory.mkdir(parents=True, exist_ok=True)
@@ -120,6 +120,8 @@ class AffectedTest(BrigadeTest):
             meta["buildCommand"] = build
         if check is not None:
             meta["checkCommand"] = check
+        if note is not None:
+            meta["changeNoteDir"] = note
         (directory / "restaurant.json").write_text(json.dumps(meta))
         return directory / "restaurant.json"
 
@@ -238,6 +240,7 @@ class AffectedTest(BrigadeTest):
         self.assertIn(ALWAYS, out)
 
     def test_changes_fragment_maps_to_always_fails_when_changes_owner_missing(self):
+        self.restaurant(self.project, note="changes")
         self.git_project()
         self.write("changes/note.md", "- First.\n")
         self.write("tests/test_other.py", "def test_o():\n    pass\n")
