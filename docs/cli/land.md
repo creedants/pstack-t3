@@ -274,7 +274,7 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [--json] [id]
 | `id` |  |  |  |  |
 | `--holder HOLDER` |  |  |  | list this holder's entries; a value ending in / matches every holder under it |
 | `--sha SHA` |  |  |  | with --holder, only entries at exactly this commit |
-| `--json` |  |  |  | print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, map, sizeMaxTokens, and sizeBaseline |
+| `--json` |  |  |  | print one JSON object. It holds mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit |
 
 ## land.py size
 

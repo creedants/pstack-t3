@@ -228,7 +228,7 @@ def parser():
     p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p.add_argument("--json", action="store_true",
-                   help="print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, map, sizeMaxTokens, and sizeBaseline")
+                   help="print one JSON object. It holds mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit")
 
     size_help = ("check changed worktree file sizes; --staged reads changed index files; "
                  "--all reads tracked and unignored untracked files. Seed a missing baseline.\n\n"
