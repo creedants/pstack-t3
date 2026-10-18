@@ -1,7 +1,7 @@
 import re
 from brigade_lib import seam
 from brigade_lib.edits import HEADING
-from brigade_lib.shared import BrigadeError, clean, fence_close, one_of, stored, threads_fence_open
+from brigade_lib.shared import clean, fence_close, one_of, stored, threads_fence_open
 from brigade_lib.store import CHILD_ROLES, THREADS_WRITERS, WORKER_ROLES
 
 THREADS_SECTION = (2, "Threads")

@@ -1,7 +1,7 @@
 import json
 import posixpath
 from pathlib import Path
-from brigade_lib._affected.model import AFFECTED_KEY, _Full, _Modules, _PYTHON_NAME, layout
+from brigade_lib._affected.model import AFFECTED_KEY, _Full, _PYTHON_NAME, layout
 from brigade_lib.edits import NO_COMMAND
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import CHANGE_NOTE_KEY, change_note_dir, store_root
