@@ -93,7 +93,7 @@ The exact text of each line is in [Reporting to an executive admin](../brigade/S
 
 The admin rules on four kinds of conflict between coordinators. It applies the rules in order, and the first rule that separates the parties decides. A ruling stands until it is done, expires, is superseded, or the user overrules it. How a coordinator complies is in [Reporting to an executive admin](../brigade/SKILL.md#reporting-to-an-executive-admin), under A ruling's side.
 
-Every other holder's claim on those paths is refused until the winner claims them or the reservation expires. An item the other depends on, as a `contest` line stated, lands first. First run `$L contest`, then `$L contest --settle`, when no contest covers the two holders. Read [rulings](reference/rulings.md) before `$B rule add` or acting on an overrule or appeal.
+Every other holder's claim on those paths is refused until the winner claims them or the reservation expires. An item the other depends on, as a `contest` line stated, lands first. Read [rulings](reference/rulings.md) for the contest commands when no contest covers the two holders, and before `$B rule add` or acting on an overrule or appeal.
 
 Carry out each ruling after `$B rule add`, then send the `ruling` line. Read [rulings](reference/rulings.md) for States, Replacing, Overrule, Appeals, and Escalate.
 
