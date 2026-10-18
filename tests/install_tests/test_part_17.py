@@ -92,6 +92,7 @@ class Part17Test(OwnershipCase):
     def under_backups(self):
             backups = state_dir(self.home) / "backups"
             return sorted(str(path.relative_to(backups)) for path in backups.rglob("*"))
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
     def test_doctor_exits_0_and_names_another_checkouts_owner_file_of_mode_000_and_install_exits_0(self):
             a, swarm = self.installed_for_grok()
             other = owner_file(self.home, a).with_name("00aa11bb22cc33dd.json")
@@ -117,6 +118,7 @@ class Part17Test(OwnershipCase):
             shutil.rmtree(owners)
             owners.write_text("not a directory\n")
             self.assertEqual(self.doctor(a, 0, "--harness", "grok"), [self.harness_line("grok", "3/3 pstack-t3")])
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
     def test_an_uninstall_whose_manifest_turns_mode_000_before_the_sweep_unlinks_a_second_name_exits_1_with_one_line_and_no_left_line(self):
             a, swarm, backup, raced, aside = self.strand_backup(raising("same_entry", within="drop_backup"), kind="file")
             manifest = legacy_file(self.home)

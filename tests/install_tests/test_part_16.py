@@ -251,6 +251,7 @@ class Part16Test(OwnershipCase):
                 [self.harness_line("grok", "3/3 pstack-t3"), f"{sentence} ({unchecked})"],
             )
             self.assert_stops(checkout, sentence)
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
     def test_a_manifest_of_mode_000_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
             a, swarm = self.installed_for_grok()
             before = snapshot(self.home)
@@ -266,6 +267,7 @@ class Part16Test(OwnershipCase):
             before = snapshot(self.home)
             self.assert_unread(a, legacy_file(self.home), "Is a directory", self.NO_MANIFEST)
             self.assertEqual(snapshot(self.home), before)
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
     def test_this_checkouts_owner_file_of_mode_000_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
             a, swarm = self.installed_for_grok()
             owner = owner_file(self.home, a)
@@ -283,6 +285,7 @@ class Part16Test(OwnershipCase):
             before = snapshot(self.home)
             self.assert_unread(a, owner, "Is a directory", self.NO_CLAIMS)
             self.assertEqual(snapshot(self.home), before)
+    @unittest.skipIf(os.geteuid() == 0, "root reads inside a directory of mode 000")
     def test_an_install_owners_directory_of_mode_000_gives_doctor_the_could_not_be_read_line_at_exit_1_and_stops_install_and_uninstall_with_that_sentence(self):
             a, swarm = self.installed_for_grok()
             owner = owner_file(self.home, a)

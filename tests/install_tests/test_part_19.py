@@ -59,6 +59,7 @@ class Part19Test(OwnershipCase):
     def under_backups(self):
             backups = state_dir(self.home) / "backups"
             return sorted(str(path.relative_to(backups)) for path in backups.rglob("*"))
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file of mode 000")
     def test_an_install_whose_manifest_turns_mode_000_while_a_link_fails_prints_the_skipped_line_and_exits_1_with_the_manifest_line(self):
             self.addCleanup(lambda: legacy_file(self.home).chmod(0o644))
             stopped, manifest = self.failing_link(self.NO_SPACE, "os.chmod(manifest, 0)")

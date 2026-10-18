@@ -150,6 +150,7 @@ class Part20Test(OwnershipCase):
                     f'to drop the row, delete it from "backups" in {legacy_file(self.home)}',
                 ],
             )
+    @unittest.skipIf(os.geteuid() == 0, "root removes a file from a directory of mode 000")
     def test_an_uninstall_whose_install_owners_turns_mode_000_before_its_owner_file_is_removed_exits_1_with_one_could_not_be_removed_line(self):
             a, swarm = self.installed_for_grok()
             owner = owner_file(self.home, a)
@@ -199,6 +200,7 @@ class Part20Test(OwnershipCase):
             self.assertEqual(sorted(os.listdir(state)), ["install-manifest.json", "install-owners"])
             self.assertEqual(os.listdir(state / "install-owners"), [owner_file(self.home, a).name])
             self.assertFalse(os.path.lexists(self.home / ".config"))
+    @unittest.skipIf(os.geteuid() == 0, "root writes in a directory of mode 555")
     def test_an_install_under_a_config_home_whose_dot_dot_follows_a_symlink_succeeds_when_the_directory_its_abspath_spelling_names_cannot_be_written(self):
             a, env, state = self.dot_dot_config()
             other = state_dir(self.home)
