@@ -415,7 +415,7 @@ class LandingTest(LandingTestBase):
             calls = (self.base / "gh-calls").read_text()
             self.assertIn("rules/branches", calls)
 
-    def test_merge_mode_waits_when_both_sources_require_different_unposted_checks(self):
+    def test_merge_mode_waits_when_union_holds_unposted_ruleset_check(self):
         with self.fake_gh():
             posted = [
                 {"name": "test (3.10)", "status": "COMPLETED", "conclusion": "SUCCESS"},

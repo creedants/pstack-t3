@@ -161,7 +161,7 @@ def register_fire(sub):
     for field in ("task", "thread", "branch"):
         p.add_argument(f"--{field}", default="")
     p.add_argument("--timebox", type=int, default=60, help="minutes before the liveness check flags the dish")
-    p.add_argument("--paths", default="", action=Once, help="paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the contract map makes from them when the contract holds one; given once")
+    p.add_argument("--paths", default="", action=Once, help="paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the contract map makes from them when the contract lists generated paths; given once")
     p.add_argument("--mode", help="full, to start the dish in full mode; needs --reason")
     p.add_argument("--reason", help="one line: why the dish runs in full mode")
     p.add_argument("--kind", choices=KINDS,

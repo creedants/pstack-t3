@@ -3,7 +3,7 @@
 - Status json prints mode and trunk and generated and rebuild and map
 - Brigade expands fire paths from the map
 - Required checks union protection and rulesets
-- Queue pauses only when neither source is readable
+- Queue pauses for unreadable required checks only when neither source is readable
 - Tests pin added and overrides and vendor expansions
 - Tests cover protection only and rulesets only and both and neither
 - Build regenerates with no diff
