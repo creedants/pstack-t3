@@ -104,6 +104,19 @@ class LandingTest(LandingTestBase):
         reported = self.land("size", ok=False)
         self.assertIn("other.txt: 7000 tokens over allowance 6000", reported)
 
+    def test_shrink_keeps_a_below_maximum_allowance_lowered_not_deleted(self):
+        (self.work / "data.txt").write_text("x" * 16000)
+        baseline = {"maxFileTokens": 5000, "files": {"data.txt": 4000}, "skip": []}
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        (self.work / "data.txt").write_text("x" * 12000)
+        self.assertIn("size ok", self.land("size", "--shrink"))
+        shrunk = json.loads((self.work / "size-baseline.json").read_text())
+        self.assertEqual(shrunk["files"].get("data.txt"), 3000)
+        self.assertIn("size ok", self.land("size", "--all"))
+
     def test_a_size_init_rerun_without_flags_keeps_the_limit(self):
         self.init_with_limit()
         self.assertIn("size limit 5000 tokens via size-baseline.json", self.land("status"))
