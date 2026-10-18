@@ -1,3 +1,3 @@
 - kind fix
-- `t3/added/landing/scripts/landing_lib/merge.py` reads every page of branch rules with per_page 100 until a short page
-- `tests/landing/test_merge.py` covers a required check only on page two and an unreadable second page
+- `t3/added/landing/scripts/landing_lib/merge.py` reads every page of branch rules with per_page 100 until a short page, up to 50 pages, and returns None after 50 full pages
+- `tests/landing/test_merge.py` covers a required check only on page two, an unreadable second page, and 50 full pages returning None

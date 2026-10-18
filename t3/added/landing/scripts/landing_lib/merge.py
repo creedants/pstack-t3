@@ -35,6 +35,9 @@ BASE_MOVED_WAIT = 2
 ABSENT_CHECKS_GRACE = timedelta(minutes=5)
 
 
+RULESET_MAX_PAGES = 50
+
+
 BLOCKER_QUERY = (
     'def check_name: .name // .context; '
     '[.reviewDecision // "", '
@@ -303,14 +306,13 @@ def _ruleset_contexts(store):
 
     The gh path is repos/{owner}/{repo}/rules/branches/<trunk> with per_page 100.
     gh fills {owner} and {repo} from the checkout, as forge_branch_status already does.
-    Every page is read until a short page.
-    Return a tuple of non-empty strings from rules carrying required status checks when every page exits 0 and each body is a JSON list of dicts or a JSON object holding a rules list of dicts. An endpoint with no required status check rule returns (). Return None on a non-zero gh exit on any page, on stdout that is not valid JSON, on a body that is neither that list nor that object, on a rule that is not a dict, and on a context that is not a non-empty string.
+    Every page is read until a short page, up to 50 pages.
+    Return a tuple of non-empty strings from rules carrying required status checks when every page exits 0 and each body is a JSON list of dicts or a JSON object holding a rules list of dicts. An endpoint with no required status check rule returns (). Return None on a non-zero gh exit on any page, on stdout that is not valid JSON, on a body that is neither that list nor that object, on a rule that is not a dict, on a context that is not a non-empty string, and when 50 full pages arrive with no short page.
     """
     found = []
-    page = 1
     per_page = 100
     base = "repos/{owner}/{repo}/rules/branches/" + store.contract["trunk"]
-    while True:
+    for page in range(1, RULESET_MAX_PAGES + 1):
         result = seam.gh(
             "api",
             f"{base}?per_page={per_page}&page={page}",
@@ -361,9 +363,8 @@ def _ruleset_contexts(store):
                 else:
                     return None
         if len(rules) < per_page:
-            break
-        page += 1
-    return tuple(found)
+            return tuple(found)
+    return None
 
 
 def read_required_contexts(store):

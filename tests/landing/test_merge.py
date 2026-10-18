@@ -488,6 +488,19 @@ class LandingTest(LandingTestBase):
         with mock.patch.object(land, "gh", side_effect=fake_gh):
             self.assertIsNone(land._ruleset_contexts(store))
 
+    def test_ruleset_contexts_returns_none_when_every_page_is_full(self):
+        full = [{"type": "other"} for _ in range(100)]
+        calls = []
+
+        def fake_gh(*args, cwd=None):
+            calls.append(args[1] if len(args) > 1 else "")
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(full), stderr="")
+
+        store = types.SimpleNamespace(contract={"trunk": "main"}, repo=str(self.work))
+        with mock.patch.object(land, "gh", side_effect=fake_gh):
+            self.assertIsNone(land._ruleset_contexts(store))
+        self.assertEqual(len(calls), land.RULESET_MAX_PAGES)
+
     def test_merge_mode_lands_a_green_rollup_whose_check_name_contains_a_quote(self):
         with self.fake_gh():
             posted = [
