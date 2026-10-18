@@ -253,6 +253,19 @@ class LandingTest(LandingTestBase):
         self.assertIn("bounced E1 (r/D1)", reported)
         self.assertIn("adds a grandfathered file fresh.py", reported)
 
+    def test_a_staged_allowance_above_the_contract_maximum_bounces(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit(maximum=4000)
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["files"]["fresh.py"] = 4500
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        sh("git", "add", "size-baseline.json", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("adds a grandfathered file fresh.py", reported)
+
     def test_a_nested_generated_root_lands_over_the_limit(self):
         self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh",
                   "--generated", "build/output", "--max-file-tokens", "5000")

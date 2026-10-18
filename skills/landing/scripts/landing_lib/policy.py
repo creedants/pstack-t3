@@ -536,14 +536,15 @@ def size_report(path, staged, all_files, shrink, baseline):
                     index_raw = None
             else:
                 index_raw = _read_worktree_baseline_raw(baseline_path)
-            problem = seam.refused_policy_change(head_raw, index_raw)
-            if problem:
-                raise seam.LandError(problem)
             try:
                 head_limit = seam.parse_limit(head_raw) if isinstance(head_raw, dict) else stored
             except ValueError as error:
                 raise seam.LandError(str(error)) from error
-            head_max = contract.get("sizeMaxTokens") or head_limit.max_tokens
+            effective = contract.get("sizeMaxTokens") or head_limit.max_tokens
+            problem = seam.refused_policy_change(head_raw, index_raw, effective)
+            if problem:
+                raise seam.LandError(problem)
+            head_max = effective
             skip = tuple(seam.DEFAULT_SKIP) + tuple(head_limit.skip) + tuple(generated) + (baseline_rel,)
             limit = seam.Limit(head_max, skip, dict(head_limit.files))
         else:
