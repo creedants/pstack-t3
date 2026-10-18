@@ -1,0 +1,5 @@
+- kind upkeep
+- `vendor/pstack/` is the `pstack/` tree from the repository in `upstream.json` at 0b8e952052d482ee6de06deebf14d590d77b1b34, and `upstream.json` pins that commit and version 0.15.26
+- between bc1443790cc980d0ea857663260a831299884508 and 0b8e952052d482ee6de06deebf14d590d77b1b34, upstream adds `pstack/skills/create-formal-verification-skill/SKILL.md` and changes `pstack/skills/poteto-help/SKILL.md`, `pstack/README.md`, `pstack/plugin.json`, and `pstack/.cursor-plugin/plugin.json`
+- `t3/overrides/poteto-help/SKILL.md` carries the new upstream row with the `$create-formal-verification-skill` link, `README.md` states all 60 skills, and `t3/overrides.lock.json` records the new `poteto-help/SKILL.md` digest
+- `docs/guide.md` still quotes the doctor count 59/59, so `python3 scripts/build.py` reports the guide count mismatch and leaves `skills/` unregenerated
