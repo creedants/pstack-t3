@@ -1994,6 +1994,12 @@ class SizeLimitBridgeTest(unittest.TestCase):
         candidate = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": ["fresh.py"]}
         self.assertEqual(sizes.refused_policy_change(base, candidate), "size baseline cannot be read")
 
+    def test_a_candidate_negative_allowance_is_refused_as_unreadable(self):
+        sizes = size_limit.load_sizes()
+        base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}
+        candidate = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {"bad.py": -1}}
+        self.assertEqual(sizes.refused_policy_change(base, candidate), "size baseline cannot be read")
+
     def test_a_new_allowance_above_the_effective_ceiling_is_refused(self):
         sizes = size_limit.load_sizes()
         base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}

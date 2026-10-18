@@ -335,6 +335,19 @@ class LandingTest(LandingTestBase):
                   "--lease", "L1", "--reviewer", REVIEWER)
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
 
+    def test_an_unparsable_baseline_bounces(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        sha = self.worker("w1", {"size-baseline.json": "{bad"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1", reported)
+        self.assertIn("cannot be read", reported)
+
     def test_seed_omits_a_skipped_over_limit_file(self):
         (self.work / "vendor").mkdir(exist_ok=True)
         (self.work / "vendor" / "big.py").write_text("x" * 20004)
