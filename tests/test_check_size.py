@@ -31,10 +31,6 @@ def setUpModule():
 
 ROOT = Path(__file__).resolve().parents[1]
 
-ROLES_LIB = sorted(
-    (path.relative_to(ROOT).as_posix() for path in (ROOT / "t3/scripts/_roles").glob("*.py")),
-)
-
 COPIED = (
     "scripts/check.py",
     "scripts/_check/__init__.py",
@@ -51,7 +47,6 @@ COPIED = (
     "scripts/_check/wording.py",
     "scripts/size_limit.py",
     "t3/scripts/roles.py",
-    *ROLES_LIB,
     "t3/added/landing/scripts/landing_lib/sizes.py",
     "tests/landing/support.py",
 )
