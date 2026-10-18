@@ -460,7 +460,7 @@ def seed_baseline(path, maximum, sizes, skip=None):
 
 
 def shrink_baseline(path, sizes, maximum=None):
-    """Lower stored allowances that fell. Never raises one. Drops entries whose file fell to the maximum or less."""
+    """Lower stored allowances that fell. Never raises one. Drops entries whose stored allowance sat above the maximum once the file fits."""
     stored = seam.load_baseline_file(str(path))
     raw = _read_worktree_baseline_raw(path)
     kept = raw.get("enabled") is True if isinstance(raw, dict) else None
