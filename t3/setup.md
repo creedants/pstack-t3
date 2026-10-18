@@ -45,8 +45,8 @@ The budget caps the reasoning option (`effort`, `reasoningEffort`, `reasoning_ef
 
 **Ask for a mode.** Use the host's question tool. Name the current `mode` and `modeSource` from step 2. Offer these options, in this order.
 
-- `full — recommended when no provider is near its limit`
-- `light`
+- `light` (recommended)
+- `full`
 
 Store the chosen value beside the budget. When the write target is the project file, name the current `escalate` from `show`. `null` means none. Suggest `**/migrations/**` plus that repository's own lock and installer scripts. In this repository those scripts are `t3/added/landing/scripts/land.py`, `t3/added/brigade/scripts/brigade.py`, and `scripts/install.py`. Do not suggest those three paths for any other repository. Pass one `--escalate` per pattern the user keeps. Omitting both escalate flags leaves a stored project list in place. `--clear-escalate` removes it.
 
@@ -67,7 +67,7 @@ python3 <runtime>/scripts/roles.py write --catalog /tmp/pstack-t3-catalog.json -
 
 The provider, model, and option IDs above are examples of the `--set` shape. Use IDs from step 1. The `exclude` key refuses a model. Add an object entry such as `{"model": "grok-4.7-build-fast"}` to refuse a fast Grok id, or `{"model": "grok-4.7", "options": {"fastMode": true}}` to refuse by declared option, per [the runtime's Excluded seats](../pstack-runtime/SKILL.md#excluded-seats). `write` refuses a seat the exclude list refuses, even with `--force`, and `validate` lists it and exits 1. Write `contextWindow` only for a model whose catalog entry offers it. Cursor's Claude 5 models still offer it. T3's native Claude 5 models do not.
 
-- A default write keeps the stored roles, budget, mode, and unknown top-level keys, so re-runs are idempotent. `--keep` is accepted and changes nothing. Pass `--replace` only when the user asks to start over; it rewrites the roles, budget, and mode from the flags, keeps the stored allow list and a stored project `escalate` list, and writes `<file>.bak` beside it first when the file exists. A write refuses an invalid-JSON or non-UTF-8 target and writes nothing, naming the file and the error. A write refuses a stored `roles` value that is not an object, including with `--replace`, and leaves the file untouched. A user write with no stored mode and no `--mode` stores `full`. A project write with no stored mode and no `--mode` omits the key. Omitting `--escalate` leaves a stored project list in place.
+- A default write keeps the stored roles, budget, mode, and unknown top-level keys, so re-runs are idempotent. `--keep` is accepted and changes nothing. Pass `--replace` only when the user asks to start over; it rewrites the roles, budget, and mode from the flags, keeps the stored allow list and a stored project `escalate` list, and writes `<file>.bak` beside it first when the file exists. A write refuses an invalid-JSON or non-UTF-8 target and writes nothing, naming the file and the error. A write refuses a stored `roles` value that is not an object, including with `--replace`, and leaves the file untouched. A user write with no stored mode and no `--mode` stores `light`. A project write with no stored mode and no `--mode` omits the key. Omitting `--escalate` leaves a stored project list in place.
 - With no excluded seat, it runs `validate`'s checks on the roles it is about to store. When they list a problem, it prints each one and writes nothing unless `--force` is passed. Fix each problem and rerun. Do not pass `--force` unless the user asks. Write refuses a seat on a metered OpenCode model unless that same file's allow list names the full model id or `--force` is passed. Pass the allow flag on write with that id and rerun.
 - Add `--project` to write `.pstack/t3-roles.json` for this repository instead.
 - A user-level write also saves the catalog snapshot to `~/.config/pstack-t3/catalog.json`, which `roles.py show` uses later to resolve fallbacks.

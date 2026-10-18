@@ -10,7 +10,7 @@ The setting is on `main`.
 
 ### Where it lives
 
-The setting is one key named `mode` with the values `full` and `light`. The user and project levels live in the files that already hold `budget`. The coordinator level lives in `restaurant.json`. A missing key reads as `full`.
+The setting is one key named `mode` with the values `full` and `light`. The user and project levels live in the files that already hold `budget`. The coordinator level lives in `restaurant.json`. A missing key reads as `light`.
 
 | Level | Where | Written by |
 | --- | --- | --- |
@@ -22,7 +22,7 @@ The setting is one key named `mode` with the values `full` and `light`. The user
 
 ### One effective mode
 
-The highest level present wins. The order is brief, then session, then coordinator, then project, then user, then `full`. `roles.py` owns this order in `effective_mode` in `t3/scripts/roles.py`.
+The highest level present wins. The order is brief, then session, then coordinator, then project, then user, then `light`. `roles.py` owns this order in `effective_mode` in `t3/scripts/roles.py`.
 
 `roles.py show` and `roles.py mode` both accept `--brief-mode`, `--session-mode`, and `--coordinator-mode`. Each takes `full` or `light`. `show` prints `mode` and `modeSource` keys. `mode` prints `Mode:` and `Mode source:` lines. `show` then resolves every seat under that mode.
 
@@ -67,7 +67,7 @@ The escalation is durable. When rule 1, 2, or 3 first fires, `brigade.py` append
 
 ### How the user picks it
 
-- At setup. `setup-pstack` asks for the mode right after the budget, with the host question tool, and names the current value. The options are `full`, recommended when no provider is near its limit, and `light`. `roles.py write --mode` saves it.
+- At setup. `setup-pstack` asks for the mode right after the budget, with the host question tool, and names the current value. The options are `light` (recommended) and `full`. `roles.py write --mode` saves it.
 - When opening a coordinator. The brigade Open step asks for the mode with the reporting level. `brigade.py open --mode light|full` records it in `restaurant.json`. Leaving it out records nothing. The project and user files then decide.
 - For one session. `$poteto-mode light` or "use light mode" in a request sets the session level. "full mode" sets it back.
 
