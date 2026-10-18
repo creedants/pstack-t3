@@ -5,7 +5,7 @@ Orders the fragments by the commit that added each one, writes their bullets
 under a new `## X.Y.Z (YYYY-MM-DD)` heading, and deletes the fragments. It
 never stages, commits, tags, pushes, or calls gh. It prints those steps.
 
-When the changelog would pass 5000 tokens it moves older versions into docs/changelog/ and leaves an ## Archive link block. When the new section and the Archive block cannot fit together it archives the new section too and leaves only the header and the Archive block. Rebase exactly the inline links `[label](dest)` whose dest is a relative path: not empty, no scheme or colon, not starting with `/`, `#`, `<`, or `../../`. The label may contain code spans. Archived bytes equal the original section except for rebased relative link destinations.
+When the changelog would pass 5000 tokens it moves older versions into docs/changelog/ and leaves an ## Archive link block. If the new section and Archive block cannot fit together it archives the new section too, leaving only the header and Archive block. Archived copies rebase eligible LINK_RE matches. The matcher handles single-line links and images. Labels may hold code spans but no `]`. Relative destinations are nonempty, lack a colon, and do not start with `/`, `#`, `<`, or `../../`. Archived bytes equal the original section except for rebased relative link destinations.
 
 A failed write or delete, or a SIGINT, SIGTERM, or SIGHUP, puts CHANGELOG.md and every fragment back
 as the script read them. The script then checks them and prints `nothing changed` only when they match.
