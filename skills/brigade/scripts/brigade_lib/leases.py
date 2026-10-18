@@ -230,7 +230,7 @@ def fragment_for(meta, branch):
 def with_fragment(paths, fragment):
     """The leased paths with the change-note fragment appended, or unchanged when there is none.
 
-    A fragment already covered stays single.
+    A fragment already listed verbatim is not appended again.
     """
     if not paths or not fragment:
         return paths
@@ -525,7 +525,7 @@ def fragment_lines(restaurant, ident, branch):
 
     land.py cannot add paths to a lease. A claim made here would stay unrecorded when a drop or a new owner
     wins the store between the claim and its record. None when the store records no change-note
-    directory, or when the lease already covers the fragment.
+    directory, or when the item's recorded paths already list the fragment verbatim.
     """
     fragment = fragment_for(restaurant.meta, branch)
     if fragment is None:
