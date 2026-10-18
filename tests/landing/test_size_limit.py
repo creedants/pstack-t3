@@ -445,3 +445,97 @@ class LandingTest(LandingTestBase):
         self.assertIn("size ok", self.land("size"))
         baseline = json.loads((self.work / "size-baseline.json").read_text())
         self.assertNotIn("vendor/big.py", baseline["files"])
+
+    def test_queue_refuses_disabling_enabled_baseline_under_contract(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["enabled"] = True
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        disabled = dict(baseline)
+        disabled["enabled"] = False
+        sha = self.worker("w1", {"size-baseline.json": json.dumps(disabled, indent=2, sort_keys=True) + "\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1", reported)
+        self.assertIn("removes enabled policy", reported)
+
+    def test_queue_refuses_unmarking_enabled_baseline_under_contract(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["enabled"] = True
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        unmarked = {key: value for key, value in baseline.items() if key != "enabled"}
+        sha = self.worker("w1", {"size-baseline.json": json.dumps(unmarked, indent=2, sort_keys=True) + "\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1", reported)
+        self.assertIn("removes enabled policy", reported)
+
+    def test_queue_protection_remains_after_refused_opt_out(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["enabled"] = True
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        disabled = dict(baseline)
+        disabled["enabled"] = False
+        sha = self.worker("w1", {"size-baseline.json": json.dumps(disabled, indent=2, sort_keys=True) + "\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertIn("removes enabled policy", self.land("land"))
+        trunk_baseline = json.loads(sh("git", "show", "origin/main:size-baseline.json", cwd=self.work))
+        self.assertTrue(trunk_baseline.get("enabled") is True)
+        oversized = self.worker("w2", {"big.py": "x" * 20004})
+        self.land("lease", "claim", "--holder", "r/D2", "--paths", "big.py")
+        self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", oversized,
+                  "--lease", "L2", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E2", reported)
+        self.assertIn("big.py", reported)
+
+    def test_staged_refuses_disabling_enabled_baseline_under_contract(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["enabled"] = True
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        disabled = dict(baseline)
+        disabled["enabled"] = False
+        (self.work / "size-baseline.json").write_text(json.dumps(disabled, indent=2, sort_keys=True) + "\n")
+        sh("git", "add", "size-baseline.json", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("removes enabled policy", reported)
+
+    def test_staged_refuses_unmarking_enabled_baseline_under_contract(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["enabled"] = True
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        unmarked = {key: value for key, value in baseline.items() if key != "enabled"}
+        (self.work / "size-baseline.json").write_text(json.dumps(unmarked, indent=2, sort_keys=True) + "\n")
+        sh("git", "add", "size-baseline.json", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("removes enabled policy", reported)

@@ -14,3 +14,10 @@
 - while the size limit is on, the queue bounces a candidate baseline that does not parse with size baseline cannot be read
 - when HEAD holds a baseline, the staged check refuses an index baseline that does not parse with size baseline cannot be read
 - while the size limit is on and the trunk tip holds a baseline, the queue refuses a candidate file allowance below zero with size baseline cannot be read
+- the trusted policy records whether the committed baseline enabled it
+- while the contract sets a maximum the queue and staged and bridge comparisons keep the committed enabled marker when it is true
+- while the trunk tip cannot be read but HEAD holds an enabled baseline the bridge reports size baseline at trunk tip cannot be read
+- while the trunk tip cannot be read the bridge never reads the candidate baseline to decide enablement
+- without HEAD and without a contract maximum the bridge stays off even when the candidate enables itself
+- without HEAD but with a contract maximum the bridge reports size baseline at trunk tip cannot be read
+- the queue and the staged check and the bridge refuse a candidate that disables or unmarks a committed enabled baseline while the contract sets a maximum

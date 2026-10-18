@@ -1946,17 +1946,17 @@ class SizeLimitBridgeTest(unittest.TestCase):
         self.assertEqual(size_limit.findings(self._repo()), [])
 
     def test_a_file_over_the_baseline_maximum_is_reported(self):
-        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True}, [("big.py", 24)])
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True}, [("big.py", 24)])
         self.assertEqual(size_limit.findings(root),
                          ["size limit: big.py: 6 tokens over allowance 5 for code; "
                           "code moves one responsibility to a sibling module"])
 
     def test_a_file_within_its_baseline_allowance_passes(self):
-        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {"big.py": 6}, "enabled": True}, [("big.py", 24)])
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {"big.py": 6}, "enabled": True}, [("big.py", 24)])
         self.assertEqual(size_limit.findings(root), [])
 
     def test_a_skipped_file_over_the_maximum_passes(self):
-        root = self._repo({"maxFileTokens": 5, "skip": ["vendor/*"], "files": {}, "enabled": True},
+        root = self._git_repo({"maxFileTokens": 5, "skip": ["vendor/*"], "files": {}, "enabled": True},
                           [("vendor/huge.py", 400)])
         self.assertEqual(size_limit.findings(root), [])
 
@@ -1975,12 +1975,12 @@ class SizeLimitBridgeTest(unittest.TestCase):
         self.assertEqual(size_limit.findings(root), [])
 
     def test_an_uppercase_image_and_nested_lockfile_over_the_maximum_pass(self):
-        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
                           [("photo.PNG", 400), ("diagram.svg", 400), ("web/package-lock.json", 400)])
         self.assertEqual(size_limit.findings(root), [])
 
     def test_a_nested_skip_root_over_the_maximum_passes(self):
-        root = self._repo({"maxFileTokens": 5, "skip": ["build/output"], "files": {}, "enabled": True},
+        root = self._git_repo({"maxFileTokens": 5, "skip": ["build/output"], "files": {}, "enabled": True},
                           [("build/output/big.py", 400)])
         self.assertEqual(size_limit.findings(root), [])
 
@@ -2102,3 +2102,67 @@ class SizeLimitBridgeTest(unittest.TestCase):
         base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {"small.py": 6000}}
         candidate = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}
         self.assertIsNone(sizes.refused_policy_change(base, candidate, 5000))
+
+    def _detach_trunk(self, root):
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "LC_ALL": "C"}
+        subprocess.run(["git", "checkout", "-q", "--detach", "HEAD"], cwd=root, env=env, check=True)
+        subprocess.run(["git", "branch", "-q", "-D", "main"], cwd=root, env=env, check=True)
+
+    def test_a_missing_trunk_disabled_candidate_fails_closed(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        self._detach_trunk(root)
+        (root / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5, "skip": [], "files": {}, "enabled": False}))
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("size baseline at trunk tip cannot be read", findings[0])
+
+    def test_a_missing_trunk_deleted_candidate_fails_closed(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        self._detach_trunk(root)
+        (root / "size-baseline.json").unlink()
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("size baseline at trunk tip cannot be read", findings[0])
+
+    def test_a_missing_trunk_malformed_candidate_fails_closed(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        self._detach_trunk(root)
+        (root / "size-baseline.json").write_text("{broken")
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("size baseline at trunk tip cannot be read", findings[0])
+
+    def test_an_enabled_candidate_alone_does_not_enable_enforcement(self):
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True}, [("big.py", 24)])
+        self.assertEqual(size_limit.findings(root), [])
+
+    def test_a_missing_head_with_a_contract_fails_closed(self):
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True}, [("big.py", 24)])
+        with mock.patch.object(size_limit, "read_contract", return_value={"sizeMaxTokens": 5}):
+            findings = size_limit.findings(root)
+        self.assertEqual(findings, ["size-baseline.json: size baseline at trunk tip cannot be read"])
+
+    def test_a_contract_preserves_enabled_marker_on_disable(self):
+        root = self._git_repo({"maxFileTokens": 5000, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        (root / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5000, "skip": [], "files": {}, "enabled": False}))
+        with mock.patch.object(size_limit, "read_contract", return_value={"sizeMaxTokens": 5000}):
+            findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("removes enabled policy", findings[0])
+
+    def test_a_contract_preserves_enabled_marker_on_unmark(self):
+        root = self._git_repo({"maxFileTokens": 5000, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        (root / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5000, "skip": [], "files": {}}))
+        with mock.patch.object(size_limit, "read_contract", return_value={"sizeMaxTokens": 5000}):
+            findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("removes enabled policy", findings[0])

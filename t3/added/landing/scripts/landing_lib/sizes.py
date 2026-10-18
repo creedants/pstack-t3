@@ -64,6 +64,7 @@ class TrustedPolicy:
     enabled: bool
     limit: Limit
     error: object = None
+    committed_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -178,34 +179,36 @@ def resolve_trusted(contract_maximum, base_raw, base_missing, base_error=None):
     if contract_on:
         effective = contract_maximum
         if base_missing:
-            return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}), None)
+            return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}), None, False)
         if base_raw is None:
             detail = f": {base_error}" if base_error else ""
             return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}),
-                                 f"size baseline at trunk tip cannot be read{detail}")
+                                 f"size baseline at trunk tip cannot be read{detail}", False)
         if not isinstance(base_raw, dict):
             return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}),
-                                 "size baseline at trunk tip cannot be read: baseline must be a JSON object")
+                                 "size baseline at trunk tip cannot be read: baseline must be a JSON object",
+                                 False)
         try:
             parsed = parse_limit(base_raw)
         except ValueError as error:
             return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}),
-                                 f"size baseline at trunk tip cannot be read: {error}")
-        return TrustedPolicy(True, Limit(effective, parsed.skip, parsed.files), None)
+                                 f"size baseline at trunk tip cannot be read: {error}", False)
+        return TrustedPolicy(True, Limit(effective, parsed.skip, parsed.files), None,
+                             baseline_enabled(base_raw))
     if base_missing:
-        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None, False)
     if base_raw is None:
-        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None, False)
     if not isinstance(base_raw, dict):
-        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None, False)
     if not baseline_enabled(base_raw):
-        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None, False)
     try:
         parsed = parse_limit(base_raw)
     except ValueError as error:
         return TrustedPolicy(True, Limit(DEFAULT_MAX_TOKENS, (), {}),
-                             f"size baseline at trunk tip cannot be read: {error}")
-    return TrustedPolicy(True, parsed, None)
+                             f"size baseline at trunk tip cannot be read: {error}", True)
+    return TrustedPolicy(True, parsed, None, True)
 
 
 def refused_policy_change(base_raw, cand_raw, ceiling=None):

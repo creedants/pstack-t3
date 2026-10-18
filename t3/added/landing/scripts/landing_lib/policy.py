@@ -576,6 +576,8 @@ def size_report(path, staged, all_files, shrink, baseline):
                         raw_max = trusted.limit.max_tokens
                     base_for_compare = {"maxFileTokens": raw_max,
                                         "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+                    if trusted.committed_enabled:
+                        base_for_compare["enabled"] = True
                 else:
                     base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
                                         "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
@@ -666,6 +668,8 @@ def check_candidate_size(store, base, candidate):
             raw_max = effective
         base_for_compare = {"maxFileTokens": raw_max,
                             "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+        if trusted.committed_enabled:
+            base_for_compare["enabled"] = True
     else:
         base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
                             "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}

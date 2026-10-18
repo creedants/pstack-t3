@@ -135,41 +135,14 @@ def findings(root):
         head = _git(root, "rev-parse", "--verify", "HEAD")
         head_exists = head is not None and head.returncode == 0
         if not head_exists:
-            if baseline_path.is_file():
-                try:
-                    stored = sizes.load_baseline_file(str(baseline_path))
-                except ValueError:
-                    if contract_on:
-                        return [f"{baseline_rel}: size baseline cannot be read"]
-                    return []
-                try:
-                    work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                    work_raw = None
-                if not contract_on and not sizes.baseline_enabled(work_raw):
-                    return []
-                limit = sizes.Limit(contract_max_raw if contract_on else stored.max_tokens,
-                                    tuple(stored.skip), dict(stored.files))
-            elif contract_on:
-                limit = sizes.Limit(contract_max_raw, sizes.DEFAULT_SKIP, {})
-            else:
-                return []
-        else:
-            work_enabled = False
-            work_invalid = False
-            if baseline_path.is_file():
-                try:
-                    work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                    work_invalid = True
-                    work_raw = None
-                else:
-                    work_enabled = sizes.baseline_enabled(work_raw)
-            if contract_on or work_enabled:
+            if contract_on:
                 return [f"{baseline_rel}: size baseline at trunk tip cannot be read"]
-            if work_invalid and contract_on:
-                return [f"{baseline_rel}: size baseline cannot be read"]
             return []
+        head_raw, head_missing = _show_at(root, "HEAD", baseline_rel)
+        trusted_head = sizes.resolve_trusted(contract_max_raw, head_raw, head_missing, None)
+        if trusted_head.enabled:
+            return [f"{baseline_rel}: size baseline at trunk tip cannot be read"]
+        return []
     else:
         base_raw, missing = _show_at(root, base, baseline_rel)
         trusted = sizes.resolve_trusted(contract_max_raw, base_raw, missing, None)
@@ -194,6 +167,8 @@ def findings(root):
                     raw_max = trusted.limit.max_tokens
                 base_for_compare = {"maxFileTokens": raw_max,
                                     "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+                if trusted.committed_enabled:
+                    base_for_compare["enabled"] = True
             else:
                 base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
                                     "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
