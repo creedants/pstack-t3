@@ -878,7 +878,7 @@ class StatusTest(ActivityCase):
         fixture.thread("mcp:threadmarker-previous", turns=(("failed", 120, 110),))
         page = page_of(fixture)
         own = page.coordinator
-        self.assertEqual((own.label, own.model, own.provider, own.open_seconds, own.seconds), ("coordinator", "model-c", "Claude", None, 1500))
+        self.assertEqual((own.label, own.model, own.open_seconds, own.seconds), ("coordinator", "model-c", None, 1500))
         self.assertEqual([(span.x, span.w, span.status.value) for span in own.spans], [(333, 56, "failed"), (667, 55, "done"), (972, 28, "done")])
         self.assertEqual((page.totals, page.groups, page.legend), (MOD["Totals"](0, 0, 0, 0), (), ()))
 
@@ -941,15 +941,76 @@ class PageTest(ActivityCase):
         page = page_of(fixture)
         self.assertEqual((page.groups[0].item.summary, labels(page)), ("Fix sign-in for today", {"D7": [(0, "worker"), (1, "mail helper")]}))
 
-    def test_provider_names_come_from_the_table_and_any_other_driver_reads_other(self):
+    def test_model_names_come_from_each_row_with_counts_count_desc_then_name(self):
         fixture = self.fixture
         fixture.unit("D7", thread=worker(1))
-        fixture.thread(worker(1), provider="codex", turns=(("completed", 90, 80),))
-        for number, provider in enumerate(("acct-homemarker-instance", "acct-homemarker-instance", "grok", "cursor", "opencode", "claudeAgent", "Codex")):
-            fixture.thread(native(number), provider=provider, parent=worker(1), delegation=("completed", 70, 60))
+        fixture.thread(worker(1), model="model-b", turns=(("completed", 90, 80),))
+        for number, model in enumerate(("model-a", "model-a", "model-a", "model-b", "model-c", "model-d", "model-e")):
+            fixture.thread(native(number), model=model, parent=worker(1), delegation=("completed", 70, 60))
         page = page_of(fixture)
-        self.assertEqual(page.legend, (("Other", 3), ("Claude", 1), ("Codex", 1), ("Cursor", 1), ("Grok", 1), ("OpenCode", 1)))
-        self.assertEqual(sorted({row.provider for row in page.groups[0].rows}), ["Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"])
+        self.assertEqual(page.legend, (("model-a", 3), ("model-b", 2), ("model-c", 1), ("model-d", 1), ("model-e", 1)))
+        self.assertEqual(sorted({row.model for row in page.groups[0].rows}), ["model-a", "model-b", "model-c", "model-d", "model-e"])
+
+    def test_same_model_different_providers_share_lane_color_not_provider_color(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), provider="claudeAgent", model="model-a", turns=(("completed", 90, 80),))
+        fixture.thread(delegated(worker(1), "helper-task"), provider="codex", model="model-a", parent=worker(1), turns=(("completed", 70, 60),))
+        page = page_of(fixture)
+        self.assertEqual(page.legend, (("model-a", 2),))
+        data = MOD["wire"](page)
+        self.assertEqual(data["P"], [["model-a", MOD["model_slot"]("model-a"), 2]])
+        self.assertEqual({line[3] for _, lines in data["G"] for line in lines}, {MOD["model_slot"]("model-a")})
+
+    def test_different_models_with_different_slots_get_different_lane_colors_not_one_color(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), model="model-a", turns=(("completed", 90, 80),))
+        fixture.thread(delegated(worker(1), "helper-task"), model="model-b", parent=worker(1), turns=(("completed", 70, 60),))
+        page = page_of(fixture)
+        self.assertEqual(page.legend, (("model-a", 1), ("model-b", 1)))
+        self.assertNotEqual(MOD["model_slot"]("model-a"), MOD["model_slot"]("model-b"))
+        data = MOD["wire"](page)
+        self.assertEqual({line[3] for _, lines in data["G"] for line in lines}, {MOD["model_slot"]("model-a"), MOD["model_slot"]("model-b")})
+
+    def test_same_model_keeps_slot_across_model_sets_not_legend_index(self):
+        first = Fixture(self.root / "first")
+        first.unit("D7", thread=worker(1))
+        first.thread(worker(1), model="model-a", turns=(("completed", 90, 80),))
+        first.thread(native(1), model="model-a", parent=worker(1), delegation=("completed", 70, 60))
+        first.thread(native(2), model="model-b", parent=worker(1), delegation=("completed", 70, 60))
+        second = Fixture(self.root / "second")
+        second.unit("D7", thread=worker(1))
+        second.thread(worker(1), model="model-a", turns=(("completed", 90, 80),))
+        second.thread(native(1), model="model-b", parent=worker(1), delegation=("completed", 70, 60))
+        second.thread(native(2), model="model-b", parent=worker(1), delegation=("completed", 70, 60))
+        first_page, second_page = page_of(first), page_of(second)
+        self.assertEqual(first_page.legend, (("model-a", 2), ("model-b", 1)))
+        self.assertEqual(second_page.legend, (("model-b", 2), ("model-a", 1)))
+        first_data, second_data = MOD["wire"](first_page), MOD["wire"](second_page)
+        self.assertEqual([slot for name, slot, _ in first_data["P"] if name == "model-a"], [MOD["model_slot"]("model-a")])
+        self.assertEqual([slot for name, slot, _ in second_data["P"] if name == "model-a"], [MOD["model_slot"]("model-a")])
+        first_slots = {line[3] for _, lines in first_data["G"] for line in lines if first_data["M"][line[2]] == "model-a"}
+        second_slots = {line[3] for _, lines in second_data["G"] for line in lines if second_data["M"][line[2]] == "model-a"}
+        self.assertEqual((first_slots, second_slots), ({MOD["model_slot"]("model-a")}, {MOD["model_slot"]("model-a")}))
+
+    def test_hidden_and_missing_models_share_other_slot_no_named_model_uses_it(self):
+        fixture = self.fixture
+        fixture.unit("D7", thread=worker(1))
+        fixture.thread(worker(1), model="model-a", turns=(("completed", 90, 80),))
+        fixture.thread(native(1), model=worker(2), parent=worker(1), delegation=("completed", 70, 60))
+        fixture.thread(native(2), model="claudeAgent/", parent=worker(1), delegation=("completed", 70, 60))
+        page = page_of(fixture)
+        self.assertEqual(page.legend, (("other model", 2), ("model-a", 1)))
+        data = MOD["wire"](page)
+        for name, slot, _ in data["P"]:
+            self.assertEqual(slot, MOD["model_slot"](name))
+        self.assertEqual(MOD["model_slot"]("other model"), MOD["OTHER_SLOT"])
+        for name in ("model-a", "model-b", "model-c", "model-d", "model-e"):
+            self.assertNotEqual(MOD["model_slot"](name), MOD["OTHER_SLOT"])
+        other_lines = [line for _, lines in data["G"] for line in lines if data["M"][line[2]] == "other model"]
+        self.assertEqual(len(other_lines), 2)
+        self.assertEqual({line[3] for line in other_lines}, {MOD["OTHER_SLOT"]})
 
     def test_parent_with_no_turn_in_the_window_has_a_row_with_no_bar_and_only_its_child_is_counted(self):
         fixture = self.fixture
@@ -960,7 +1021,7 @@ class PageTest(ActivityCase):
         parent, child = page.groups[0].rows
         self.assertEqual((parent.depth, parent.label, parent.status.value, parent.seconds, parent.spans, parent.stands_for), (0, "worker", "done", 0, (), 0))
         self.assertEqual((child.depth, child.label, [(span.x, span.w) for span in child.spans], child.stands_for), (1, "helper", [(889, 55)], 1))
-        self.assertEqual((page.totals, page.legend), (MOD["Totals"](running=0, agents=0, subagents=1, failed=1), (("Claude", 1),)))
+        self.assertEqual((page.totals, page.legend), (MOD["Totals"](running=0, agents=0, subagents=1, failed=1), (("model-a", 1),)))
         self.assertEqual((page.groups[0].agents, page.groups[0].subagents), (0, 1))
         self.assertEqual([line[6:] for line in MOD["wire"](page)["G"][0][1]], [[[], 0], [[889, 55, 2]]])
         self.assertIn("  D7   working   1 sub-agent, 10m at work", MOD["render_text"](page, CLEAN).split("\n"))
@@ -1396,7 +1457,7 @@ def populate(fixture, units, agents, running=0, failed=0, heavy=False, in_flight
 
 def row(label, depth=0, status="done", spans=((0, 10, "done"),), open_seconds=None, stands_for=1, model="model-a"):
     bars = tuple(MOD["Span"](x, w, MOD["Status"](kind)) for x, w, kind in spans)
-    return MOD["Row"](depth, label, model, "Claude", MOD["Status"](status), 60, bars, open_seconds, stands_for)
+    return MOD["Row"](depth, label, model, MOD["Status"](status), 60, bars, open_seconds, stands_for)
 
 
 def item(ident, in_flight=True, summary="summary", pr="", no_link=""):
@@ -1410,7 +1471,7 @@ def group(of, *rows):
 def page(*groups, items=(), coordinator=None, hidden=None, name="kit"):
     rows = [each for one in groups for each in one.rows]
     totals = MOD["Totals"](sum(each.open_seconds is not None for each in rows), sum(each.stands_for for each in rows), 0, 0)
-    return MOD["Page"](name, MOD["Window"](0.0, 10800.0), totals, (("Claude", totals.agents),), coordinator, tuple(groups), tuple(items), hidden or MOD["Hidden"]())
+    return MOD["Page"](name, MOD["Window"](0.0, 10800.0), totals, (("model-a", totals.agents),), coordinator, tuple(groups), tuple(items), hidden or MOD["Hidden"]())
 
 
 def drawn(folded):
@@ -1453,7 +1514,7 @@ class FoldTest(ActivityCase):
             "D1": [(0, "1 agent, 3 sub-agents", 4)]})
         self.assertEqual(folded.groups[7].item, MOD["Item"]("D1", "", "merged", "", "", False))
         summary = folded.groups[6].rows[0]
-        self.assertEqual((summary.status.value, summary.seconds, summary.open_seconds, summary.model, summary.provider), ("done", 180, None, "model-a", "Claude"))
+        self.assertEqual((summary.status.value, summary.seconds, summary.open_seconds, summary.model), ("done", 180, None, "model-a"))
         self.assertEqual([(span.x, span.w, span.status.value) for span in summary.spans], [(167, 11, "done"), (183, 3, "done"), (189, 3, "failed")])
         self.assertEqual((folded.fold, folded.totals, folded.legend), (1, unfolded.totals, unfolded.legend))
         self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["3 merged or dropped work items with no agent running, queued, or waiting are each shown as one row."])
@@ -1464,7 +1525,7 @@ class FoldTest(ActivityCase):
         summary = MOD["summary"](rows, 1, "3 sub-agents")
         self.assertEqual([(span.x, span.w, span.status.value) for span in summary.spans],
                          [(0, 15, "done"), (100, 24, "done"), (40, 15, "failed"), (300, 5, "failed")])
-        self.assertEqual((summary.depth, summary.label, summary.model, summary.provider, summary.seconds, summary.stands_for), (1, "3 sub-agents", "", "Claude", 180, 3))
+        self.assertEqual((summary.depth, summary.label, summary.model, summary.seconds, summary.stands_for), (1, "3 sub-agents", "", 180, 3))
 
     def test_fold_quiet_subagents_makes_one_row_of_the_done_and_stopped_rows_below_a_top_row_and_keeps_the_other_rows_before_it(self):
         busy_rows = [row("worker", status="failed"), row("a", depth=1), row("b", depth=1, status="running", open_seconds=5), row("b1", depth=2),
@@ -1591,6 +1652,7 @@ class FoldTest(ActivityCase):
         self.assertEqual((third.item.summary, third.item.pr), ('"' * 5 + "…", ""))
         self.assertEqual((fourth.item.summary, fourth.item.pr), ("s" * 33 + "…", "https://example.test/?" + "&" * 13))
         self.assertEqual((first.rows[0].label, first.rows[0].model, folded.name), ("é" * 8 + "…", "m" * 21 + "…", "𝔸" * 8 + "…"))
+        self.assertEqual(MOD["wire"](folded)["G"][0][1][0][3], MOD["model_slot"]("m" * 40))
         self.assertEqual(folded.items, (first.item, second.item, third.item, fourth.item))
         self.assertEqual([each.no_link for each in folded.items], ["cut", "", "cut", ""])
         self.assertEqual(MOD["notes"](folded, MOD["items_of"](folded)), ["2 pull request links are not shown, because the page is at its size limit. Use a larger --max-bytes to see more."])
@@ -1865,13 +1927,15 @@ class DocumentTest(OutputCase):
         self.assertEqual(sorted(data), ["G", "I", "M", "N", "P", "S", "c", "k", "n", "v", "w"])
         self.assertEqual((data["v"], data["c"], data["n"], data["w"][1]), (1, "kit", [2, 2, 4, 1], 10800))
         self.assertEqual(data["S"], ["running", "queued", "waiting", "done", "failed", "stopped", "unknown"])
-        self.assertEqual(data["P"], [["Claude", 1, 3], ["Codex", 2, 2], ["Grok", 3, 1]])
+        self.assertEqual(data["P"], [["model-a", 1, 3], ["model-b", 3, 2], ["model-c", 4, 1]])
+        for name, slot, _ in data["P"]:
+            self.assertEqual(slot, MOD["model_slot"](name))
         self.assertEqual(data["M"], ["model-c", "model-a", "model-b"])
         self.assertEqual(data["I"], [["D6", "Queue fix", "landing", "warn", PR6, 1], ["D7", "Agent activity page", "in review", "info", PR7, 1],
                                      ["D5", "Old work", "merged", "", "", 0]])
         self.assertEqual([index for index, _ in data["G"]], [1, 2, -1])
         self.assertEqual([line[:5] + line[7:8] for line in data["G"][0][1]],
-                         [[0, "worker", 1, 0, 0, 1], [1, "architect runner 2", 2, 1, 0, 1], [2, "spec_review", 2, 1, 3], [0, "review", 0, 2, 4]])
+                         [[0, "worker", 1, 1, 0, 1], [1, "architect runner 2", 2, 3, 0, 1], [2, "spec_review", 2, 3, 3], [0, "review", 0, 4, 4]])
         self.assertEqual([line[5:6] + line[8:] for line in data["G"][0][1][:2]], [["63m", "42m"], ["6m", "6m"]])
         self.assertEqual([line[:2] + line[6][2:] + line[7:] for line in data["G"][2][1]], [[0, "why investigator", 3]])
         self.assertEqual([[bars[2::3] for bars in (line[6] for line in lines)] for _, lines in data["G"]], [[[0, 1], [1], [0], [2]], [[0]], [[3]]])
@@ -2046,10 +2110,10 @@ class EmitTest(OutputCase):
                 self.assertEqual(MOD["render_text"](drawn_page, tagged).split("\n"), [tagged(line) for line in lines])
                 self.assertEqual((lines[0][:19], len(lines) > 2), ("Agent activity for ", True))
 
-    def test_each_word_of_the_named_page_is_in_the_document_and_each_but_the_coordinators_model_and_running_or_queued_agents_models_is_in_the_text(self):
+    def test_each_word_of_the_named_page_is_in_the_document_and_each_but_the_coordinators_model_is_in_the_text(self):
         fixture = named(self.fixture).write()
         document, text = self.document(), self.out("--text")
-        self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD", "FIRSTWORD", "SECONDWORD", "THIRDWORD"]))
+        self.assertEqual(([word for word in WORDS if word not in document], [word for word in WORDS if word not in text]), ([], ["MODELWORD"]))
 
     def test_run_gives_both_forms_the_filter_of_the_run(self):
         """ODD, and the store's directory straight after a letter, are private text only to a filter that knows what this run read."""
@@ -2068,7 +2132,8 @@ class EmitTest(OutputCase):
         built = RendererTest.render(self, document)
         drawn_strings = [*built["texts"], *built["titles"], *(link[1] for link in built["links"])]
         data = set(strings(list(data_of(document).values())))
-        self.assertEqual([text for text in drawn_strings if any(word in text for word in WORDS) and text not in data], [])
+        legend = {f"{name} {agents}" for name, _, agents in data_of(document)["P"]}
+        self.assertEqual([text for text in drawn_strings if any(word in text for word in WORDS) and text not in data and text not in legend], [])
         self.assertEqual([word for word in WORDS if not any(word in text for text in drawn_strings)], [])
         self.assertEqual(built["texts"][built["texts"].index("Running now") + 1:built["texts"].index("Timeline")], [
             "IDWORD", "worker", "40m", "IDWORD", "PARENTWORD helper", " · under ", "worker", "30m",
@@ -2123,7 +2188,7 @@ class SizeTest(OutputCase):
         document = self.document()
         data = data_of(document)
         self.assertLess(len(document.encode()), 16000)
-        self.assertEqual((data["n"], len(data["G"]), len([item for item in data["I"] if item[5]])), ([60, 200, 2800, 10], 4, 8))
+        self.assertEqual((data["n"], len(data["G"]), len([item for item in data["I"] if item[5]])), ([60, 200, 2800, 10], 5, 8))
         self.assertEqual(self.out("--text").split("\n")[1], "60 running now, 200 agents, 2800 sub-agents, 10 failed")
         self.assertLessEqual(len(self.out("--text").rstrip("\n").split("\n")), 40)
 
@@ -2145,11 +2210,11 @@ class SizeTest(OutputCase):
         self.assertIn("When the document exceeds its size limit, the page can fold finished rows into summaries or omit rows, and it counts the agents and work items those changes cover.", guide)
         self.assertNotIn("the page folds finished work into summary rows", guide)
 
-    def test_largest_page_the_last_fold_can_leave_is_under_16000_bytes_with_six_providers_every_note_the_longest_window_label_and_every_clipped_string_over_its_byte_limit(self):
+    def test_largest_page_the_last_fold_can_leave_is_under_16000_bytes_with_six_models_every_note_the_longest_window_label_and_every_clipped_string_over_its_byte_limit(self):
         spans = tuple((x * 40, 1, "failed") for x in range(25))
         counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_lines", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
         hidden = MOD["Hidden"](**dict.fromkeys(counts, 9999999))
-        legend = tuple((name, 9999999) for name in ("Claude", "Codex", "Cursor", "Grok", "OpenCode", "Other"))
+        legend = tuple((name, 9999999) for name in ("model-a", "model-b", "model-c", "model-d", "model-e", "other model"))
         sizes = {}
         for status in ("running", "queued"):
             for character in ("s", "<", '"', "𝕏"):
@@ -2183,18 +2248,18 @@ class FrameTest(OutputCase):
         self.assertEqual(MOD["FRAME_HEIGHT"] - MOD["FRAME_MARGIN"], 1960)
         fixture = busy(self.fixture)
         fitted, _ = MOD["fit"](page_of(fixture), 15999, CLEAN, 1960)
-        self.assertEqual((MOD["height"](fitted), sum(len(one.rows) for one in fitted.groups)), (1950, 20))
+        self.assertEqual((MOD["height"](fitted), sum(len(one.rows) for one in fitted.groups)), (1960, 21))
         data = data_of(self.document())
-        self.assertEqual((sum(len(lines) for _, lines in data["G"]), len([each for each in data["I"] if each[5]])), (20, 8))
+        self.assertEqual((sum(len(lines) for _, lines in data["G"]), len([each for each in data["I"] if each[5]])), (21, 8))
         self.assertEqual(data["N"], [
-            "28 sub-agents that are done or stopped are shown as 4 summary rows.",
+            "35 sub-agents that are done or stopped are shown as 5 summary rows.",
             "27 merged or dropped work items with 301 agents are not shown. Use a larger --max-bytes to see more.",
-            "55 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "48 more agents are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
             "1 more work item in flight is not listed.",
             "112 agents are grouped by the name of the request that started them."])
 
     def test_fit_with_the_frame_keeps_each_fixture_page_at_most_1960_tall_and_16000_bytes_with_its_totals_its_legend_and_every_agent_shown_or_counted(self):
-        for build, agents, tall in ((typical, 50, 1472), (busy, 400, 1950), (day, 400, 1955), (extreme, 3000, 1882)):
+        for build, agents, tall in ((typical, 50, 1452), (busy, 400, 1960), (day, 400, 1935), (extreme, 3000, 1926)):
             with self.subTest(build.__name__):
                 unfolded = page_of(build(Fixture(self.root / build.__name__)))
                 fitted, document = MOD["fit"](unfolded, 15999, CLEAN, 1960)
@@ -2301,11 +2366,11 @@ class FrameTest(OutputCase):
             fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
         page = page_of(fixture)
         fitted, document = MOD["fit"](page, 15999, CLEAN, 1960)
-        # The last fold before the cap renders 16091 bytes, over the 15999-byte budget and over the 1960-pixel frame, so its frame cuts run before the cap.
-        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15831))
-        shifted, shifted_document = MOD["fit"](page, 16135, CLEAN, 1960)
-        # The reclaimed cut of twenty groups renders at 16136 bytes, one over the 16135-byte budget, so fit keeps the cut before reclaim.
-        self.assertEqual((len(shifted.groups), MOD["height"](shifted), len(shifted_document.encode())), (19, 1888, 15831))
+        # The last fold before the cap renders 16073 bytes, over the 15999-byte budget and over the 1960-pixel frame, so its frame cuts run before the cap.
+        self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (19, 1888, 15813))
+        shifted, shifted_document = MOD["fit"](page, 16117, CLEAN, 1960)
+        # The reclaimed cut of twenty groups renders at 16118 bytes, one over the 16117-byte budget, so fit keeps the cut before reclaim.
+        self.assertEqual((len(shifted.groups), MOD["height"](shifted), len(shifted_document.encode())), (19, 1888, 15813))
 
 
 class TextTest(OutputCase):
@@ -2314,6 +2379,10 @@ class TextTest(OutputCase):
         self.assertEqual(self.out("--text"), "\n".join([
             "Agent activity for kit, last 3h",
             "2 running now, 2 agents, 4 sub-agents, 1 failed",
+            "Models",
+            "  model-a   3",
+            "  model-b   2",
+            "  model-c   1",
             "Running now",
             "  D7 worker   running for 42m",
             "  D7 architect runner 2   running for 6m   under worker",
@@ -2336,13 +2405,13 @@ class TextTest(OutputCase):
 
     def test_text_cuts_the_running_work_item_and_failed_lists_and_counts_the_rest(self):
         lines = self.render(busy).split("\n")
-        self.assertEqual((lines[2], lines[8]), ("Running now", "Work items"))
-        self.assertEqual(len(lines[3:8]), 5)
-        self.assertEqual((len(lines[9:18]), lines[18]), (9, "  and 27 more work items"))
-        self.assertEqual((lines[19], len(lines[20:23]), lines[23]), ("Failed", 3, "Notes"))
+        self.assertEqual((lines[2], lines[3], lines[4], lines[10]), ("Models", "  model-a   400", "Running now", "Work items"))
+        self.assertEqual(len(lines[5:10]), 5)
+        self.assertEqual((len(lines[11:20]), lines[20]), (9, "  and 27 more work items"))
+        self.assertEqual((lines[21], len(lines[22:25]), lines[25]), ("Failed", 3, "Notes"))
         cut = MOD["render_text"](page(group(item("D1"), *[row(f"r{n}", status="running", open_seconds=5) for n in range(9)],
                                               *[row(f"f{n}", status="failed") for n in range(5)])), CLEAN).split("\n")
-        self.assertEqual((cut[10], cut[18]), ("  and 2 more running agents", "  and 1 more failed agent"))
+        self.assertEqual((cut[12], cut[20]), ("  and 2 more running agents", "  and 1 more failed agent"))
 
     def test_ten_work_items_whose_shortened_ids_summaries_states_and_links_are_the_same_are_each_listed_or_counted_in_the_text_at_max_bytes_500000_and_16000(self):
         fixture = self.fixture
@@ -2480,7 +2549,7 @@ class RendererTest(OutputCase):
         built = self.render(document)
         texts = built["texts"]
         for text in ("2", "4", "1", "running now", "agents, last 3h", "sub-agents", "failed", "Running now", "model-a", "42m",
-                     "6m", "Timeline", "Claude 3", "Codex 2", "Grok 1", "coordinator", "worker",
+                     "6m", "Timeline", "model-a 3", "model-b 2", "model-c 1", "coordinator", "worker",
                      "architect runner 2", "spec_review", "review", "model-c", "why investigator", "Not tied to a work item", "Work items in flight",
                      "D7", "Agent activity page", "in review", "D6", "Queue fix", "landing", "D5", "Old work", "merged",
                      "1 agent is grouped by the name of the request that started it.", "1 other thread ran in this coordinator's T3 project outside this coordinator."):
@@ -2492,7 +2561,7 @@ class RendererTest(OutputCase):
         self.assertEqual(texts[-4:-2], ["kit", ". Bars show turn or delegation intervals and may join across gaps. Striped bars include running intervals. Outlined bars include queued intervals. Faded bars include stopped intervals."])
         self.assertEqual(built["links"], [["A", PR7, "_blank", "noopener"], ["A", PR6, "_blank", "noopener"], ["A", "#g1", None, None]])
         classes = built["classes"]
-        self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "mark pulse", "row co", "row p1", "row p2", "row p3", "grp", "b run", "b f", "b stop")],
+        self.assertEqual([classes.count(name) for name in ("stat live", "stat alarm", "mark pulse", "row co", "row p1", "row p3", "row p4", "grp", "b run", "b f", "b stop")],
                          [1, 1, 2, 1, 3, 2, 1, 3, 2, 1, 1])
         self.assertEqual(len(built["bars"]), sum(len(line[6]) // 3 for _, lines in data_of(document)["G"] for line in lines) + 2)
         self.assertEqual([bar for bar in built["bars"] if not re.fullmatch(r"min\([0-9]+(\.[0-9])?%,100% - 3px\) [0-9]+(\.[0-9])?%", " ".join(bar))], [])
@@ -2852,7 +2921,9 @@ class PrivacyTest(OutputCase):
                 data = data_of(document)
                 self.assertEqual((data["c"], [item[:2] for item in data["I"] if "left" in item[0]], [line[1] for index, lines in data["G"] for line in lines if "left" in data["I"][index][0]]),
                                  ("kit", [["left_homemarker", "see now"]], ["worker", "right_homemarker"]))
-                self.assertEqual(text.split("\n")[4:6], ["  left_homemarker worker   running for 9m", "  running for 8m   under worker"])
+                lines = text.split("\n")
+                at = lines.index("Running now")
+                self.assertEqual(lines[at + 2:at + 4], ["  left_homemarker worker   running for 9m", "  running for 8m   under worker"])
                 self.assertIn("  left_homemarker   working   see now   1 agent, 1 sub-agent, 17m at work", text.split("\n"))
 
     def test_out_file_named_in_a_summary_is_not_in_the_file_it_names(self):
@@ -2892,6 +2963,13 @@ class OrdinaryWordsTest(OutputCase):
         self.assertEqual(self.out("--text"), "\n".join([
             "Agent activity for private auditor, last 3h",
             "3 running now, 2 agents, 4 sub-agents, 1 failed",
+            "Models",
+            "  451237   1",
+            "  code   1",
+            "  private auditor   1",
+            "  queue   1",
+            "  review   1",
+            "  src   1",
             "Running now",
             "  code src   running for 10m   under worker",
             "  queue worker   running for 30m",
@@ -2970,7 +3048,7 @@ class SlashCommandTest(OutputCase):
                                                             ["D9", "Run /review then /loop and /code-review today"]])
         self.assertEqual([[data["I"][index][0], [line[1] for line in lines]] for index, lines in data["G"]], [
             ["/code-review", ["worker", "/code-review", "Run /review then /loop and /code-review"]], ["/loop", ["worker", "/loop"]], ["/review", ["worker", "/review"]]])
-        self.assertEqual(text[2:10], [
+        self.assertEqual(text[4:12], [
             "Running now",
             "  /code-review worker   running for 37m",
             "  /code-review /code-review   running for 17m   under worker",
@@ -3440,6 +3518,8 @@ class QueuedTest(OutputCase):
                 self.assertEqual(self.out("--text"), "\n".join([
                     "Agent activity for kit, last 3h",
                     "0 running now, 1 agent, 0 sub-agents, 0 failed",
+                    "Models",
+                    "  model-a   1",
                     "Queued",
                     "  D7 worker   queued for 5m",
                     "Work items",
@@ -3453,7 +3533,7 @@ class QueuedTest(OutputCase):
         fixture.turns[1:] = [(worker(1), "running", fixture.stamp(10), None), (worker(1), "queued", fixture.stamp(5), None)]
         fixture.write()
         lines = self.out("--text").split("\n")
-        self.assertEqual(lines[1:5], ["1 running now, 1 agent, 0 sub-agents, 0 failed", "Running now", "  D7 worker   running for 10m", "Work items"])
+        self.assertEqual(lines[1:7], ["1 running now, 1 agent, 0 sub-agents, 0 failed", "Models", "  model-a   1", "Running now", "  D7 worker   running for 10m", "Work items"])
         data = data_of(self.document())
         self.assertEqual((data["n"], data["G"][0][1][0][4:]), ([1, 1, 0, 0], [0, "10m", [944, 56, 1, 972, 28, 5], 1, "10m"]))
 
@@ -3463,7 +3543,7 @@ class QueuedTest(OutputCase):
         fixture.thread(native(1), title="/root/spec_review", parent=worker(1), delegation=("queued", 2, None))
         fixture.write()
         lines = self.out("--text").split("\n")
-        self.assertEqual(lines[1:6], ["1 running now, 1 agent, 1 sub-agent, 0 failed", "Running now", "  D7 worker   running for 5m", "Queued",
+        self.assertEqual(lines[1:8], ["1 running now, 1 agent, 1 sub-agent, 0 failed", "Models", "  model-a   2", "Running now", "  D7 worker   running for 5m", "Queued",
                                       "  D7 spec_review   queued for 2m   under worker"])
 
 
@@ -3494,10 +3574,13 @@ class BudgetTest(OutputCase):
         under = fixture.stdout_bytes("--text", "--max-bytes", str(len(whole) - 1))
         self.assertLess(len(under), 16000)
         self.assertLessEqual(len(fixture.stdout_bytes("--text")), 16000)
-        self.assertEqual(len(whole), 125510)
+        self.assertEqual(len(whole), 125588)
         self.assertEqual(under.decode().split("\n"), [
             "Agent activity for name name name name name name nam…, last 3h",
             "1 running now, 1 agent, 1 sub-agent, 1 failed",
+            "Models",
+            "  " + "m" * 47 + "…   1",
+            "  model-a   1",
             "Running now",
             "  D7 worker   running for 42m",
             "Work items",
@@ -3545,8 +3628,8 @@ class BudgetTest(OutputCase):
             unfolded = replace(page(*groups, items=[big(number) for number in range(100, 140)], hidden=hidden, name=wide),
                                window=MOD["Window"](1790000000.0, 1790604799.0), totals=MOD["Totals"](9999999, 9999999, 9999999, 9999999))
             lines = MOD["render_text"](MOD["shortened"](unfolded), same).split("\n")
-            self.assertEqual(([lines.index(heading) for heading in ("Running now", "Queued", "Work items", "Failed", "Notes")], len(lines)), ([2, 11, 17, 29, 35], 48))
-            self.assertEqual((lines[10], lines[16], lines[27], lines[34]), ("  and 137 more running agents", "  and 140 more queued agents", "  and 43 more work items", "  and 152 more failed agents"))
+            self.assertEqual(([lines.index(heading) for heading in ("Running now", "Queued", "Work items", "Failed", "Notes")], len(lines)), ([4, 13, 19, 31, 37], 50))
+            self.assertEqual((lines[12], lines[18], lines[29], lines[36]), ("  and 137 more running agents", "  and 140 more queued agents", "  and 43 more work items", "  and 152 more failed agents"))
             sizes[character] = len("\n".join(lines).encode())
         self.assertEqual({character: size for character, size in sizes.items() if size >= 8000}, {})
 
@@ -3576,12 +3659,12 @@ class BudgetTest(OutputCase):
         whole = data_of(self.document("--max-bytes", "500000"))
         self.assertEqual(([item[4] for item in whole["I"] if not item[4]], [note for note in whole["N"] if "pull request" in note]), ([], []))
 
-    def test_text_form_of_a_page_with_a_30000_character_model_of_m_and_request_name_helper_task_is_125510_bytes_within_2_seconds(self):
+    def test_text_form_of_a_page_with_a_30000_character_model_of_m_and_request_name_helper_task_is_125588_bytes_within_2_seconds(self):
         fixture = self.long_values()
         started = time.perf_counter()
         whole = fixture.stdout_bytes("--text", "--max-bytes", "500000")
         elapsed = time.perf_counter() - started
-        self.assertEqual(len(whole), 125510)
+        self.assertEqual(len(whole), 125588)
         self.assertNotIn(b"helper-task", whole)
         self.assertLess(elapsed, 2.0, elapsed)
 
@@ -3616,7 +3699,7 @@ eNrEvet220iSMPifT4FmT7cIG6RuLpdLNl2jslVlTduSW5L7RrNpiAQljEmCDYCW1SrNmcf4vnN2/+4r
 
 
 class PriorPageTest(OutputCase):
-    def test_a_store_from_before_kinds_keeps_the_prior_data_payload_and_keeps_no_unplaceable_labels(self):
+    def test_a_store_from_before_kinds_keeps_the_prior_data_payload_except_model_colors_and_legend_and_keeps_no_unplaceable_labels(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         script = Path(directory.name) / "activity.py"
@@ -3625,9 +3708,17 @@ class PriorPageTest(OutputCase):
         self.assertEqual([len(line.split("\t")) for line in (fixture.store / "dishes.tsv").read_text().splitlines()], [15, 15, 15])
         self.assertFalse((fixture.store / "goals.tsv").exists())
         # The style and script differ from the prior build. The data element holds the values the page builds its
-        # strings from, not every drawn string, so this compares those values only.
+        # strings from, not every drawn string, so this compares those values only, except P and the lane colors which now come from models.
         html = fixture.stdout_bytes()
-        self.assertEqual(DATA.search(html.decode()).group(1), DATA.search(frozen_bytes(script, fixture).decode()).group(1))
+        current = json.loads(DATA.search(html.decode()).group(1))
+        prior = json.loads(DATA.search(frozen_bytes(script, fixture).decode()).group(1))
+        self.assertEqual(current["P"], [["model-a", MOD["model_slot"]("model-a"), 1]])
+        self.assertEqual(prior["P"], [["Claude", 1, 1]])
+        self.assertEqual([[index, [line[:3] + line[4:] for line in lines]] for index, lines in current["G"]],
+                         [[index, [line[:3] + line[4:] for line in lines]] for index, lines in prior["G"]])
+        self.assertEqual([line[3] for _, lines in current["G"] for line in lines], [MOD["model_slot"]("model-a")])
+        self.assertEqual({key: current[key] for key in current if key not in ("P", "G")},
+                         {key: prior[key] for key in prior if key not in ("P", "G")})
 
         second = one_running(Fixture(self.root / "outside")).write()
         (second.store / "goals.tsv").write_text(
@@ -3637,7 +3728,15 @@ class PriorPageTest(OutputCase):
         header, *rows = table.read_text().splitlines()
         table.write_text("\n".join([header, *("\t".join([row, "nope", "G9"]) for row in rows)]) + "\n")
         html, text = second.stdout_bytes(), second.stdout_bytes("--text")
-        self.assertEqual(DATA.search(html.decode()).group(1), DATA.search(frozen_bytes(script, second).decode()).group(1))
+        current = json.loads(DATA.search(html.decode()).group(1))
+        prior = json.loads(DATA.search(frozen_bytes(script, second).decode()).group(1))
+        self.assertEqual(current["P"], [["model-a", MOD["model_slot"]("model-a"), 1]])
+        self.assertEqual(prior["P"], [["Claude", 1, 1]])
+        self.assertEqual([[index, [line[:3] + line[4:] for line in lines]] for index, lines in current["G"]],
+                         [[index, [line[:3] + line[4:] for line in lines]] for index, lines in prior["G"]])
+        self.assertEqual([line[3] for _, lines in current["G"] for line in lines], [MOD["model_slot"]("model-a")])
+        self.assertEqual({key: current[key] for key in current if key not in ("P", "G")},
+                         {key: prior[key] for key in prior if key not in ("P", "G")})
         for output in (html, text):
             self.assertNotIn(b"Unassigned", output)
             self.assertNotIn(b"Unused goal name", output)
@@ -3918,7 +4017,7 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes()
         text_bytes = fixture.stdout_bytes("--text")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (15988, 407))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (15970, 428))
         self.assertLessEqual(len(html_bytes), 16000)
         self.assertLessEqual(len(text_bytes), 16000)
         html, text = self.document(), self.out("--text")
@@ -3945,7 +4044,7 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes("--max-bytes", "20000")
         text_bytes = fixture.stdout_bytes("--text", "--max-bytes", "20000")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (19982, 407))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (19964, 428))
         self.assertLessEqual(len(html_bytes), 20000)
         self.assertLessEqual(len(text_bytes), 20000)
         html, text = self.document("--max-bytes", "20000"), self.out("--text", "--max-bytes", "20000")

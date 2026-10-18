@@ -1,0 +1,4 @@
+- kind feature
+- `t3/added/brigade/scripts/activity.py` colors Timeline lanes by model. Empty model maps to slot 0. other model maps to slot 6. A named model maps to checksum mod 5 plus 1.
+- `tests/test_activity.py` covers shared lane color for one model across providers and distinct colors for models with distinct slots and stable color across model sets and shared other slot for hidden and missing models with no named model using it.
+- `tests/test_activity_render.py` drops provider from row and page helpers.
