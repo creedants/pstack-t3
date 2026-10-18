@@ -14,7 +14,7 @@ class GateParityTest(BrigadeTest):
         self.assertEqual(self.submit_entry(sha, "L2"), "E1")
 
     def test_gate_agrees_with_submit_for_generated_copy(self):
-        self.started("--generated", "gen.txt", "--rebuild", "make gen")
+        self.started("--generated", "gen.txt", "--generated-map", "src/gen-src.txt=gen.txt", "--rebuild", "make gen")
         sha = self.worker_commit("perf/d1", {"README.md": "changed\n", "gen.txt": "gen\n"})
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
         self.assertEqual(self.submit_entry(sha, "L1"), "E1")
