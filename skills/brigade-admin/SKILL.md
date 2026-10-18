@@ -32,20 +32,20 @@ Read the core first. Read one reference file when its trigger holds.
 
 | File | Read when |
 | --- | --- |
-| [rulings](reference/rulings.md) | before `$B rule add`, overrule, or appeal |
+| [rulings](reference/rulings.md) | before evaluating, applying, or reconciling a ruling, or escalating a conflict |
 | [lifecycle](reference/lifecycle.md) | when opening, recovering, or retiring |
 
 ## Open an executive admin
 
 The user asks any thread for an executive admin.
 
-1. Ask the user for the reporting level with the host's question tool, unless the user already said it. Recommend `digest`.
+1. Ask the user for the reporting level with the host's question tool, unless the user already said it. Recommend `digest`, because the admin exists so the user hears less.
 2. Run `python3 <skills>/brigade/scripts/brigade.py open --admin --project-root <root> --reporting <level>`. It prints `opened <dir>` or `exists <dir>`, then one block per coordinator on the root with its purpose. Only the caller that got `opened` launches a thread.
 3. Write the user's priorities under `## Priorities` in its `menu.md`, highest first, with the user. Add which intake sources it should own. Without priorities, the rules fall back to purposes and age.
 4. Move shared intake. Read [lifecycle](reference/lifecycle.md) before moving a shared source or running `set --intake` with no `--owner`.
 
 
-5. Ask the user, with the host's question tool, for the intake interval in whole minutes and the morning and evening times as `HH:MM`. Offer one hour, `09:00`, and `18:30` as the defaults. Refuse an interval above 120 minutes and ask again, so the idle check runs before a coordinator's 6-hour leases lapse. Refuse an evening time at or before `18:00` and ask again, because the coordinators send their evening reports at `18:00`. Find the repository's T3 project in `t3_project_list` by its `workspaceRoot`, as [Open a restaurant](../brigade/SKILL.md#open-a-restaurant) step 1 lists projects, or register `<root>` with `t3_project_create` when none has `<root>`. Use the matching or newly registered project's `id` as `projectId` in `t3_thread_launch`, as [Open a restaurant](../brigade/SKILL.md#open-a-restaurant) step 6 passes the target's id. Then launch the thread with `t3_thread_launch` in the repository's T3 project, with `workspaceStrategy: {"type": "root"}`, title `Executive admin`, and the message "Use the brigade-admin skill. You are the executive admin for the store at `<store>/<project>/.admin`. Wait for the start message." Record the returned `threadId` with `$B set --thread <id>`. Then send it "Run your first service. Intake every `<the answer in minutes times 60000>` ms, morning at `<morning>`, evening at `<evening>`." with `t3_thread_send` and mode `"auto"`.
+5. Ask the user, with the host's question tool, for the intake interval in whole minutes and the morning and evening times as `HH:MM`. Offer one hour, `09:00`, and `18:30` as the defaults. Refuse an interval above 120 minutes and ask again, so the idle check runs before a coordinator's 6-hour leases lapse. Refuse an evening time at or before `18:00` and ask again, because the coordinators send their evening reports at `18:00`. Read [lifecycle](reference/lifecycle.md#launching-the-admin-thread) for the project lookup and launch. Record the returned `threadId` with `$B set --thread <id>`, then send the start message with `t3_thread_send` and mode `"auto"`.
 
 When the user asks the admin to open a coordinator, it runs [Open a restaurant](../brigade/SKILL.md#open-a-restaurant) in the brigade skill, shows the user any overlap with the purposes `open` printed, and launches the new thread once the user agrees.
 
