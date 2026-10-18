@@ -212,7 +212,7 @@ def resolve_trusted(contract_maximum, base_raw, base_missing, base_error=None):
 
 
 def refused_policy_change(base_raw, cand_raw, ceiling=None):
-    """Why a candidate baseline weakens its base policy, or None. Lowering always passes.
+    """Why a candidate baseline weakens its base policy, or None. Lowering an allowance, the maximum, or the skip list in isolation always passes.
 
     Callers pass the effective maximum as ceiling. That is the contract maximum
     when one is set, else the base maximum. A new allowance above that ceiling
