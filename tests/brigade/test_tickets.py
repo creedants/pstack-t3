@@ -908,7 +908,7 @@ class TicketsTest(BrigadeTest, _TicketsRace):
                          (1, "brigade: nothing fired: T2 is under G2 and the lead ticket T1 is under G1; "
                              "name T2 in --ride-along, which takes a low ticket that is not a feature, or start it on its own"))
         self.assertEqual((case / "land-calls").read_text().splitlines(),
-                         ["lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
+                         ["status --json", "lease claim --holder perf/D1 --paths src,changes/perf%2Fd1.md", "lease release L7"])
         self.assertEqual(self.store_files(), before)
 
     def test_goal_set_refuses_done_and_dropped_while_an_item_of_the_goal_is_in_flight_and_names_the_item(self):
