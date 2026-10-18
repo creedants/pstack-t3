@@ -25,7 +25,7 @@
     "t3/added/brigade/scripts/brigade_lib/wake.py": 9189,
     "t3/added/brigade/scripts/brigade_lib/watch.py": 7840,
     "t3/added/landing/SKILL.md": 6030,
-    "t3/added/landing/scripts/land.py": 5910,
+    "t3/added/landing/scripts/land.py": 5919,
     "t3/added/landing/scripts/landing_lib/governor.py": 12046,
     "t3/added/landing/scripts/landing_lib/merge.py": 8127,
     "t3/added/landing/scripts/landing_lib/policy.py": 7587,

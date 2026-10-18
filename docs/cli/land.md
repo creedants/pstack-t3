@@ -282,7 +282,7 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [--json] [id]
 land.py [flags] size [--staged] [--all] [--shrink] [--baseline PATH]
 ```
 
-check changed worktree file sizes; --staged reads changed index files; --all reads tracked and unignored untracked files. Seed a missing baseline.
+check changed worktree file sizes; --staged reads changed index files; --all reads tracked and unignored untracked files. Seed a missing baseline, except with --shrink, which refuses.
 
 In a pstack-t3 checkout with no hook, run `h=$(git rev-parse --git-path hooks/pre-commit) && test ! -e "$h" && printf '#!/bin/sh\nexec python3 skills/landing/scripts/land.py size --staged\n' > "$h" && chmod +x "$h"`.
 

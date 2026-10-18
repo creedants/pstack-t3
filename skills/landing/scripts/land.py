@@ -231,7 +231,7 @@ def parser():
                    help="print one JSON object. It holds mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit")
 
     size_help = ("check changed worktree file sizes; --staged reads changed index files; "
-                 "--all reads tracked and unignored untracked files. Seed a missing baseline.\n\n"
+                 "--all reads tracked and unignored untracked files. Seed a missing baseline, except with --shrink, which refuses.\n\n"
                  "In a pstack-t3 checkout with no hook, run `h=$(git rev-parse --git-path hooks/pre-commit) && test ! -e \"$h\" && printf '#!/bin/sh\\nexec python3 skills/landing/scripts/land.py size --staged\\n' > \"$h\" && chmod +x \"$h\"`.")
     p = sub.add_parser("size", help=size_help, description=size_help)
     p.add_argument("--staged", action="store_true", help="judge staged files from the index instead of the worktree")
