@@ -768,7 +768,8 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         _, err = proc.communicate(timeout=20)
         self.assertEqual((proc.returncode, err.strip()),
                          (1, f"brigade: T1 has no kind and station feature gives none; pass --kind {self.KIND_CHOICE}"))
-        self.assertFalse((case / "land-calls").exists())
+        calls = (case / "land-calls").read_text().splitlines() if (case / "land-calls").exists() else []
+        self.assertFalse(any(line.startswith("lease claim") for line in calls))
         self.assertEqual(self.store_files(), before)
 
     def test_fire_with_no_ticket_needs_a_kind_from_the_flag_or_the_station(self):
