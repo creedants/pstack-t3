@@ -285,7 +285,7 @@ def widen(restaurant, ident, add_text):
 
 
 def gate_outside(restaurant, ident, sha):
-    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract or status names no trunk ref. Refuse when the dish holds a lease under a contract but names no SHA. Refuse when the status read fails or when a fetch, merge-base, or diff step fails."""
+    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract. None when status names no trunk ref and a SHA is present. Refuse when the dish holds a lease under a contract but names no SHA. Refuse when the status read fails or when a fetch, merge-base, or diff step fails."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
     with restaurant.checked():
