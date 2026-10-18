@@ -530,7 +530,7 @@ def size_report(path, staged, all_files, shrink, baseline):
     try:
         stored = seam.load_baseline_file(str(baseline_path))
     except ValueError as error:
-        # The staged path reports the index failure when both copies do not parse.
+        # The staged path reports the index failure when HEAD holds a baseline and both copies do not parse.
         if staged:
             _, head_missing = _show_baseline_raw(repo, "HEAD", baseline_rel)
             if not head_missing and _index_baseline_broken(repo, baseline_rel):
