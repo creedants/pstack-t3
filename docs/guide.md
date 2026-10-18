@@ -168,3 +168,15 @@ This index keeps sections 1 through 7 plus tips and install paths. The parts hol
 | Executive admin user view | [executive admin](guide/executive-admin.md#an-executive-admin) |
 | Uninstall | [uninstall](guide/uninstall.md#uninstall) |
 | Usage limit and reference | [reference](guide/reference.md#when-a-provider-hits-its-usage-limit) |
+
+### Landing modes
+
+See [reporting](guide/reporting.md#landing-modes) for the four modes.
+
+### Reporting levels
+
+See [reporting](guide/reporting.md#reporting-levels) for the levels.
+
+#### An executive admin
+
+See [executive admin](guide/executive-admin.md#an-executive-admin) for the user view.
