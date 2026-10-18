@@ -642,7 +642,7 @@ class WatchTest(BrigadeTest, _WakeRace):
         rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
         self.assertEqual(rows[-1]["state"], "unseen")
 
-    def test_long_failure_streak_reports_first_failure(self):
+    def test_long_failure_streak_reports_streak_start(self):
         self.started()
         self._remote_trunk()
         from unittest import mock
