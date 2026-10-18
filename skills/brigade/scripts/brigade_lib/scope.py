@@ -21,7 +21,7 @@ class WidenPlan:
 
 @dataclass(frozen=True)
 class HeldLease:
-    """Landing row id and state plus canonical paths. Dish cell is a record reconciled toward it."""
+    """Landing row id and state plus listed paths."""
 
     id: str
     state: str
@@ -87,7 +87,7 @@ def changed_paths(repo, base, head):
 
 
 def dish_doc_item(restaurant, ident):
-    """True when the log holds a doc item row for this dish."""
+    """True when the log holds a doc item row with a doc-item note for this dish."""
     for row in restaurant.rows("log.tsv"):
         if row["kind"] == "doc" and row["id"] == ident and row["state"] == "item":
             if row["note"].startswith("doc-item"):
@@ -101,7 +101,7 @@ def split_add(text):
 
 
 def canonical_list(text):
-    """Canonical paths of a comma list with empties dropped."""
+    """Canonical paths of a comma list with empties dropped. Repeats and outside paths are dropped."""
     found = []
     for part in str(text).split(","):
         if part.strip() == "":
@@ -201,7 +201,7 @@ def read_lease_list(project_root):
 
 
 def widen(restaurant, ident, add_text):
-    """Widen one dish lease in place. Claim new then release old then record."""
+    """Widen one dish lease in place. Claim new then record then release old."""
     wanted_raw = split_add(add_text)
     if not wanted_raw:
         raise BrigadeError("--add-paths takes comma-separated paths")
