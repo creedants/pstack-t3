@@ -16,6 +16,18 @@ from .support import (
 
 
 class LandingTest(LandingTestBase):
+    def stored_heartbeat_ms(self):
+        """The JSON text under the contract key heartbeatMs, or None when the key is absent."""
+        with self.raw_db() as db:
+            row = db.execute("SELECT value FROM contract WHERE key = 'heartbeatMs'").fetchone()
+        return row and row[0]
+
+    def stored_merge_heartbeat_ms(self):
+        """The JSON text under the contract key mergeHeartbeatMs, or None when the key is absent."""
+        with self.raw_db() as db:
+            row = db.execute("SELECT value FROM contract WHERE key = 'mergeHeartbeatMs'").fetchone()
+        return row and row[0]
+
     def stored_pr_item_line(self):
         """The JSON text under the contract key prItemLine, or None when the key is absent."""
         with self.raw_db() as db:
@@ -663,6 +675,64 @@ class LandingTest(LandingTestBase):
             db.commit()
         self.assertNotIn("pr item line", self.land("status"))
 
+    def test_a_first_init_stores_the_heartbeat_defaults_and_status_omits_the_heartbeat(self):
+        self.init(mode="push")
+        self.assertEqual(self.stored_heartbeat_ms(), "3600000")
+        self.assertEqual(self.stored_merge_heartbeat_ms(), "900000")
+        self.assertNotIn("heartbeat", self.land("status"))
+
+    def test_a_rerun_without_the_heartbeat_flags_keeps_the_stored_intervals(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                  "--heartbeat-ms", "7200000", "--merge-heartbeat-ms", "1800000")
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1")
+        self.assertEqual(self.stored_heartbeat_ms(), "7200000")
+        self.assertEqual(self.stored_merge_heartbeat_ms(), "1800000")
+        self.assertIn("heartbeat everyMs 7200000 merge wait 1800000", self.land("status"))
+
+    def test_a_heartbeat_below_the_floor_is_refused_and_writes_no_database(self):
+        err = self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                        "--heartbeat-ms", "3599999", ok=False)
+        self.assertIn("--heartbeat-ms", err)
+        self.assertEqual(list((self.base / "state").glob("pstack-t3/landing/*/land.db")), [])
+        err = self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                        "--merge-heartbeat-ms", "899999", ok=False)
+        self.assertIn("--merge-heartbeat-ms", err)
+        self.assertEqual(list((self.base / "state").glob("pstack-t3/landing/*/land.db")), [])
+
+    def test_a_heartbeat_rerun_below_the_floor_keeps_the_stored_queue(self):
+        self.init(mode="push")
+        self.queue_one()
+        before = self.queue_rows()
+        err = self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                        "--heartbeat-ms", "3599999", ok=False)
+        self.assertIn("--heartbeat-ms", err)
+        self.assertEqual(self.queue_rows(), before)
+        err = self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                        "--merge-heartbeat-ms", "899999", ok=False)
+        self.assertIn("--merge-heartbeat-ms", err)
+        self.assertEqual(self.queue_rows(), before)
+
+    def test_a_non_integer_heartbeat_is_refused_before_the_contract_changes(self):
+        for flag in ("heartbeat_ms", "merge_heartbeat_ms"):
+            with self.subTest(flag=flag):
+                with self.assertRaises(land.LandError):
+                    land.init(str(self.work), "main", "push", "origin", "", None, None, 1, 1800,
+                              **{flag: True})
+        self.assertEqual(list((self.base / "state").glob("pstack-t3/landing/*/land.db")), [])
+
+    def test_deleted_heartbeat_keys_leave_status_without_a_heartbeat(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                  "--heartbeat-ms", "7200000", "--merge-heartbeat-ms", "1800000")
+        with self.raw_db() as db:
+            db.execute("DELETE FROM contract WHERE key IN ('heartbeatMs', 'mergeHeartbeatMs')")
+            db.commit()
+        self.assertNotIn("heartbeat", self.land("status"))
+
+    def test_setting_only_the_fallback_still_names_both_intervals(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                  "--heartbeat-ms", "7200000")
+        self.assertIn("heartbeat everyMs 7200000 merge wait 900000", self.land("status"))
+
     def test_a_sole_store_without_a_matching_record_leaves_the_submitted_body_alone(self):
         """Pin review finding D255-review-1 R1. A sole foreign store must not lend its kind and goal."""
         log = self.base / "gh-log"
@@ -670,7 +740,9 @@ class LandingTest(LandingTestBase):
             fake = self.base / "gh"
             fake.write_text(fake.read_text().replace('if args[:2] == ["pr", "create"]:',
                                                      f'open({str(log)!r}, "a").write(repr(args) + "\\n")\nif args[:2] == ["pr", "create"]:'))
-            self.init(mode="human")
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "on")
+            self.assertEqual(self.stored_pr_item_line(), "true")
             body_file = self.base / "submitted.md"
             body_file.write_text("Reviewed body")
             cases = ("missing", "foreign")

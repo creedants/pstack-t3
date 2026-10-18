@@ -145,9 +145,38 @@ def generated_note(generated, rebuild):
     return f"generated: {', '.join(generated) if generated else 'none'}; rebuild: {rebuild or 'none'}"
 
 
+HEARTBEAT_MS = 3600000
+
+
+MERGE_HEARTBEAT_MS = 900000
+
+
+def refused_heartbeat(flag, value, floor):
+    """Why an init heartbeat flag value is refused, or None. None passes."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < floor:
+        return f"{flag} must be an integer at or above {floor}"
+    return None
+
+
+def heartbeat_note(contract):
+    """The heartbeat intervals for repo status. Empty when both intervals hold their defaults."""
+    every = contract.get("heartbeatMs", HEARTBEAT_MS)
+    merge = contract.get("mergeHeartbeatMs", MERGE_HEARTBEAT_MS)
+    if every == HEARTBEAT_MS and merge == MERGE_HEARTBEAT_MS:
+        return ""
+    return f"heartbeat everyMs {every} merge wait {merge}"
+
+
 def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None,
-         author_policy=None, pr_item_line=None):
+         author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None):
     mode = seam.LEGACY_MODES.get(mode, mode)
+    for flag, value, floor in (("--heartbeat-ms", heartbeat_ms, HEARTBEAT_MS),
+                               ("--merge-heartbeat-ms", merge_heartbeat_ms, MERGE_HEARTBEAT_MS)):
+        reason = refused_heartbeat(flag, value, floor)
+        if reason:
+            raise seam.LandError(reason)
     common = seam.common_dir(path)
     repo = common.parent if common.name == ".git" else Path(seam.git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
     directory = seam.state_home() / "landing" / seam.store_name(common)
@@ -208,6 +237,8 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                       "rebuild": rebuild_command(rebuild, current.get("rebuild")),
                       "authorPolicy": filled(current, "authorPolicy", author_policy, "any"),
                       "prItemLine": filled(current, "prItemLine", pr_item_line, False),
+                      "heartbeatMs": filled(current, "heartbeatMs", heartbeat_ms, HEARTBEAT_MS),
+                      "mergeHeartbeatMs": filled(current, "mergeHeartbeatMs", merge_heartbeat_ms, MERGE_HEARTBEAT_MS),
                       "paused": ""}
             for key, value in wanted.items():
                 if key != "paused" or key not in current:
