@@ -10,7 +10,7 @@ The setting is on `main`.
 
 ### Where it lives
 
-The setting is one key named `mode` with the values `full` and `light`. The user and project levels live in the files that already hold `budget`. The coordinator level lives in `restaurant.json`. A missing key reads as `light`.
+The setting is one key named `mode` with the values `full` and `light`. The user and project levels live in the files that already hold `budget`. The coordinator level lives in `restaurant.json`. When no level sets a mode, the default is `light`.
 
 | Level | Where | Written by |
 | --- | --- | --- |
