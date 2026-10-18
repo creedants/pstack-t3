@@ -130,7 +130,7 @@ class GeneratedMapTest(BrigadeTest):
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    def test_vendor_ancestor_index_expansion_ignores_wildcard_ancestors(self):
+    def test_vendor_ancestor_index_expansion_ignores_single_star_ancestors(self):
         import importlib
         import sys
         scripts = str(ROOT / "t3/added/brigade/scripts")
