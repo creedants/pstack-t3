@@ -14,7 +14,7 @@ class LandingTest(LandingTestBase):
                 "--max-file-tokens", str(maximum), *extra]
         return self.land(*args)
 
-    def test_an_over_limit_file_lands_while_the_contract_sets_no_limit(self):
+    def test_an_over_limit_file_lands_without_a_contract_limit_or_baseline(self):
         self.init(mode="push")
         sha = self.worker("w1", {"big.py": "x" * 20004})
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "big.py")
@@ -119,5 +119,147 @@ class LandingTest(LandingTestBase):
         self.assertEqual(payload["sizeBaseline"], "limits/sizes.json")
         self.assertIn("size limit 5000 tokens via limits/sizes.json", self.land("status"))
         (self.work / "big.py").write_text("x" * 20004)
+        self.commit("big")
         self.assertIn("size ok", self.land("size"))
         self.assertTrue((self.work / "limits/sizes.json").is_file())
+
+    def test_a_baseline_filename_without_enabled_marker_still_lands(self):
+        self.init(mode="push")
+        (self.work / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5000, "files": {}, "skip": []}))
+        self.commit("incidental baseline")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        sha = self.worker("w1", {"big.py": "x" * 20004})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "big.py")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_status_json_without_a_limit_keeps_the_prior_shape(self):
+        self.init(mode="push")
+        payload = json.loads(self.land("status", "--json"))
+        self.assertNotIn("sizeMaxTokens", payload)
+        self.assertNotIn("sizeBaseline", payload)
+        self.assertEqual(set(payload), {"mode", "trunk", "generated", "rebuild", "map"})
+        self.assertNotIn("size limit", self.land("status"))
+
+    def test_a_staged_new_file_does_not_seed_its_own_allowance(self):
+        self.init_with_limit()
+        (self.work / "big.py").write_text("x" * 20004)
+        sh("git", "add", "-A", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("big.py", reported)
+        baseline = self.work / "size-baseline.json"
+        if baseline.is_file():
+            self.assertNotEqual(json.loads(baseline.read_text()).get("files", {}).get("big.py"), 5001)
+
+    def test_a_staged_growth_with_an_unstaged_allowance_increase_still_bounces(self):
+        (self.work / "old.py").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        (self.work / "old.py").write_text("x" * 28000)
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["files"]["old.py"] = 7000
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline))
+        sh("git", "add", "old.py", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("old.py", reported)
+
+    def test_an_allowance_only_entry_followed_by_growth_bounces_both(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        base_raw = json.loads((self.work / "size-baseline.json").read_text())
+        raised = dict(base_raw)
+        raised_files = dict(base_raw.get("files", {}))
+        raised_files["data.txt"] = 7000
+        raised["files"] = raised_files
+        e1 = self.worker("w1", {"size-baseline.json": json.dumps(raised, indent=2, sort_keys=True) + "\n"})
+        e2 = self.worker("w2", {"data.txt": "x" * 28000})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("lease", "claim", "--holder", "r/D2", "--paths", "data.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", e1,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", e2,
+                  "--lease", "L2", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1 (r/D1)", reported)
+        self.assertIn("bounced E2 (r/D2)", reported)
+        self.assertNotIn("landed", reported)
+
+    def test_a_batch_of_allowance_then_growth_lands_neither(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh",
+                  "--batch", "2", "--max-file-tokens", "5000")
+        base_raw = json.loads((self.work / "size-baseline.json").read_text())
+        raised = dict(base_raw)
+        raised_files = dict(base_raw.get("files", {}))
+        raised_files["data.txt"] = 7000
+        raised["files"] = raised_files
+        e1 = self.worker("w1", {"size-baseline.json": json.dumps(raised, indent=2, sort_keys=True) + "\n"})
+        e2 = self.worker("w2", {"data.txt": "x" * 28000})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("lease", "claim", "--holder", "r/D2", "--paths", "data.txt")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", e1,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.land("submit", "--holder", "r/D2", "--branch", "w2", "--sha", e2,
+                  "--lease", "L2", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1 (r/D1)", reported)
+        self.assertIn("bounced E2 (r/D2)", reported)
+        self.assertNotIn("landed E1", reported)
+        self.assertNotIn("landed E2", reported)
+
+    def test_a_nested_generated_root_lands_over_the_limit(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh",
+                  "--generated", "build/output", "--max-file-tokens", "5000")
+        sha = self.worker("w1", {"a.txt": "agent\n", "build/output/big.py": "x" * 20004})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt,build/output")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_a_shrink_uses_the_effective_maximum(self):
+        (self.work / "old.py").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["maxFileTokens"] = 5000
+        baseline["files"] = {"old.py": 6000}
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh",
+                  "--max-file-tokens", "4000")
+        (self.work / "old.py").write_text("x" * 18000)
+        self.assertIn("size ok", self.land("size", "--shrink"))
+        shrunk = json.loads((self.work / "size-baseline.json").read_text())
+        self.assertEqual(shrunk["files"].get("old.py"), 4500)
+
+    def test_an_uppercase_image_svg_and_nested_lockfile_land_over_the_limit(self):
+        self.init_with_limit()
+        sha = self.worker("w1", {"a.txt": "agent\n",
+                                 "photo.PNG": "x" * 20004,
+                                 "diagram.svg": "x" * 20004,
+                                 "web/package-lock.json": "x" * 20004})
+        self.land("lease", "claim", "--holder", "r/D1",
+                  "--paths", "a.txt,photo.PNG,diagram.svg,web/package-lock.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_a_project_source_under_skills_still_bounces(self):
+        self.init_with_limit()
+        sha = self.worker("w1", {"skills/agent.py": "x" * 20004})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "skills/agent.py")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1 (r/D1)", reported)
+        self.assertIn("skills/agent.py", reported)

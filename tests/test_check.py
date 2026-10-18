@@ -1946,18 +1946,18 @@ class SizeLimitBridgeTest(unittest.TestCase):
         self.assertEqual(size_limit.findings(self._repo()), [])
 
     def test_a_file_over_the_baseline_maximum_is_reported(self):
-        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}}, [("big.py", 24)])
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True}, [("big.py", 24)])
         self.assertEqual(size_limit.findings(root),
                          ["size limit: big.py: 6 tokens over allowance 5 for code; "
                           "code moves one responsibility to a sibling module"])
 
     def test_a_file_within_its_baseline_allowance_passes(self):
-        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {"big.py": 6}}, [("big.py", 24)])
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {"big.py": 6}, "enabled": True}, [("big.py", 24)])
         self.assertEqual(size_limit.findings(root), [])
 
     def test_a_skipped_file_over_the_maximum_passes(self):
-        root = self._repo({"maxFileTokens": 5, "skip": ["vendor/*"], "files": {}},
-                          [("vendor/huge.py", 400), ("docs/cli/x.md", 400)])
+        root = self._repo({"maxFileTokens": 5, "skip": ["vendor/*"], "files": {}, "enabled": True},
+                          [("vendor/huge.py", 400)])
         self.assertEqual(size_limit.findings(root), [])
 
     def test_a_baseline_that_cannot_be_parsed_is_one_finding(self):
@@ -1966,3 +1966,45 @@ class SizeLimitBridgeTest(unittest.TestCase):
         findings = size_limit.findings(root)
         self.assertEqual(len(findings), 1)
         self.assertTrue(findings[0].startswith("size-baseline.json: "), findings)
+
+    def test_a_baseline_filename_without_enabled_marker_reports_nothing(self):
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}}, [("big.py", 24)])
+        self.assertEqual(size_limit.findings(root), [])
+
+    def test_an_uppercase_image_and_nested_lockfile_over_the_maximum_pass(self):
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                          [("photo.PNG", 400), ("diagram.svg", 400), ("web/package-lock.json", 400)])
+        self.assertEqual(size_limit.findings(root), [])
+
+    def test_a_nested_generated_root_over_the_maximum_passes(self):
+        root = self._repo({"maxFileTokens": 5, "skip": ["build/output"], "files": {}, "enabled": True},
+                          [("build/output/big.py", 400)])
+        self.assertEqual(size_limit.findings(root), [])
+
+    def _git_repo(self, baseline, files=()):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "LC_ALL": "C"}
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, env=env, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=root, env=env, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=root, env=env, check=True)
+        if baseline is not None:
+            (root / "size-baseline.json").write_text(json.dumps(baseline))
+        for name, size in files:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x" * size)
+        subprocess.run(["git", "add", "-A"], cwd=root, env=env, check=True)
+        subprocess.run(["git", "commit", "-qm", "seed"], cwd=root, env=env, check=True)
+        return root
+
+    def test_a_worktree_allowance_increase_is_refused(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {"big.py": 6}, "enabled": True},
+                              [("big.py", 24)])
+        (root / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5, "skip": [], "files": {"big.py": 5001}, "enabled": True}))
+        (root / "big.py").write_bytes(b"x" * 20004)
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("raises the allowance for big.py", findings[0])
