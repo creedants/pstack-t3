@@ -54,7 +54,7 @@ The numbers about real use come from the pstack-t3 coordinator's store (`dishes.
 
 ## Changes
 
-Changes 1 through 11 close the gaps above. Each change keeps its number as its heading in its part.
+Changes 1 through 7 close the gaps above. Changes 8 through 11 add the admin and the docs. Each change keeps its number as its heading in its part.
 
 
 ## Map

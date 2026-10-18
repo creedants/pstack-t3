@@ -4,4 +4,4 @@
 - docs/multi-coordinator.md keeps summary plus method plus design rules plus out of scope plus map and links to seven parts in docs/multi-coordinator/.
 - docs/light-mode.md keeps setting plus decision and links to two parts in docs/light-mode/.
 - docs/capacity.md keeps hardware plus summary and links to two parts in docs/capacity/.
-- every split doc plus its parts plus README.md stays under 20000 bytes and scripts/check.py prints ok.
+- each split doc file and each part file and README.md stays under 20000 bytes and scripts/check.py prints ok.
