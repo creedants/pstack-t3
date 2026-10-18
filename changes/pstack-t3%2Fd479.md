@@ -1,2 +1,3 @@
 - kind polish
 - every added or changed file is under 5000 tokens (bytes//4) at this head
+- `tests/brigade/test_loader.py` checks the expected set is non-empty instead of asserting 30 files
