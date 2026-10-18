@@ -94,7 +94,12 @@ class WidenTest(BrigadeTest):
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-review")
 
     def test_in_review_skips_no_contract_fails_when_no_contract_is_refused(self):
-        self.fired_bug_fix()
+        self.git_project()
+        self.landing_env()
+        self.open()
+        (self.at / "menu.md").write_text("## Purpose\n\nFast.\n")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s")
         self.hand_edit("dishes.tsv", "D1", lease="L1", paths="README.md")
         bad = "0" * 40
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", bad), "D1 in-review")
