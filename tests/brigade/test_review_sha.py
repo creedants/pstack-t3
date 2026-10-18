@@ -57,7 +57,7 @@ class ReviewShaTest(BrigadeTest):
         finally:
             saved.rename(head)
 
-    def test_in_review_skips_no_contract_fails_when_clean_repo_has_no_contract(self):
+    def test_in_review_skips_no_contract_fails_when_clean_repo_is_refused(self):
         self.git_project()
         self.landing_env()
         self.open()
