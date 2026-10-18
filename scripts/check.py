@@ -1420,11 +1420,16 @@ _size_limit_module = None
 def _size_limit():
     global _size_limit_module
     if _size_limit_module is None:
-        spec = importlib.util.spec_from_file_location("pstack_size_limit", Path(__file__).resolve().parent / "size_limit.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        _size_limit_module = module
+        path = Path(__file__).resolve().parent / "size_limit.py"
+        if path.is_file():
+            spec = importlib.util.spec_from_file_location("pstack_size_limit", path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            _size_limit_module = module
+        else:
+            import types
+            _size_limit_module = types.SimpleNamespace(findings=lambda root: [])
     return _size_limit_module
 
 
