@@ -220,7 +220,11 @@ def audit(args, scope, user, names):
     return Audit(tuple(stale + away), tuple(unread))
 
 def link_health(harness, directory, names, scope, user):
-    """Print the pstack-t3 link state of `directory` for `harness`. Return whether every skill is in place with no competing copy. In project scope this includes user-scope shadowing."""
+    """Print the pstack-t3 link state of `directory` for `harness`.
+
+    Return True when `directory` resolves to SKILLS and False for other paths inside SKILLS.
+    Otherwise check its named skills, the directories from extra_dirs, and user-scope shadowing in project scope.
+    """
     if Path(os.path.realpath(directory)) == Path(os.path.realpath(layout.SKILLS)):
         print(f"{harness:7} {directory}: resolves to the pstack-t3 skills tree itself")
         return True
