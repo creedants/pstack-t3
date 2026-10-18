@@ -27,9 +27,6 @@ DEFAULT_BASELINE = "size-baseline.json"
 DEFAULT_MAX_TOKENS = 5000
 
 DEFAULT_SKIP = (
-    "skills/*",
-    "docs/cli/*",
-    "docs/skills.md",
     "vendor/*",
     "__pycache__/*",
     "*.pyc",
@@ -39,10 +36,12 @@ DEFAULT_SKIP = (
     "*.gif",
     "*.webp",
     "*.ico",
+    "*.svg",
     "*.pdf",
     "*.lock",
     "package-lock.json",
     "pnpm-lock.yaml",
+    "yarn.lock",
     "go.sum",
 )
 
@@ -93,9 +92,18 @@ def skipped(path, skip):
     for entry in skip:
         if fnmatch.fnmatchcase(path, entry):
             return True
-        if "/" not in entry and "*" not in entry and "?" not in entry and "[" not in entry:
-            if path == entry or path.startswith(entry.rstrip("/") + "/"):
+        if entry.startswith("*."):
+            if fnmatch.fnmatchcase(path.lower(), entry.lower()):
                 return True
+        if "*" not in entry and "?" not in entry and "[" not in entry:
+            clean = entry.rstrip("/")
+            if not clean:
+                continue
+            if path == clean or path.startswith(clean + "/"):
+                return True
+            if "/" not in clean:
+                if path.split("/")[-1] == clean:
+                    return True
     return False
 
 
@@ -144,6 +152,56 @@ def parse_limit(obj):
             any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in files.values())):
         raise ValueError("files must map paths to token counts at or above 0")
     return Limit(maximum, tuple(skip), dict(files))
+
+
+def baseline_enabled(obj):
+    """True when a decoded baseline object explicitly opts in."""
+    return isinstance(obj, dict) and obj.get("enabled") is True
+
+
+def refused_policy_change(base_raw, cand_raw):
+    """Why a candidate baseline weakens its base policy, or None. Lowering always passes."""
+    if base_raw is None:
+        return None
+    if not isinstance(base_raw, dict):
+        return None
+    if cand_raw is None:
+        if base_raw.get("enabled") is True:
+            return "size baseline removes enabled policy; a person merges that raise outside the queue"
+        return None
+    if not isinstance(cand_raw, dict):
+        return "size baseline cannot be read"
+    if base_raw.get("enabled") is True and cand_raw.get("enabled") is not True:
+        return "size baseline removes enabled policy; a person merges that raise outside the queue"
+    base_max = base_raw.get("maxFileTokens", DEFAULT_MAX_TOKENS)
+    cand_max = cand_raw.get("maxFileTokens", DEFAULT_MAX_TOKENS)
+    if isinstance(cand_max, bool) or not isinstance(cand_max, int) or cand_max < 1:
+        return None
+    if isinstance(base_max, int) and not isinstance(base_max, bool) and base_max >= 1:
+        if cand_max > base_max:
+            return "size baseline raises the maximum; a person merges that raise outside the queue"
+    base_files = base_raw.get("files", {})
+    cand_files = cand_raw.get("files", {})
+    if not isinstance(base_files, dict):
+        base_files = {}
+    if not isinstance(cand_files, dict):
+        return None
+    for name, value in cand_files.items():
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            continue
+        old = base_files.get(name)
+        if old is None:
+            return f"size baseline adds a grandfathered file {name}; a person merges that raise outside the queue"
+        if isinstance(old, int) and not isinstance(old, bool) and value > old:
+            return f"size baseline raises the allowance for {name}; a person merges that raise outside the queue"
+    base_skip = base_raw.get("skip", [])
+    cand_skip = cand_raw.get("skip", [])
+    if isinstance(base_skip, list) and isinstance(cand_skip, list):
+        old_set = {entry for entry in base_skip if isinstance(entry, str)}
+        for entry in cand_skip:
+            if isinstance(entry, str) and entry not in old_set:
+                return "size baseline widens skips; a person merges that raise outside the queue"
+    return None
 
 
 def load_baseline_file(path):
