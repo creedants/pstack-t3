@@ -267,7 +267,7 @@ At `digest`, write every reply for a person who has not followed the work. Use a
 - Merged pull requests may follow as a short list, one line each, a plain title linked to its PR URL.
 - `$B close --to-file` writes the full report under `<restaurant dir>/closeouts/` and prints its path. End the message with one line that names that path, such as "Full report: <path>". That line is the only path in the message. Never paste the `close` output.
 - Name the mode only in the first reply after `set --mode` changes it.
-- Put commits, IDs, and other engineering detail in the store, not the message. A paused queue's two commits, which the [landing skill](../landing/pauses.md#when-the-queue-pauses) asks for, go in the `$B 86 add --question` text, and the full report carries them.
+- Put commits, IDs, and other engineering detail in the store, not the message. The two commits a pause names, which the [landing skill](../landing/pauses.md#when-the-queue-pauses) asks for, go in the question text, and the full report carries them.
 
 A drain summary reads like this:
 
