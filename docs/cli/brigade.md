@@ -240,7 +240,7 @@ group tickets into one dish and assign it to a station
 | `--thread THREAD` |  |  |  |  |
 | `--branch BRANCH` |  |  |  |  |
 | `--timebox TIMEBOX` |  |  | `60` | minutes before the liveness check flags the dish |
-| `--paths PATHS` |  |  |  | paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the contract map makes from them when the contract lists generated paths; given once |
+| `--paths PATHS` |  |  |  | paths the dish will change. Fire claims a landing lease on them, plus the generated copies and doc pages the contract map makes from them when the contract lists generated paths and a map; given once |
 | `--mode MODE` |  |  |  | full, to start the dish in full mode; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish runs in full mode |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the item's kind when the lead ticket has none or --tickets names no ticket; a lead ticket with no kind records it too; refused when the lead ticket has another kind; with no --kind and no kind from the lead ticket, station bug-fix or perf-issue gives fix, station investigation gives study, and fire is refused on any other station |

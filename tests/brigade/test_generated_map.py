@@ -107,7 +107,7 @@ class GeneratedMapTest(BrigadeTest):
         self.assertEqual(out, "D1 (lease L1 held by perf/D1)")
         self.assertEqual(self.dish_paths(), "t3/added/brigade/scripts/brigade.py,changes/perf%2Fd1.md")
 
-    def test_build_output_matches_three_copy_pairs_and_three_root_targets_exist(self):
+    def test_build_output_matches_three_copy_pairs_and_three_repo_targets_exist(self):
         parent = Path("/home/marcus/.cache/pstack-t3/scratch")
         parent.mkdir(parents=True, exist_ok=True)
         made = subprocess.run(["mktemp", "-d", "-p", str(parent)], capture_output=True, text=True, check=True)
