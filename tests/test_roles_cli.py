@@ -809,11 +809,11 @@ class ModeCliTest(unittest.TestCase):
     def test_keep_preserves_user_mode(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
-            repo.put(repo.user, {"mode": "light"})
+            repo.put(repo.user, {"mode": "full"})
             completed = repo.write("--keep", "--budget", "small")
             self.assertEqual(completed.returncode, 0, completed.stderr)
             document = json.loads(repo.user.read_text())
-        self.assertEqual(document["mode"], "light")
+        self.assertEqual(document["mode"], "full")
         self.assertEqual(document["budget"], "small")
 
     def test_project_escalate_write_is_idempotent(self):
