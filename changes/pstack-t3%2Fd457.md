@@ -1,0 +1,4 @@
+- kind feature
+- `dish --add-paths` claims a new lease for the holder covering old paths plus new paths plus generated copies plus fragment and releases the old lease only after the claim succeeds and the dish still records the old lease and paths and a refused claim changes nothing and a covered rerun is a no-op and a merged or dropped dish or a submitted lease is refused
+- `dish --state in-review --sha` compares changed source paths from base to sha against active lease paths where base is merge-base of trunk ref to sha and refuses uncovered paths with directory covering files and generated dropped and rechecks lease id and paths under the lock
+- `_settings` uses the single store when meta is given and otherwise uses every readable store in sorted path order and takes build and check from the first non-empty value and refuses on differing changeNoteDir and affectedTests

@@ -27,6 +27,7 @@ from brigade_lib.commands.once import Once
 from brigade_lib.items import ATTEMPT_AFTER, announce_archive, drop, fire, item_escalation, record_escalation, retired_worker_threads, workers_full
 from brigade_lib.leases import fragment_lines
 from brigade_lib.reviews import fix_round_refusal, pass_check, write_threads
+from brigade_lib.scope import gate_outside, gate_recheck, widen
 from brigade_lib.shared import BrigadeError, stored
 from brigade_lib.store import COUNTED_STATES, DISH_STATES, KINDS, NEEDS_CONTRACT, WORKER_ROLES
 from brigade_lib.wake import record_worker_end
@@ -135,10 +136,19 @@ def worker_ended_alone(args):
     archive step names.
     """
     def given(name):
-        value = getattr(args, name)
+        value = getattr(args, name, None)
         return value is not None and value is not False
     return not any(given(name) for name in ("state", "task", "thread", "branch", "pr", "sha", "timebox", "reported",
-                                            "lease", "paths", "stopped", "mode", "reason"))
+                                            "lease", "paths", "add_paths", "stopped", "mode", "reason"))
+
+
+def add_paths_alone(args):
+    """True when --add-paths is the only dish flag given."""
+    def given(name):
+        value = getattr(args, name, None)
+        return value is not None and value is not False
+    return not any(given(name) for name in ("state", "task", "thread", "branch", "pr", "sha", "timebox", "reported",
+                                            "lease", "paths", "worker_ended", "stopped", "mode", "reason"))
 
 
 def register_fire(sub):
@@ -215,6 +225,7 @@ def register_dish(sub):
     p.add_argument("--worker-ended", help="record that this attempt's worker ended or failed and wrote no report")
     p.add_argument("--lease", action=Once, help="record a lease id claimed again; given once")
     p.add_argument("--paths", action=Once, help="record the paths that lease covers; given once")
+    p.add_argument("--add-paths", action=Once, help="widen the lease to cover these comma-separated paths; given once")
     p.add_argument("--stopped", help="with --state dropped: the run id t3_thread_wait reported terminal, or idle")
     p.add_argument("--mode", help="full, to move open work to full mode once; needs --reason")
     p.add_argument("--reason", help="one line: why the dish moves to full mode")
@@ -261,6 +272,10 @@ def handle_dish(restaurant, args):
     args.reason = item_escalation(args.mode, args.reason)
     if args.reason and args.state in ("queued", "merged", "dropped"):
         raise BrigadeError(f"--mode full needs open work; run --state {args.state} without it")
+    if getattr(args, "add_paths", None) is not None:
+        if not add_paths_alone(args):
+            raise BrigadeError("--add-paths takes no other dish flag")
+        return widen(restaurant, args.id, args.add_paths)
     if args.worker_ended is not None:
         if not worker_ended_alone(args):
             raise BrigadeError("--worker-ended takes no other dish flag")
@@ -268,6 +283,20 @@ def handle_dish(restaurant, args):
             return record_worker_end(restaurant, args.id, args.worker_ended)
     if args.state == "dropped":
         return drop(restaurant, args.id, args.stopped)
+    if args.state == "in-review":
+        sha = args.sha
+        if sha is None:
+            with restaurant.checked():
+                _, current = restaurant.find("dishes.tsv", args.id)
+                sha = current.get("sha", "")
+        if sha:
+            snapshot = gate_outside(restaurant, args.id, sha)
+            if snapshot is None:
+                with restaurant.checked():
+                    return seam.command(restaurant, args)
+            with restaurant.checked():
+                gate_recheck(restaurant, args.id, snapshot)
+                return seam.command(restaurant, args)
     if args.branch and args.lease is None:
         with restaurant.checked():
             result = seam.command(restaurant, args)
