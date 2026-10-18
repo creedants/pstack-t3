@@ -60,6 +60,13 @@ class Limit:
 
 
 @dataclass(frozen=True)
+class TrustedPolicy:
+    enabled: bool
+    limit: Limit
+    error: object = None
+
+
+@dataclass(frozen=True)
 class Over:
     path: str
     tokens: int
@@ -159,15 +166,64 @@ def baseline_enabled(obj):
     return isinstance(obj, dict) and obj.get("enabled") is True
 
 
+def resolve_trusted(contract_maximum, base_raw, base_missing, base_error=None):
+    """Trusted policy from the contract maximum and the trunk baseline.
+
+    A contract maximum always enables the limit. Without one, only an
+    explicitly enabled trunk baseline does. The effective maximum is the
+    contract maximum when set, else the trunk maximum.
+    """
+    contract_on = (isinstance(contract_maximum, int) and not isinstance(contract_maximum, bool)
+                   and contract_maximum >= 1)
+    if contract_on:
+        effective = contract_maximum
+        if base_missing:
+            return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}), None)
+        if base_raw is None:
+            detail = f": {base_error}" if base_error else ""
+            return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}),
+                                 f"size baseline at trunk tip cannot be read{detail}")
+        if not isinstance(base_raw, dict):
+            return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}),
+                                 "size baseline at trunk tip cannot be read: baseline must be a JSON object")
+        try:
+            parsed = parse_limit(base_raw)
+        except ValueError as error:
+            return TrustedPolicy(True, Limit(effective, DEFAULT_SKIP, {}),
+                                 f"size baseline at trunk tip cannot be read: {error}")
+        return TrustedPolicy(True, Limit(effective, parsed.skip, parsed.files), None)
+    if base_missing:
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+    if base_raw is None:
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+    if not isinstance(base_raw, dict):
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+    if not baseline_enabled(base_raw):
+        return TrustedPolicy(False, Limit(DEFAULT_MAX_TOKENS, (), {}), None)
+    try:
+        parsed = parse_limit(base_raw)
+    except ValueError as error:
+        return TrustedPolicy(True, Limit(DEFAULT_MAX_TOKENS, (), {}),
+                             f"size baseline at trunk tip cannot be read: {error}")
+    return TrustedPolicy(True, parsed, None)
+
+
 def refused_policy_change(base_raw, cand_raw, ceiling=None):
     """Why a candidate baseline weakens its base policy, or None. Lowering always passes.
 
     Callers pass the effective maximum as ceiling. That is the contract maximum
     when one is set, else the base maximum. A new allowance above that ceiling
-    is refused even when it sits at or below the base maximum.
+    is refused even when it sits at or below the base maximum. Effective
+    allowances are compared over the union of base and candidate paths, so
+    removing a below-maximum entry raises its allowance and is refused, while
+    removing an above-maximum entry lowers it and stays legal.
     """
     if base_raw is None:
-        return None
+        if ceiling is None:
+            return None
+        if not isinstance(ceiling, int) or isinstance(ceiling, bool) or ceiling < 1:
+            return None
+        base_raw = {"enabled": True, "maxFileTokens": ceiling, "skip": [], "files": {}}
     if not isinstance(base_raw, dict):
         return None
     if cand_raw is None:
@@ -206,6 +262,13 @@ def refused_policy_change(base_raw, cand_raw, ceiling=None):
                 continue
             return f"size baseline adds a grandfathered file {name}; a person merges that raise outside the queue"
         if isinstance(old, int) and not isinstance(old, bool) and value > old:
+            return f"size baseline raises the allowance for {name}; a person merges that raise outside the queue"
+    for name, old in base_files.items():
+        if name in cand_files:
+            continue
+        if isinstance(old, bool) or not isinstance(old, int) or old < 0:
+            continue
+        if base_ceiling > old:
             return f"size baseline raises the allowance for {name}; a person merges that raise outside the queue"
     base_skip = base_raw.get("skip", [])
     cand_skip = cand_raw.get("skip", [])

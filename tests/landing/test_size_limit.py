@@ -348,6 +348,86 @@ class LandingTest(LandingTestBase):
         self.assertIn("bounced E1", reported)
         self.assertIn("cannot be read", reported)
 
+    def test_a_first_baseline_above_the_contract_maximum_bounces(self):
+        self.init_with_limit()
+        payload = json.dumps({"maxFileTokens": 5000, "files": {"big.py": 5001}, "skip": []})
+        sha = self.worker("w1", {"size-baseline.json": payload})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1", reported)
+        self.assertIn("big.py", reported)
+
+    def test_a_baseline_deletion_under_a_contract_bounces(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        sh("git", "worktree", "add", "-q", "-b", "w1", str(self.base / "w1"), "origin/main", cwd=self.work)
+        path = self.base / "w1"
+        sh("git", "rm", "-q", "size-baseline.json", cwd=path)
+        sh("git", "commit", "-qm", "w1", cwd=path)
+        sha = sh("git", "rev-parse", "HEAD", cwd=path)
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1", reported)
+        self.assertIn("removes enabled policy", reported)
+
+    def test_removing_a_below_maximum_allowance_bounces(self):
+        (self.work / "small.py").write_text("x" * 16000)
+        baseline = {"maxFileTokens": 5000, "files": {"small.py": 4000}, "skip": []}
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        tightened = {"maxFileTokens": 5000, "files": {}, "skip": []}
+        sha = self.worker("w1", {"size-baseline.json": json.dumps(tightened, indent=2, sort_keys=True) + "\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1", reported)
+        self.assertIn("small.py", reported)
+
+    def test_removing_an_above_maximum_allowance_lands(self):
+        (self.work / "small.py").write_text("x" * 24000)
+        baseline = {"maxFileTokens": 5000, "files": {"small.py": 6000}, "skip": []}
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        tightened = {"maxFileTokens": 5000, "files": {}, "skip": []}
+        sha = self.worker("w1", {"size-baseline.json": json.dumps(tightened, indent=2, sort_keys=True) + "\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_a_staged_first_baseline_above_the_contract_maximum_bounces(self):
+        self.init_with_limit()
+        (self.work / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5000, "files": {"big.py": 5001}, "skip": []}))
+        sh("git", "add", "size-baseline.json", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("big.py", reported)
+
+    def test_a_staged_deletion_with_the_worktree_present_bounces(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        baseline["enabled"] = True
+        (self.work / "size-baseline.json").write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        sh("git", "rm", "-q", "--cached", "size-baseline.json", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("removes enabled policy", reported)
+
     def test_seed_omits_a_skipped_over_limit_file(self):
         (self.work / "vendor").mkdir(exist_ok=True)
         (self.work / "vendor" / "big.py").write_text("x" * 20004)

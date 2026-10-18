@@ -526,7 +526,45 @@ def size_report(path, staged, all_files, shrink, baseline):
     maximum = contract.get("sizeMaxTokens") or stored.max_tokens
     if staged:
         head_raw, head_missing = _show_baseline_raw(repo, "HEAD", baseline_rel)
-        if not head_missing:
+        contract_max = contract.get("sizeMaxTokens")
+        trusted = seam.resolve_trusted(contract_max, None if head_missing else head_raw, head_missing, None)
+        if trusted.error:
+            raise seam.LandError(trusted.error)
+        if trusted.enabled:
+            try:
+                index_raw_text = seam.git("show", f":0:{baseline_rel}", cwd=repo, check=False)
+            except seam.LandError:
+                index_raw_text = None
+            if index_raw_text is not None and index_raw_text.returncode == 0:
+                try:
+                    index_raw = json.loads(index_raw_text.stdout)
+                except json.JSONDecodeError:
+                    raise seam.LandError("size baseline cannot be read")
+            else:
+                index_raw = None
+            if index_raw is None:
+                if not head_missing:
+                    raise seam.LandError("size baseline removes enabled policy; a person merges that raise outside the queue")
+            else:
+                contract_on = isinstance(contract_max, int) and not isinstance(contract_max, bool) and contract_max >= 1
+                if contract_on:
+                    if not head_missing and isinstance(head_raw, dict):
+                        raw_max = head_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
+                        if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
+                            raw_max = trusted.limit.max_tokens
+                    else:
+                        raw_max = trusted.limit.max_tokens
+                    base_for_compare = {"maxFileTokens": raw_max,
+                                        "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+                else:
+                    base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
+                                        "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+                problem = seam.refused_policy_change(base_for_compare, index_raw, trusted.limit.max_tokens)
+                if problem:
+                    raise seam.LandError(problem)
+            skip = tuple(seam.DEFAULT_SKIP) + tuple(trusted.limit.skip) + tuple(generated) + (baseline_rel,)
+            limit = seam.Limit(trusted.limit.max_tokens, skip, dict(trusted.limit.files))
+        elif not head_missing:
             try:
                 index_raw_text = seam.git("show", f":0:{baseline_rel}", cwd=repo, check=False)
             except seam.LandError:
@@ -537,8 +575,6 @@ def size_report(path, staged, all_files, shrink, baseline):
                     index_raw = json.loads(index_raw_text.stdout)
                 except json.JSONDecodeError:
                     raise seam.LandError("size baseline cannot be read")
-            else:
-                index_raw = _read_worktree_baseline_raw(baseline_path)
             try:
                 head_limit = seam.parse_limit(head_raw) if isinstance(head_raw, dict) else stored
             except ValueError as error:
@@ -574,7 +610,7 @@ def check_candidate_size(store, base, candidate):
 
     The check runs at land time, not at submit time, so the rebased change is
     what is judged. The limit comes from the contract maximum, or from the baseline file committed at the
-    trunk tip, read with git show. The contract points at that file with sizeBaseline and may set the maximum with sizeMaxTokens, which overrides the baseline maxFileTokens.
+    trunk tip, read with git show. The contract points at that file with sizeBaseline and may set the maximum with sizeMaxTokens, which overrides the baseline maxFileTokens. A human raise goes through a reviewed PR that a person merges outside the queue.
     """
     contract = store.contract
     maximum = contract.get("sizeMaxTokens")
@@ -582,42 +618,49 @@ def check_candidate_size(store, base, candidate):
     repo = store.repo
     shown = seam.git("show", f"{base}:{baseline_rel}", cwd=repo, check=False)
     if shown.returncode != 0:
-        if maximum is None:
-            return None
+        base_missing = True
         base_raw = None
-        effective = maximum
-        limit = seam.Limit(maximum, seam.DEFAULT_SKIP, {})
+        base_error = None
     else:
+        base_missing = False
         try:
-            base_obj = json.loads(shown.stdout)
+            base_raw = json.loads(shown.stdout)
         except json.JSONDecodeError as error:
-            if maximum is None:
-                return None
-            return f"size baseline at trunk tip cannot be read: {error}"
-        if maximum is None and not seam.baseline_enabled(base_obj):
-            return None
-        try:
-            parsed = seam.parse_limit(base_obj)
-        except ValueError as error:
-            return f"size baseline at trunk tip cannot be read: {error}"
-        base_raw = base_obj
-        if maximum is not None:
-            effective = maximum
-            parsed = seam.Limit(maximum, parsed.skip, parsed.files)
+            base_raw = None
+            base_error = str(error)
         else:
-            effective = parsed.max_tokens
-        limit = parsed
+            base_error = None
+    trusted = seam.resolve_trusted(maximum, base_raw, base_missing, base_error)
+    if trusted.error:
+        return trusted.error
+    if not trusted.enabled:
+        return None
+    effective = trusted.limit.max_tokens
+    contract_on = isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 1
+    if contract_on:
+        if not base_missing and isinstance(base_raw, dict):
+            raw_max = base_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
+            if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
+                raw_max = effective
+        else:
+            raw_max = effective
+        base_for_compare = {"maxFileTokens": raw_max,
+                            "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+    else:
+        base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
+                            "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
     cand_shown = seam.git("show", f"{candidate}:{baseline_rel}", cwd=repo, check=False)
     if cand_shown.returncode == 0:
         try:
             cand_obj = json.loads(cand_shown.stdout)
         except json.JSONDecodeError:
             return "size baseline cannot be read"
-        problem = seam.refused_policy_change(base_raw, cand_obj, effective)
+        problem = seam.refused_policy_change(base_for_compare, cand_obj, effective)
         if problem:
             return problem
-    elif base_raw is not None and isinstance(base_raw, dict) and base_raw.get("enabled") is True:
+    elif not base_missing:
         return "size baseline removes enabled policy; a person merges that raise outside the queue"
+    limit = trusted.limit
     generated = list(contract.get("generated") or [])
     limit = seam.Limit(limit.max_tokens, tuple(seam.DEFAULT_SKIP) + tuple(limit.skip) + tuple(generated) + (baseline_rel,), limit.files)
     changed = seam.changed_paths(repo, base, candidate)

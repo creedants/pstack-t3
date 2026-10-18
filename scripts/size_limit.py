@@ -4,9 +4,9 @@
 This bridge loads the pure sizes module with spec_from_file_location, so it
 needs no landing imports. check.py appends these findings when run without a tree argument. The
 limit runs when the landing contract for the repo sets a size limit, or when the
-baseline file explicitly opts in with enabled true. A baseline filename
+baseline file committed at the trunk base explicitly opts in with enabled true. A baseline filename
 alone never turns the limit on. A baseline that is not valid is one
-finding.
+finding while the limit is on.
 """
 
 import hashlib
@@ -120,7 +120,7 @@ def _walk_sizes(root):
 
 
 def findings(root):
-    """Size findings for one repo worktree. Empty when the limit is off, except an unparsable baseline is one finding."""
+    """Size findings for one repo worktree. Empty when the limit is off."""
     sizes = load_sizes()
     root = Path(root)
     contract = read_contract(root)
@@ -128,47 +128,81 @@ def findings(root):
     if not isinstance(baseline_rel, str) or not baseline_rel:
         baseline_rel = sizes.DEFAULT_BASELINE
     baseline_path = Path(baseline_rel) if Path(baseline_rel).is_absolute() else root / baseline_rel
-    maximum = contract.get("sizeMaxTokens")
-    contract_on = isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 1
-    if baseline_path.is_file():
-        try:
-            stored = sizes.load_baseline_file(str(baseline_path))
-        except ValueError as error:
-            return [f"{baseline_rel}: {error}"]
-        try:
-            work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            work_raw = None
-        if not contract_on and not sizes.baseline_enabled(work_raw):
+    contract_max_raw = contract.get("sizeMaxTokens")
+    contract_on = isinstance(contract_max_raw, int) and not isinstance(contract_max_raw, bool) and contract_max_raw >= 1
+    base = _base_commit(root, contract)
+    if base is None:
+        head = _git(root, "rev-parse", "--verify", "HEAD")
+        head_exists = head is not None and head.returncode == 0
+        if not head_exists:
+            if baseline_path.is_file():
+                try:
+                    stored = sizes.load_baseline_file(str(baseline_path))
+                except ValueError:
+                    if contract_on:
+                        return [f"{baseline_rel}: size baseline cannot be read"]
+                    return []
+                try:
+                    work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    work_raw = None
+                if not contract_on and not sizes.baseline_enabled(work_raw):
+                    return []
+                limit = sizes.Limit(contract_max_raw if contract_on else stored.max_tokens,
+                                    tuple(stored.skip), dict(stored.files))
+            elif contract_on:
+                limit = sizes.Limit(contract_max_raw, sizes.DEFAULT_SKIP, {})
+            else:
+                return []
+        else:
+            work_enabled = False
+            work_invalid = False
+            if baseline_path.is_file():
+                try:
+                    work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    work_invalid = True
+                    work_raw = None
+                else:
+                    work_enabled = sizes.baseline_enabled(work_raw)
+            if contract_on or work_enabled:
+                return [f"{baseline_rel}: size baseline at trunk tip cannot be read"]
+            if work_invalid and contract_on:
+                return [f"{baseline_rel}: size baseline cannot be read"]
             return []
-        base = _base_commit(root, contract)
-        if base is not None:
-            base_raw, missing = _show_at(root, base, baseline_rel)
-            if not missing:
-                try:
-                    base_limit = sizes.parse_limit(base_raw) if isinstance(base_raw, dict) else stored
-                except ValueError as error:
-                    return [f"{baseline_rel}: {error}"]
-                effective = maximum if contract_on else base_limit.max_tokens
-                problem = sizes.refused_policy_change(base_raw, work_raw, effective)
-                if problem:
-                    return [f"size limit: {problem}"]
-                limit = sizes.Limit(effective, tuple(base_limit.skip), dict(base_limit.files))
-                skip = tuple(sizes.DEFAULT_SKIP) + tuple(limit.skip) + tuple(_generated_list(contract)) + (baseline_rel,)
-                limit = sizes.Limit(limit.max_tokens, skip, limit.files)
-                try:
-                    current = _walk_sizes(root)
-                except OSError as error:
-                    return [f"size limit: worktree cannot be read: {error}"]
-                verdict = sizes.judge(current, limit)
-                return [f"size limit: {sizes.format_over(item)}" for item in verdict.over]
-        if not contract_on:
-            maximum = stored.max_tokens
-        limit = sizes.Limit(maximum, tuple(stored.skip), dict(stored.files))
-    elif contract_on:
-        limit = sizes.Limit(maximum, sizes.DEFAULT_SKIP, {})
     else:
-        return []
+        base_raw, missing = _show_at(root, base, baseline_rel)
+        trusted = sizes.resolve_trusted(contract_max_raw, base_raw, missing, None)
+        if trusted.error:
+            return [f"{baseline_rel}: {trusted.error}"]
+        if not trusted.enabled:
+            return []
+        if not baseline_path.is_file():
+            if not missing:
+                return ["size limit: size baseline removes enabled policy; a person merges that raise outside the queue"]
+        else:
+            try:
+                work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                return [f"{baseline_rel}: size baseline cannot be read"]
+            if contract_on:
+                if not missing and isinstance(base_raw, dict):
+                    raw_max = base_raw.get("maxFileTokens", sizes.DEFAULT_MAX_TOKENS)
+                    if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
+                        raw_max = trusted.limit.max_tokens
+                else:
+                    raw_max = trusted.limit.max_tokens
+                base_for_compare = {"maxFileTokens": raw_max,
+                                    "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+            else:
+                base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
+                                    "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+            problem = sizes.refused_policy_change(base_for_compare, work_raw, trusted.limit.max_tokens)
+            if problem:
+                if problem == "size baseline cannot be read":
+                    return [f"{baseline_rel}: {problem}"]
+                return [f"size limit: {problem}"]
+        limit = trusted.limit
     skip = tuple(sizes.DEFAULT_SKIP) + tuple(limit.skip) + tuple(_generated_list(contract)) + (baseline_rel,)
     limit = sizes.Limit(limit.max_tokens, skip, limit.files)
     try:

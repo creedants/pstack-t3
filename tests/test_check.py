@@ -1960,12 +1960,15 @@ class SizeLimitBridgeTest(unittest.TestCase):
                           [("vendor/huge.py", 400)])
         self.assertEqual(size_limit.findings(root), [])
 
-    def test_a_baseline_that_cannot_be_parsed_is_one_finding(self):
+    def test_a_malformed_incidental_baseline_without_trusted_policy_reports_nothing(self):
         root = self._repo()
         (root / "size-baseline.json").write_text("{broken")
-        findings = size_limit.findings(root)
-        self.assertEqual(len(findings), 1)
-        self.assertTrue(findings[0].startswith("size-baseline.json: "), findings)
+        self.assertEqual(size_limit.findings(root), [])
+
+    def test_a_differently_shaped_incidental_baseline_without_trusted_policy_reports_nothing(self):
+        root = self._repo()
+        (root / "size-baseline.json").write_text(json.dumps({"foo": 1}))
+        self.assertEqual(size_limit.findings(root), [])
 
     def test_a_baseline_filename_without_enabled_marker_reports_nothing(self):
         root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}}, [("big.py", 24)])
@@ -2047,3 +2050,55 @@ class SizeLimitBridgeTest(unittest.TestCase):
         findings = size_limit.findings(root)
         self.assertEqual(len(findings), 1)
         self.assertIn("raises the allowance for big.py", findings[0])
+
+    def test_a_disabled_candidate_baseline_does_not_disable_trusted_policy(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        (root / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5, "skip": [], "files": {}, "enabled": False}))
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("removes enabled policy", findings[0])
+
+    def test_a_deleted_candidate_baseline_does_not_disable_trusted_policy(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        (root / "size-baseline.json").unlink()
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("removes enabled policy", findings[0])
+
+    def test_a_missing_trunk_ref_with_enabled_policy_fails_closed(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "LC_ALL": "C"}
+        subprocess.run(["git", "checkout", "-q", "--detach", "HEAD"], cwd=root, env=env, check=True)
+        subprocess.run(["git", "branch", "-q", "-D", "main"], cwd=root, env=env, check=True)
+        (root / "size-baseline.json").write_text(json.dumps(
+            {"maxFileTokens": 5, "skip": [], "files": {"big.py": 5001}, "enabled": True}))
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("cannot be read", findings[0])
+
+    def test_a_malformed_candidate_baseline_with_trusted_policy_is_refused(self):
+        root = self._git_repo({"maxFileTokens": 5, "skip": [], "files": {}, "enabled": True},
+                              [("big.py", 24)])
+        (root / "size-baseline.json").write_text("{broken")
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("cannot be read", findings[0])
+
+    def test_removing_a_below_maximum_allowance_is_refused(self):
+        sizes = size_limit.load_sizes()
+        base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {"small.py": 4000}}
+        candidate = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}
+        self.assertEqual(
+            sizes.refused_policy_change(base, candidate, 5000),
+            "size baseline raises the allowance for small.py; a person merges that raise outside the queue")
+
+    def test_removing_an_above_maximum_allowance_lands(self):
+        sizes = size_limit.load_sizes()
+        base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {"small.py": 6000}}
+        candidate = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}
+        self.assertIsNone(sizes.refused_policy_change(base, candidate, 5000))
