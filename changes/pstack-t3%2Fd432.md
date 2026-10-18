@@ -1,3 +1,3 @@
-- kind bug-fix
+- kind fix
 - `t3/added/landing/scripts/landing_lib/governor.py` `stop_group` sends the group SIGTERM and its `ProcessLookupError` arm inside the `try` whose `except BaseException` arm sends SIGKILL to the group and re-raises, so a signal in that interval kills the group at once and costs no second grace.
 - `tests/landing/test_slot.py` gains `test_a_signal_between_the_group_sigterm_and_the_grace_kills_the_group_at_once`, whose wrapper stops the supervisor right after its SIGTERM to the group while the test sends SIGHUP and resumes it, and asserts the supervisor exits 129 within 10s, one third of the 30s grace.

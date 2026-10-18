@@ -1,0 +1,2 @@
+- kind fix
+- `scripts/check.py` `change_findings` reports a finding for a `changes/` entry that is not a fragment, is not UTF-8, names a bad kind, or breaks a bullet rule.

@@ -321,6 +321,55 @@ def _catalog():
     return _catalog_module
 
 
+_release_module = None
+
+
+def _release():
+    global _release_module
+    if _release_module is None:
+        spec = importlib.util.spec_from_file_location("pstack_release", Path(__file__).resolve().parent / "release.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _release_module = module
+    return _release_module
+
+
+def _at_file_line(name, fault, offset):
+    match = re.match(r"line (\d+)(.*)", fault)
+    if match is None:
+        return f"changes/{name} {fault}"
+    return f"changes/{name} line {int(match.group(1)) + offset}{match.group(2)}"
+
+
+def change_findings(changes: Path) -> list[str]:
+    release = _release()
+    directory = Path(changes)
+    if not directory.is_dir():
+        return []
+    findings = []
+    for entry in sorted(directory.iterdir()):
+        if entry.is_symlink() or not entry.is_file() or not entry.name.endswith(".md"):
+            findings.append(f"changes/{entry.name} is not a fragment")
+            continue
+        try:
+            text = entry.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            findings.append(f"changes/{entry.name} is not UTF-8")
+            continue
+        lines = text.split("\n")
+        lines = lines[:-1] if lines and lines[-1] == "" else lines
+        try:
+            _kind, rest = release.take_kind(entry.name, lines)
+        except SystemExit as error:
+            findings.append(str(error.code).split("; ")[0])
+            continue
+        fault = release.bullet_fault(rest)
+        if fault:
+            findings.append(_at_file_line(entry.name, fault, len(lines) - len(rest)))
+    return findings
+
+
 def light_waiver_cells():
     spec = importlib.util.spec_from_file_location("pstack_roles", ROLES_PY)
     roles = importlib.util.module_from_spec(spec)
@@ -756,6 +805,7 @@ def check_tree(root, guide=True):
     if (root / RENDERED_MARKER).is_file():
         repo = Path(__file__).resolve().parents[1]
         findings.extend(library_wording_findings(repo / "tests"))
+        findings.extend(change_findings(repo / "changes"))
         findings.extend(machine_value_findings(repo / "ops", repo / "docs/operations.md", _machine_identity()))
         findings.extend(shared_source_findings(repo / "t3/scripts/roles.py", repo / "scripts/install.py"))
         if guide:
