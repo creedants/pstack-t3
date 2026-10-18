@@ -6,6 +6,10 @@ check_tree judges the tree it is given, and when that tree contains `pstack-runt
 
 from pathlib import Path
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 try:
     import yaml
 except ImportError:  # the build still runs; frontmatter gets the shallow check only
