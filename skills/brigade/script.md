@@ -156,7 +156,7 @@ Each command's text below is the text that moved out of the command block in [th
 
 **`$B 86 add`.** prints Q<n>.
 
-**`$B 86 add --round-budget`.** the decision D2 owes at three send-backs. prints Q<n>.
+**`$B 86 add --round-budget`.** the decision D2 owes at its round budget, set by `roundBudget` in `restaurant.json` and defaulting to three send-backs. prints Q<n>.
 
 ### close
 
