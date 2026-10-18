@@ -2,4 +2,4 @@
 - `vendor/pstack/` is the `pstack/` tree from the repository in `upstream.json` at 0148b78c56c72a1b8412055913c79f767095b217, and `upstream.json` pins that commit and version 0.15.27
 - between 0b8e952052d482ee6de06deebf14d590d77b1b34 and 0148b78c56c72a1b8412055913c79f767095b217, upstream changes `pstack/.cursor-plugin/plugin.json` and `pstack/plugin.json` and `pstack/skills/sharpen/SKILL.md`, and those are the only paths that differ under `vendor/pstack/`
 - no override or persona changed, `t3/overrides.lock.json` is unchanged, and `python3 scripts/build.py` regenerates `skills/sharpen/SKILL.md`
-- `skills/sharpen/SKILL.md` drops the rewritten prompt ban and keeps the runtime pointer and the dropped frontmatter key
+- `skills/sharpen/SKILL.md` drops the rewritten prompt ban, keeps the runtime pointer, and omits `disable-model-invocation` from its frontmatter
