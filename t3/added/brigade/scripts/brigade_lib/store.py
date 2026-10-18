@@ -1,3 +1,4 @@
+"""Patch a name in the _store submodule that reads it; patching it here does not reach callers."""
 from brigade_lib._store.opening import ADMIN_MENU, HOUSE_RULES, MENU, OFF_MENU_TEMPLATE, PURPOSE_TEMPLATE, intake_owner, menu_section, open_restaurant, refuse_owned_intake, sibling_lines, siblings
 from brigade_lib._store.restaurant import HELD_LOCKS, Restaurant, _read_meta, holder_prefix, is_admin, is_timestamp, parse_row, read_chunk, store_path, wait_for_meta, write_atomic
 from brigade_lib._store.settings import CHANGE_NOTE_KEY, CHANGE_NOTE_REFUSAL, LIVENESS_DEFAULT_MS, LIVENESS_FLOOR, LIVENESS_KEY, LOW_RESERVE_KEY, ROUND_BUDGET_KEY, SCRATCH_KEY, SCRATCH_REFUSAL, _change_note_norm, change_note_dir, liveness_of, low_reserve_of, parse_change_note_dir, parse_liveness_ms, parse_low_reserve, parse_round_budget, reporting_of, roles_script, round_budget_of, scratch_parent_text, store_root
