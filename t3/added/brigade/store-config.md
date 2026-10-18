@@ -28,15 +28,15 @@ A `file` entry names one document. A `file` entry whose path ends with `/` names
 
 `changeNoteDir` sets the fragment directory `fire` leases. Set it with `set --change-note-dir`. For example `set --change-note-dir notes` records `notes`. Clear it with an empty value.
 
-It is an optional repository-relative directory path. It defaults to unset. When it is set, `fire` leases `<dir>/<branch>.md` for the branch that attempt will use. `%` is written as `%25` and `/` is written as `%2F`. When it is unset, `fire` leases no fragment. `fire` with no paths leases nothing and reads nothing.
+It is an optional repository-relative directory path. It defaults to unset. When it is set, `fire` leases `<dir>/<branch>.md` for the branch that attempt will use. `%` is written as `%25` and `/` is written as `%2F`. When it is unset, `fire` leases no fragment. `fire` with no paths reads no `changeNoteDir` and leases no fragment.
 
 ## Refusals
 
-`set` validates the prospective settings with the same readers `affected` and `fire` use. `layout` judges `affectedTests`. `doc_policy` judges `sharedDocs` and `docTimebox`. A present value that does not parse is refused, with nothing written and no lease claimed.
+`set` validates the prospective settings with the same readers `affected` and `fire` use. `layout` judges `affectedTests`. `doc_policy` judges `sharedDocs` and `docTimebox`. `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment. `fire` always reads `sharedDocs` and `docTimebox` and never reads `affectedTests`.
 
 ## Example
 
-This section is an example. It holds this repository values. It names no default. The `affectedTests` block is a key fragment. Replace the placeholder interpreter path. Pass it with `set --affected-tests`.
+This section is an example. It holds example values. It names no default. The `affectedTests` block is a key fragment. Save its inner object to a file and pass that file with `set --affected-tests`, or pipe that object. Replace the placeholder interpreter path.
 
 ```json
 "affectedTests": {

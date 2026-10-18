@@ -112,7 +112,7 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
 
 `changeNoteDir` sets the fragment directory `fire` leases. Set it with `set --change-note-dir`. Rules and an example are in [store-config.md](store-config.md).
 
-A present value that does not parse is refused when `fire` leases paths, with nothing written and no lease claimed. `fire` with no paths leases nothing and reads nothing.
+`set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment.
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](script.md#brief-fields).
 
