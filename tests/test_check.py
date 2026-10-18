@@ -1976,7 +1976,7 @@ class SizeLimitBridgeTest(unittest.TestCase):
                           [("photo.PNG", 400), ("diagram.svg", 400), ("web/package-lock.json", 400)])
         self.assertEqual(size_limit.findings(root), [])
 
-    def test_a_nested_generated_root_over_the_maximum_passes(self):
+    def test_a_nested_skip_root_over_the_maximum_passes(self):
         root = self._repo({"maxFileTokens": 5, "skip": ["build/output"], "files": {}, "enabled": True},
                           [("build/output/big.py", 400)])
         self.assertEqual(size_limit.findings(root), [])

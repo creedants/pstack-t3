@@ -4,7 +4,7 @@
 This bridge loads the pure sizes module with spec_from_file_location, so it
 needs no landing imports. check.py appends these findings when run without a tree argument. The
 limit runs when the landing contract for the repo sets a size limit, or when the
-committed baseline file explicitly opts in with enabled true. A baseline filename
+baseline file explicitly opts in with enabled true. A baseline filename
 alone never turns the limit on. A baseline that is not valid is one
 finding.
 """
