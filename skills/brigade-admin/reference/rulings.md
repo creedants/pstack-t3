@@ -1,6 +1,6 @@
 # Rulings detail
 
-Read this before `$B rule add` or acting on an overrule or appeal. The core keeps the kinds and the order. This file holds kinds, inputs, age and lease rules, carrying out, States, Replacing, Overrule, Appeals, and Escalate.
+Read this before `$B rule add` or acting on an overrule or appeal. The core states that rules apply in order. This file holds kinds, inputs, age and lease rules, carrying out, States, Replacing, Overrule, Appeals, and Escalate.
 
 
 ## Rulings
