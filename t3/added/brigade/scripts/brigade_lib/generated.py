@@ -3,6 +3,7 @@ import posixpath
 from dataclasses import dataclass
 from enum import Enum
 from brigade_lib import seam
+from brigade_lib.shared import BrigadeError
 
 
 class Kind(Enum):
@@ -20,6 +21,7 @@ class Rule:
     source: Pattern
     target: Pattern
     kind: Kind
+    skip_doc: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,12 +66,29 @@ def parse(rows):
             return EMPTY
         rules = []
         for row in rows:
+            skip_doc = False
             if isinstance(row, dict):
                 src_text = row.get("src")
                 dst_text = row.get("dst")
                 kind_text = row.get("kind")
+                raw_skip = row.get("skip_doc", row.get("skip", False))
+                if isinstance(raw_skip, bool):
+                    skip_doc = raw_skip
+                elif raw_skip in (0, 1):
+                    skip_doc = bool(raw_skip)
+                else:
+                    if raw_skip not in (False, None):
+                        return EMPTY
             elif isinstance(row, (list, tuple)) and len(row) == 3:
                 src_text, dst_text, kind_text = row
+            elif isinstance(row, (list, tuple)) and len(row) == 4:
+                src_text, dst_text, kind_text, raw_skip = row
+                if isinstance(raw_skip, bool):
+                    skip_doc = raw_skip
+                elif raw_skip in (0, 1):
+                    skip_doc = bool(raw_skip)
+                else:
+                    return EMPTY
             else:
                 return EMPTY
             if not isinstance(src_text, str) or not isinstance(dst_text, str):
@@ -87,7 +106,7 @@ def parse(rows):
             else:
                 if _captures_of(src_pat) != _captures_of(dst_pat):
                     return EMPTY
-            rules.append(Rule(src_pat, dst_pat, kind))
+            rules.append(Rule(src_pat, dst_pat, kind, skip_doc))
         return GeneratedMap(tuple(rules))
     except Exception:
         return EMPTY
@@ -105,7 +124,19 @@ def read(project_root):
         generated = payload.get("generated")
         if not generated:
             return EMPTY
-        return parse(payload.get("map"))
+        raw_map = payload.get("map")
+        if not isinstance(raw_map, (list, tuple)) or not raw_map:
+            raise BrigadeError(
+                "contract lists generated paths but holds no generated map; "
+                "run land.py init --generated-map <MAP> to install one")
+        parsed = parse(raw_map)
+        if not parsed.rules:
+            raise BrigadeError(
+                "contract lists generated paths but holds no generated map; "
+                "run land.py init --generated-map <MAP> to install one")
+        return parsed
+    except BrigadeError:
+        raise
     except Exception:
         return EMPTY
 
@@ -173,7 +204,7 @@ def _join(pattern):
 
 
 def expand(gen_map, norm, doc_item=False):
-    """Forward paths from one norm. Index rules are skipped for doc items."""
+    """Forward paths from one norm. Rules that skip doc items are skipped for doc items."""
     try:
         if gen_map is None or not gen_map.rules:
             return ()
@@ -185,7 +216,7 @@ def expand(gen_map, norm, doc_item=False):
         found = []
         seen = set()
         for rule in gen_map.rules:
-            if rule.kind == Kind.INDEX and doc_item:
+            if doc_item and rule.skip_doc:
                 continue
             if _captures_of(rule.source) == 0 and _captures_of(rule.target) == 0:
                 src_text = _join(rule.source)
