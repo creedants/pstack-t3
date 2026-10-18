@@ -186,7 +186,7 @@ def new_checkout(directory, repository, pinned):
     scripts.mkdir(parents=True)
     for name in ("sync_upstream", "build", "check"):
         shutil.copy(ROOT / f"scripts/{name}.py", scripts)
-    shutil.copytree(ROOT / "scripts/_check", scripts / "_check")
+    shutil.copytree(ROOT / "scripts/_check", scripts / "_check", ignore=shutil.ignore_patterns("__pycache__"))
     write_tree(root, T3_TREE)
     write_tree(root / "vendor", {name: text for name, text in PINNED_TREE.items() if name.startswith("pstack/")})
     meta = {"repository": str(repository), "commit": pinned, "path": "pstack", "version": "1.0.0"}
