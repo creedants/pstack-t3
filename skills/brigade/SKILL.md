@@ -20,12 +20,12 @@ Read the core first. Read one reference file when its trigger holds. Do not read
 | File | Read when |
 | --- | --- |
 | [commands](reference/commands.md) | a `$B` command refuses or needs a flag the block does not show |
-| [store-rules](reference/store-rules.md) | before `fire`, `dish`, or `set --cap`, `--review`, `--mode` |
+| [store-rules](reference/store-rules.md) | before triage, `fire`, `dish`, `open --workers`, `set`, or acting on a block |
 | [service](reference/service.md) | at every service before step 1 |
 | [review](reference/review.md) | on a report-back or verifier completion |
-| [replies](reference/replies.md) | before any reply |
+| [replies](reference/replies.md) | every wake, before assistant text or a reply decision |
 | [liveness](reference/liveness.md) | on the liveness schedule |
-| [housekeeping](reference/housekeeping.md) | after a merge, drop, send-back, or bounce, and on the first service |
+| [housekeeping](reference/housekeeping.md) | first service, cleanup, or a reporting-level change |
 
 ## Terms
 
@@ -91,7 +91,7 @@ A head chef's first wake runs [First service](opening.md#first-service), then Ru
 
 ## Filing tracker work
 
-Coordinators and the executive admin follow this section before each `ticket add` for a user request or a supplier finding. The tracker is the one AGENTS.md names. Read its open items with the commands AGENTS.md names. Run `gh issue list` only when AGENTS.md names no other tracker. The rail records the work a restaurant runs. It is not the project's tracker.
+Follow this section before each `ticket add` for a user request or a supplier finding. The rail records the work a restaurant runs. It is not the project's tracker.
 
 1. **Match.** Read [commands](reference/commands.md) for the ref match before filing.
 2. **File.** Read [commands](reference/commands.md) for AGENTS.md filing rules.
@@ -104,7 +104,7 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
 
 0. **Next.** Run `$B next` first with the wake name. Read [service](reference/service.md) for the wake table before step 1.
 
-1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. Re-read the menu every service. `$B status` prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no further command. Read [service](reference/service.md) for the owner token and re-read rules.
+1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. `$B status` prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no further command. Read [service](reference/service.md) before step 2.
 
 2. **Take tickets.** Start with `$B inbox take`. Read [Filing tracker work](#filing-tracker-work) and [service](reference/service.md) for routing and handoff.
 
@@ -113,7 +113,7 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
 4. **Fire.** Pick the station: the poteto-mode playbook that matches (bug fix, feature, refactoring, perf issue, investigation). Then:
    1. `$B fire --tickets ... --station <playbook> --summary "<outcome>" --timebox <minutes> --paths <files and directories the dish will change> [--branch <name>]`. Pass `--mode full --reason "<one line>"` for a lock, lease, race, migration, or history rewrite. Read [service](reference/service.md) and [store-rules](reference/store-rules.md) for lease, cap, and doc rules before firing.
    2. `$B brief <dish> --fields <path>`. Read [service](reference/service.md) for brief fields before writing them.
-   3. Launch the worker with `t3_thread_launch`: title `<restaurant> <dish>: <summary>`, `workspaceStrategy` with the brief branch, and the brief as `message`. Resolve seats with `roles.py show --brief-mode <the Mode: value>` per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). Build `modelSelection` per [the runtime's Top-level threads section](../pstack-runtime/SKILL.md#top-level-threads). Confirm options per [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation) before step 4.4. Step 4.4 records the thread only after the readback matches. On a mismatch, stop the thread, record nothing, and park per [Seat mismatch](recovery.md#seat-mismatch).
+   3. Launch the worker with `t3_thread_launch`: title `<restaurant> <dish>: <summary>`, `workspaceStrategy` with the brief branch, and the brief as `message`. Resolve seats with `roles.py show --brief-mode <the Mode: value>` per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). Build `modelSelection` per [the runtime's Top-level threads section](../pstack-runtime/SKILL.md#top-level-threads). Confirm options per [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation) before step 4.4. Step 4.4 records the thread only after the readback matches. On a mismatch, stop the thread, record nothing, and park per [Seat mismatch](recovery.md#seat-mismatch). Read [service](reference/service.md#43-launch-detail) for the full strategy before launching.
    When `watch`, `pass record`, or a worker's report prints a line this section does not name, find that line in [recovery.md](recovery.md) and follow its step.
    4. `$B dish <dish> --thread <threadId>` only after the readback in step 4.3 matches.
 
@@ -121,15 +121,15 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
 
 5. **End the turn** while dishes run. Read [service](reference/service.md) for the report-back and liveness backstop.
 
-6. **Review.** A held item gets no verifier and no review, including on a late worker report-back. Read its report and diff. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier with `delegate_task`, `mode: "async"`, from `verifiers` on another family. Right after the spawn, confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts, per [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation). Read [review](reference/review.md) for the brief, rounds, and checks. Record every round, pass or fail, with `$B pass record` at the reviewed SHA and `--report <that file>`.
+6. **Review.** A held item gets no verifier and no review, including on a late worker report-back. Read [review](reference/review.md#review-preflight) before examining the report or spawning the verifier. Read its report and diff. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier with `delegate_task`, `mode: "async"`, from `verifiers` on another family. Right after the spawn, confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts, per [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation). Read [review](reference/review.md) for the brief, rounds, and checks. Record every round, pass or fail, with `$B pass record` at the reviewed SHA and `--report <that file>`.
 
    **Contested.** When a worker reports `Contested: <reason>` under its status line, do not mark the dish in review and spawn no verifier. Follow [Contested](recovery.md#contested).
 
 7. **Act on the verdict.** A held item gets no send-back worker and no bounce worker.
-   - `pass`: first run `$B ticket add --from-report reports/<dish>.md`. File follow-ups, then submit per [review](reference/review.md). Read each `not filed` line and file each real follow-up with `$B ticket add --summary "..." --kind <kind>`.
+   - `pass`: first run `$B ticket add --from-report reports/<dish>.md`. File follow-ups, then submit per [review](reference/review.md).
    - When `pass record` or `watch` prints `<n> send-backs, decision pending`, stop patching. Launch no fix worker. Follow [Decision pending](recovery.md#decision-pending) in place of the `send-back` bullet below.
-   - `send-back`: finish with the old worker per [Git and PR housekeeping](#git-and-pr-housekeeping). Then `$B dish <id> --state in-progress`. Rerun `$B brief` with `--base <the old branch head>` and `Attempt: fix` lines. Every send-back launches a fresh worker per steps 4.3 and 4.4 on a new branch, unless held. Never call `t3_thread_send` on the old worker. Archive printed ids with `t3_thread_organize` and that explicit `threadId`.
-   Read [review](reference/review.md) for `bounced`, `pass with edits`, drop steps, `blocked`, usage limit, and step 8 before acting further.
+   - `send-back`: finish with the old worker per [Git and PR housekeeping](#git-and-pr-housekeeping). Then `$B dish <id> --state in-progress`. Rerun `$B brief` with `--base <the old branch head>`. Every send-back launches a fresh worker per steps 4.3 and 4.4, unless held. Read [review](reference/review.md#send-back-detail) before acting.
+   Read [review](reference/review.md) for `bounced`, `pass with edits`, drop steps, `blocked`, usage limit, step 8, and the full `send-back` procedure before acting further.
 
 8. **Fix the recipe.** Read [review](reference/review.md) for the lint, type, test, or skill dish and the weekly reflect.
 
@@ -137,17 +137,17 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
 
 ### Digest messages
 
-At `digest`, write every reply for a person who has not followed the work. End the message with one line that names that path. Read [replies](reference/replies.md#digest-messages) for the shape, IDs, and drain summary before sending.
+At `digest`, write every reply for a person who has not followed the work. Read [replies](reference/replies.md#digest-messages) before sending. `$B close --to-file` prints the report path. End the message with one line that names that path.
 
 ## Git and PR housekeeping
 
-The head chef owns every git and PR chore. Read [housekeeping](reference/housekeeping.md) before merging or cleaning. Call `unwatch_pull_request` only when this thread stops driving that PR.
+The head chef owns every git and PR chore its work creates. Read [housekeeping](reference/housekeeping.md) before merging or cleaning. Call `unwatch_pull_request` only when this thread stops driving that PR.
 
 ## Liveness check
 
 Run on the liveness schedule, and at the start of any service while work is in progress.
 
-1. `$B watch`. It prints one line per dish and ticket. On `handed to you`, run `$B ticket take`. On `unblocked`, run the printed `fire` command. Read [liveness](reference/liveness.md) for every watch line before acting.
+1. `$B watch`. The reference lists its output. On `handed to you`, run `$B ticket take`. On `unblocked`, run the printed `fire` command. Read [liveness](reference/liveness.md) for every watch line before acting.
    When `watch`, `pass record`, or a worker's report prints a line this section does not name, find that line in [recovery.md](recovery.md) and follow its step.
 
 2. Read [liveness](reference/liveness.md) for the report-written check.
@@ -156,7 +156,7 @@ Run on the liveness schedule, and at the start of any service while work is in p
 
 4. Read [liveness](reference/liveness.md) for the over-timebox check. Step 4.4 records that thread.
 
-5. `D<n>: running Nm of Tm (thread <id>)`: `t3_thread_read` the worker. When `activeRunId` is null and the latest run completed more than 10 minutes ago, it is idle with no report for the current attempt. Send one nudge with `t3_thread_send`, mode `"auto"`, `clientRequestId` `nudge-<dish>-<that run id>`. A worker idle again after that nudge goes to step 4. Read [liveness](reference/liveness.md) for reply rules.
+5. `D<n>: running Nm of Tm (thread <id>)`: `t3_thread_read` the worker. When `activeRunId` is null and the latest run completed more than 10 minutes ago, it is idle with no report for the current attempt. Send one nudge with `t3_thread_send`, mode `"auto"`, `clientRequestId` `nudge-<dish>-<that run id>`. A worker idle again after that nudge goes to step 4. Read [liveness](reference/liveness.md) for the full nudge and reply rules before sending it.
 
    - `D1: open decision Q1: <question>; launch no worker or verifier until 86 answer Q1`. Launch nothing and spawn nothing. Read no worker thread and send it no nudge. Skip Liveness steps 2 to 5 for that item. Act on a lease line printed under it. After `$B 86 answer` prints `Q<n> answered`, the ordinary line returns.
    - `D1: 3 send-backs, decision pending`. Launch no fix worker. Follow the decision-pending bullet in Run a service step 7.
@@ -168,7 +168,7 @@ When the user asks what the agents are doing, or asks for activity or status as 
 
 ## Executive chef's view
 
-`$B status` prints the reporting level, the landing mode as `lands by <mode>` or `no landing contract`, then the counts. A `restaurant.json` with no `reporting` field reads as `milestones`. `$B status` prints `mode <m>` when `restaurant.json` records one. Before you run `brigade.py walk` to show the owner view, read [Executive chef's view](views.md#executive-chefs-view) in views.md. That view lives in views.md.
+`$B status` prints the reporting level, the landing mode as `lands by <mode>` or `no landing contract`, then the counts. `$B status` prints `mode <m>` when `restaurant.json` records one. Before you run `brigade.py walk` to show the owner view, read [Executive chef's view](views.md#executive-chefs-view) in views.md.
 
 ## Close a restaurant
 
@@ -176,6 +176,6 @@ To close a restaurant, follow [Close a restaurant](opening.md#close-a-restaurant
 
 ## Reporting to an executive admin
 
-While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you act on an admin request or send that thread anything, and follow it in place of step 9's levels. Also read it when `$B inbox take` prints an admin request, even without a `reports to` line. An executive admin following a link here reads [admin-reporting.md](admin-reporting.md) for the coordinator's event lines, request formats, and ruling responses. What the admin does, and its limits, are in the [brigade-admin skill](../brigade-admin/SKILL.md). Work a `from-user` request asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id.
+While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you act on an admin request or send that thread anything. Also read it when `$B inbox take` prints an admin request. Work a `from-user` request asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id.
 
-Admin work is in [Admin service](../brigade-admin/SKILL.md#admin-service), [Admin messages](../brigade-admin/SKILL.md#admin-messages), [Rulings](../brigade-admin/SKILL.md#rulings), and [What the admin never does](../brigade-admin/SKILL.md#what-the-admin-never-does).
+Admin work is in the [brigade-admin skill](../brigade-admin/SKILL.md): [Admin service](../brigade-admin/SKILL.md#admin-service), [Admin messages](../brigade-admin/SKILL.md#admin-messages), [Rulings](../brigade-admin/SKILL.md#rulings), and [What the admin never does](../brigade-admin/SKILL.md#what-the-admin-never-does).
