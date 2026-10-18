@@ -10,4 +10,4 @@
 - generic skips cover top-level vendor and cache and images case-insensitive including svg and lockfiles by basename at any depth
 - shrink uses the effective maximum
 - status and status json output matches the prior shape while the limit is off
-- the queue refuses a candidate baseline with a maximum or files map that cannot be read
+- the queue refuses a candidate baseline with a maximum or files map that cannot be read when the trunk tip holds a baseline
