@@ -545,13 +545,13 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(list(payload), ["budget", "mode", "modeSource", "escalate", "catalog", "roles"])
         self.assertEqual(payload, bug_fix_show("full", str(repo.project), FOUR_PATHS))
 
-    def test_missing_mode_defaults_to_full(self):
+    def test_missing_mode_defaults_to_light(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             completed = repo.show_bug_fix()
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)
-        self.assertEqual(payload, bug_fix_show("full", "default", None))
+        self.assertEqual(payload, bug_fix_show("light", "default", None))
         self.assertEqual(payload["roles"]["bug-fix"], INHERIT_ENTRY)
 
     def test_project_without_mode_uses_the_user_mode(self):
@@ -794,7 +794,7 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(payload["modeSource"], str(repo.user))
         self.assertEqual(payload["escalate"], ["**/migrations/**"])
 
-    def test_replace_without_mode_resets_to_full(self):
+    def test_replace_without_mode_resets_to_light(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             first = repo.write("--mode", "light")
@@ -804,7 +804,7 @@ class ModeCliTest(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stderr)
             document = json.loads(repo.user.read_text())
         self.assertEqual(list(document), ["version", "roles", "budget", "mode"])
-        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
+        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "light"})
 
     def test_keep_preserves_user_mode(self):
         with self.open_repo() as directory:
@@ -957,7 +957,7 @@ class ModeCliTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             document = json.loads(repo.user.read_text())
             self.assertEqual(repo.user.with_name("roles.json.bak").read_bytes(), before)
-        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "full"})
+        self.assertEqual(document, {"version": 1, "roles": {}, "budget": "small", "mode": "light"})
 
     def test_write_refuses_invalid_json_and_leaves_the_file(self):
         with self.open_repo() as directory:
@@ -1097,11 +1097,11 @@ class ModeCliTest(unittest.TestCase):
         propose = text.index("**(b) Propose roles.**")
         head = text[:propose]
         self.assertIn("**(c) Confirm.**", text)
-        self.assertIn("full — recommended when no provider is near its limit", head)
-        self.assertIn("- `light`", head)
+        self.assertIn("- `light` (recommended)", head)
+        self.assertIn("- `full`", head)
         self.assertLess(
-            head.index("full — recommended when no provider is near its limit"),
-            head.index("- `light`"),
+            head.index("- `light` (recommended)"),
+            head.index("- `full`"),
         )
         for path in (
             "**/migrations/**",
@@ -1114,7 +1114,7 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(re.findall(r'--set "([^"]+)"', text), SET_EXAMPLES)
         self.assertIn("--budget large --mode full", text)
         self.assertIn(f"description: {SETUP_DESCRIPTION}", text)
-        self.assertIn("A user write with no stored mode and no `--mode` stores `full`.", text)
+        self.assertIn("A user write with no stored mode and no `--mode` stores `light`.", text)
         self.assertIn("A project write with no stored mode and no `--mode` omits the key.", text)
         self.assertIn("Omitting `--escalate` leaves a stored project list in place.", text)
         self.assertIn("Tell the user which file was written, the budget, the mode,", text)
@@ -1399,7 +1399,7 @@ class ModeCliTest(unittest.TestCase):
     def test_full_with_small_budget_keeps_medium(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
-            repo.put(repo.user, {"budget": "small", "roles": {"bug-fix": [OPUS_SEAT]}})
+            repo.put(repo.user, {"mode": "full", "budget": "small", "roles": {"bug-fix": [OPUS_SEAT]}})
             completed = repo.show_bug_fix()
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)
@@ -1424,12 +1424,12 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(completed.stderr, NO_CATALOG_INFO)
         self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"], INHERIT_ENTRY)
 
-    def test_full_without_parent_prints_no_info(self):
+    def test_default_without_parent_prints_info(self):
         with self.open_repo() as directory:
             repo = Repo(directory)
             completed = repo.run("show", "--catalog", str(CATALOG), "--role", "bug-fix")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stderr, "")
+        self.assertEqual(completed.stderr, NO_PARENT_INFO)
 
     def test_light_with_large_budget_without_parent_prints_no_info(self):
         with self.open_repo() as directory:
@@ -1475,7 +1475,7 @@ class ModeCliTest(unittest.TestCase):
         self.assertEqual(capped_payload["roles"]["bug-fix"], INHERIT_ENTRY)
         self.assertEqual(plain.returncode, 0, plain.stderr)
         plain_payload = json.loads(plain.stdout)
-        self.assertEqual(plain_payload["mode"], "full")
+        self.assertEqual(plain_payload["mode"], "light")
         self.assertEqual(plain_payload["modeSource"], "default")
         self.assertEqual(plain_payload["roles"]["bug-fix"], INHERIT_ENTRY)
 
@@ -2051,11 +2051,11 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "codex/gpt-6.1-sol",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
-            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at xhigh",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
-    def test_grok_worker_relaunches_on_opus_at_its_level(self):
+    def test_grok_worker_relaunches_on_opus_at_the_light_cap(self):
         completed = self.backup(
             "--role", "feature, refactoring",
             "--provider", "grok",
@@ -2066,8 +2066,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "feature, refactoring",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
-            "report": "feature, refactoring: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "feature, refactoring: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
     def test_how_explorer_relaunches_on_sonnet(self):
@@ -2168,7 +2168,7 @@ class BackupCliTest(unittest.TestCase):
             {"providerInstanceId": "openrouter", "model": "muse-lite-2", "options": {"reasoningEffort": "high"}},
         ])
 
-    def test_codex_ultra_lands_on_max(self):
+    def test_codex_ultra_lands_on_medium_under_the_light_default(self):
         completed = self.backup(
             "--role", "bug-fix",
             "--provider", "codex",
@@ -2179,8 +2179,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "codex/gpt-6.1-sol",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "max"}},
-            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at max",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
     def test_a_variant_level_maps_onto_the_backup_effort(self):
@@ -2194,11 +2194,11 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
-            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
-    def test_a_seat_with_no_level_gets_no_effort_option(self):
+    def test_a_seat_with_no_level_gets_medium_under_the_light_default(self):
         completed = self.backup(
             "--role", "bug-fix",
             "--provider", "codex",
@@ -2208,8 +2208,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "codex/gpt-6.1-sol",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
-            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
     def test_a_claude_worker_parks_and_names_neither_codex_nor_cursor(self):
@@ -2286,8 +2286,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
-            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         }
         array = self.backup(
             "--role", "bug-fix",
@@ -2365,8 +2365,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "cursor/claude-opus-5-5",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
-            "report": "bug-fix: cursor/claude-opus-5-5 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at xhigh",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: cursor/claude-opus-5-5 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
     def test_worker_backup_uses_the_configured_claude_agent_seat(self):
@@ -2381,8 +2381,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
-            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
     def test_cursor_light_role_relaunches_on_claude_agent_sonnet(self):
@@ -2430,8 +2430,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "claudeAgent/claude-opus-5-5",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}},
-            "report": "bug-fix: claudeAgent/claude-opus-5-5 resumed on claudeAgent/claude-opus-5-5 at xhigh after the reset",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: claudeAgent/claude-opus-5-5 resumed on claudeAgent/claude-opus-5-5 at medium after the reset",
         })
 
     def test_resume_parks_while_claude_agent_stays_out(self):
@@ -2467,9 +2467,9 @@ class BackupCliTest(unittest.TestCase):
             "seat": {
                 "providerInstanceId": "grok",
                 "model": "grok-4.7",
-                "options": {"reasoningEffort": "high"},
+                "options": {"reasoningEffort": "medium"},
             },
-            "report": "bug-fix: grok/grok-4.7 resumed on grok/grok-4.7 at high after the reset",
+            "report": "bug-fix: grok/grok-4.7 resumed on grok/grok-4.7 at medium after the reset",
         })
 
     def test_resume_uses_claude_agent_when_the_original_provider_stays_out(self):
@@ -2486,8 +2486,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
-            "report": "bug-fix: grok/grok-4.7 resumed on claudeAgent/claude-opus-5-5 at high after the reset",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: grok/grok-4.7 resumed on claudeAgent/claude-opus-5-5 at medium after the reset",
         })
 
     def test_resume_of_a_reviewer_does_not_return_an_author_family(self):
@@ -2609,8 +2609,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
-            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
     def test_a_cursor_grok_reviewer_moves_to_the_grok_provider(self):
@@ -2678,8 +2678,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "grok/grok-4.7",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "high"}},
-            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at high",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         }
         phrases = (
             "You've hit your usage limit. Try again later.",
@@ -2842,8 +2842,8 @@ class BackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "codex/gpt-6.1-sol",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
-            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: codex/gpt-6.1-sol hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
         })
 
     def test_panel_drops_blocked_author_missing_and_repeated_seats(self):
@@ -3388,7 +3388,8 @@ class RuntimeModeCliTest(unittest.TestCase):
         entry, user = self.entry("bug-fix", roles_file=self.BUG_FIX, mode="auto")
         self.assertEqual(entry, {
             "source": user,
-            "seats": ["inherit"],
+            "seats": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}],
+            "info": ["inherit made explicit as claudeAgent/claude-opus-5-5 so the small budget applies"],
             "notes": ["muse is not runnable (the muse driver lacks runtime mode auto); seat inherits the parent"],
         })
 
@@ -3396,7 +3397,12 @@ class RuntimeModeCliTest(unittest.TestCase):
         for mode in ("auto-accept-edits", "yolo"):
             with self.subTest(mode=mode):
                 entry, user = self.entry("bug-fix", roles_file=self.BUG_FIX, mode=mode)
-                self.assertEqual(entry, {"source": user, "seats": ["inherit"], "notes": [lacks_mode_note(mode)]})
+                self.assertEqual(entry, {
+                    "source": user,
+                    "seats": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}],
+                    "info": ["inherit made explicit as claudeAgent/claude-opus-5-5 so the small budget applies"],
+                    "notes": [lacks_mode_note(mode)],
+                })
 
     def test_supported_modes_and_a_catalog_file_mode_keep_the_seat_without_a_note(self):
         cases = (
@@ -3425,7 +3431,8 @@ class RuntimeModeCliTest(unittest.TestCase):
         )
         self.assertEqual(replaced, {
             "source": user,
-            "seats": ["inherit"],
+            "seats": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}],
+            "info": ["inherit made explicit as claudeAgent/claude-opus-5-5 so the small budget applies"],
             "notes": ["work is not runnable (the muse driver lacks runtime mode auto); seat inherits the parent"],
         })
         self.assertEqual(kept["seats"], [MUSE_DRIVER_SEAT])
@@ -3433,12 +3440,13 @@ class RuntimeModeCliTest(unittest.TestCase):
 
     def test_auto_replaces_the_muse_seat_of_a_panel_in_place(self):
         opus = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
+        medium = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}
         entry, _user = self.entry(
             "arena runners",
             roles_file={"roles": {"arena runners": [MUSE_DRIVER_SEAT, opus]}},
             mode="auto",
         )
-        self.assertEqual(entry["seats"], ["inherit", opus])
+        self.assertEqual(entry["seats"], [medium, medium])
 
     def test_auto_drops_a_review_backups_seat_on_a_muse_driver(self):
         opus = {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}
@@ -3513,7 +3521,11 @@ class RuntimeModeCliTest(unittest.TestCase):
                 self.assertEqual(entry, {"source": user, "seats": ["inherit"]})
 
     def test_auto_keeps_a_written_inherit_on_a_claude_parent(self):
-        entry, user = self.entry("judgment and prose", roles_file=self.WRITTEN_INHERIT, mode="auto")
+        entry, user = self.entry(
+            "judgment and prose",
+            roles_file={**self.WRITTEN_INHERIT, "mode": "full"},
+            mode="auto",
+        )
         self.assertEqual(entry, {"source": user, "seats": ["inherit"]})
 
     def test_validate_accepts_a_written_inherit_on_a_muse_driver_parent(self):
@@ -3582,8 +3594,8 @@ class RuntimeModeBackupCliTest(unittest.TestCase):
             "decision": "relaunch",
             "role": "bug-fix",
             "failed": "muse/muse-spark-1",
-            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"},
-            "report": "bug-fix: muse/muse-spark-1 resumed on claudeAgent/claude-opus-5-5 after the reset",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: muse/muse-spark-1 resumed on claudeAgent/claude-opus-5-5 at medium after the reset",
         })
 
     def test_an_empty_mode_and_a_mode_with_whitespace_exit_2(self):
@@ -3654,14 +3666,16 @@ class RelativeConfigHomeCliTest(unittest.TestCase):
         self.put(self.earlier / "roles.json", {"version": 1, "roles": {"bug-fix": [self.GROK]}})
         completed = self.run_roles("show", "--cwd", str(self.work), "--role", "bug-fix")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stderr, self.ignored)
+        self.assertEqual(completed.stderr, self.ignored + NO_PARENT_INFO)
         self.assertEqual(json.loads(completed.stdout), {
             "budget": "default",
-            "mode": "full",
+            "mode": "light",
             "modeSource": "default",
             "escalate": None,
             "catalog": True,
-            "roles": {"bug-fix": {"source": str(self.default / "roles.json"), "seats": [self.OPUS]}},
+            "roles": {"bug-fix": {"source": str(self.default / "roles.json"), "seats": [
+                {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            ]}},
         })
 
     def test_write_under_a_relative_xdg_config_home_writes_under_the_default_config_home_and_leaves_the_working_directory_unchanged(self):
@@ -3674,7 +3688,7 @@ class RelativeConfigHomeCliTest(unittest.TestCase):
         self.assertEqual(completed.stderr, self.ignored)
         self.assertEqual(
             json.loads((self.default / "roles.json").read_text()),
-            {"version": 1, "roles": {"bug-fix": [self.GROK]}, "budget": "default", "mode": "full"},
+            {"version": 1, "roles": {"bug-fix": [self.GROK]}, "budget": "default", "mode": "light"},
         )
         self.assertEqual(json.loads((self.default / "catalog.json").read_text()), json.loads(CATALOG.read_text()))
         self.assertEqual(sorted(os.listdir(self.work)), [".config", ".git"])
@@ -3741,7 +3755,7 @@ class WriteFilesCliTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(reached)), ["catalog.json", "roles.json"])
         self.assertEqual(
             json.loads((reached / "roles.json").read_text()),
-            {"version": 1, "roles": {"bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}]}, "budget": "default", "mode": "full"},
+            {"version": 1, "roles": {"bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}]}, "budget": "default", "mode": "light"},
         )
         self.assertEqual(json.loads((reached / "catalog.json").read_text()), json.loads(CATALOG.read_text()))
         self.assertEqual(self.temporary_files(), [])
@@ -3796,7 +3810,7 @@ def dumped(payload):
 
 
 def user_document(roles, allow=None, budget="default"):
-    document = {"version": 1, "roles": roles, "budget": budget, "mode": "full"}
+    document = {"version": 1, "roles": roles, "budget": budget, "mode": "light"}
     if allow is not None:
         document["opencodeAllow"] = allow
     return document
@@ -3808,7 +3822,7 @@ def shown_bug_fix(source, seat, notes=None, mode_source="default"):
         entry["notes"] = notes
     return {
         "budget": "default",
-        "mode": "full",
+        "mode": "light",
         "modeSource": mode_source,
         "escalate": None,
         "catalog": True,
@@ -4137,7 +4151,7 @@ class OpenCodeAllowCliTest(unittest.TestCase):
             before = repo.user.read_bytes()
             shown = repo.run("show", "--catalog", catalog, "--role", "bug-fix")
             self.assertEqual(shown.returncode, 0, shown.stderr)
-            self.assertEqual(shown.stderr, "")
+            self.assertEqual(shown.stderr, NO_PARENT_INFO)
             self.assertEqual(shown.stdout, dumped(shown_bug_fix(str(repo.user), seat, [line])))
             self.assertEqual(repo.user.read_bytes(), before)
             backed = self.backup_bug_fix(repo, catalog)
@@ -4181,7 +4195,7 @@ class OpenCodeAllowCliTest(unittest.TestCase):
             repo.put(repo.user, {"version": 1, "roles": {"bug-fix": [seat]}, "kept": "old"})
             shown = repo.run("show", "--catalog", catalog, "--role", "bug-fix")
             self.assertEqual(shown.returncode, 0, shown.stderr)
-            self.assertEqual(shown.stderr, "")
+            self.assertEqual(shown.stderr, NO_PARENT_INFO)
             self.assertEqual(shown.stdout, dumped(shown_bug_fix(str(repo.user), seat, [line])))
 
     def test_non_opencode_write_and_show_stay_the_same(self):
@@ -4199,7 +4213,7 @@ class OpenCodeAllowCliTest(unittest.TestCase):
                     self.assertNotIn("opencodeAllow", repo.user.read_text())
                     shown = repo.run("show", "--catalog", catalog, "--role", "bug-fix")
                     self.assertEqual(shown.returncode, 0, shown.stderr)
-                    self.assertEqual(shown.stderr, "")
+                    self.assertEqual(shown.stderr, NO_PARENT_INFO)
                     self.assertEqual(shown.stdout, dumped(shown_bug_fix(
                         str(repo.user), bare_seat("grok", model_id), mode_source=str(repo.user),
                     )))
@@ -4218,7 +4232,7 @@ class OpenCodeAllowCliTest(unittest.TestCase):
             self.assertNotIn("opencodeAllow", repo.user.read_text())
             shown = repo.run("show", "--catalog", catalog, "--role", "bug-fix")
             self.assertEqual(shown.returncode, 0, shown.stderr)
-            self.assertEqual(shown.stderr, "")
+            self.assertEqual(shown.stderr, NO_PARENT_INFO)
             self.assertEqual(shown.stdout, dumped(shown_bug_fix(
                 str(repo.user), bare_seat("opencode", PICKLE), mode_source=str(repo.user),
             )))
@@ -4679,6 +4693,7 @@ class ExcludeBackupTargetCliTest(unittest.TestCase):
         completed = run_backup(
             "--role", "bug-fix", "--provider", "grok", "--model", "grok-4.7",
             "--options", '{"reasoningEffort": "high"}',
+            "--brief-mode", "full",
             roles_file={
                 "version": 1,
                 "backups": {"bug-fix": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}]},
@@ -4694,6 +4709,7 @@ class ExcludeBackupTargetCliTest(unittest.TestCase):
         completed = run_backup(
             "--role", "bug-fix", "--provider", "grok", "--model", "grok-4.7",
             "--options", '{"reasoningEffort": "high"}',
+            "--brief-mode", "full",
             catalog=b2_next_candidate_catalog(),
             roles_file={
                 "version": 1,
@@ -4727,7 +4743,7 @@ class ExcludeBackupTargetCliTest(unittest.TestCase):
         self.assertEqual(payload["decision"], "relaunch")
         self.assertEqual(
             payload["seat"],
-            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}},
         )
 
 
@@ -4748,7 +4764,7 @@ class BackupUnavailableCandidateCliTest(unittest.TestCase):
         self.assertEqual(payload["decision"], "relaunch")
         self.assertEqual(
             payload["seat"],
-            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}},
         )
 
     def test_validate_names_a_backups_seat_the_catalog_lacks(self):
@@ -4902,7 +4918,11 @@ class ExcludeNarrowingCliTest(unittest.TestCase):
         self.assertEqual(panel_entry["seats"], [])
         self.assertTrue(any("codex/gpt-6.1-sol" in note for note in panel_entry.get("notes", [])), panel_entry)
         self.assertEqual(worker.returncode, 0, worker.stderr)
-        self.assertEqual(json.loads(worker.stdout)["roles"]["bug-fix"]["seats"], [self.CODEX])
+        self.assertEqual(json.loads(worker.stdout)["roles"]["bug-fix"]["seats"], [{
+            "providerInstanceId": "codex",
+            "model": "gpt-6.1-sol",
+            "options": {"reasoningEffort": "medium"},
+        }])
 
     def test_a_provider_glob_refuses_a_seat_in_every_role(self):
         roles_file = {
@@ -4950,7 +4970,7 @@ class BackupCandidateOptionsCliTest(unittest.TestCase):
                 {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5",
                  "options": {"effort": "ultrathink"}},
                 {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5",
-                 "options": {"effort": "ultrathink"}},
+                 "options": {"effort": "medium"}},
             ),
         )
         for label, failed_flags, candidate, expected in cases:
@@ -5106,7 +5126,11 @@ class HouseRuleMigrationCliTest(unittest.TestCase):
             repo.put(repo.user, self.exclude_roles_file({"bug-fix": [seat]}))
             completed = repo.show_bug_fix()
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout)["roles"]["bug-fix"]["seats"], [seat])
+        self.assertEqual(
+            json.loads(completed.stdout)["roles"]["bug-fix"]["seats"],
+            [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5",
+              "options": {"fastMode": True, "effort": "medium"}}],
+        )
 
     def test_show_drops_only_the_codex_review_backups_seat(self):
         codex = {"providerInstanceId": "codex", "model": "gpt-6.1-sol"}
@@ -5245,7 +5269,7 @@ class ExcludeRefusalOwnerCliTest(unittest.TestCase):
         self.assertNotEqual(payload["seat"]["model"], "claude-opus-5-5")
         self.assertEqual(
             payload["seat"],
-            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}},
+            {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "medium"}},
         )
 
     def test_validate_lists_a_refused_backups_seat_with_the_owner_clause(self):

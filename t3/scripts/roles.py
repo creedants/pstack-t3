@@ -90,11 +90,11 @@ class ModeDecision:
     where: str
 
 
-DEFAULT_MODE = ModeDecision("full", "default", "default")
+DEFAULT_MODE = ModeDecision("light", "default", "default")
 
 
 def effective_mode(config, brief=None, session=None, coordinator=None):
-    """Brief, then session, then coordinator, then the merged file level, then full."""
+    """Brief, then session, then coordinator, then the merged file level, then light."""
     for value, label in ((brief, "brief"), (session, "session"), (coordinator, "restaurant.json")):
         if value is not None:
             return ModeDecision(value, label, label)
@@ -1701,7 +1701,7 @@ def command_write(args):
     if mode is not None or (not args.replace and "mode" in raw):
         config["mode"] = mode
     elif not args.project:
-        config["mode"] = "full"
+        config["mode"] = DEFAULT_MODE.mode
     if args.project and not args.clear_escalate:
         if args.escalate is not None:
             config["escalate"] = list(args.escalate)

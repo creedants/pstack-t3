@@ -21,7 +21,7 @@ XHIGH = '{"instanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffor
 XHIGH_SEAT = {"providerInstanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "xhigh"}}
 MEDIUM = '{"instanceId": "grok", "model": "grok-4.7", "options": {"reasoningEffort": "medium"}}'
 LOW = '{"instanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "low"}}'
-FAST = '{"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"fastMode": false}}'
+FAST = '{"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"fastMode": false, "effort": "medium"}}'
 BARE = '{"instanceId": "grok", "model": "grok-4.7", "options": {}}'
 
 
@@ -65,16 +65,19 @@ class LaunchTest(BrigadeTest):
             path.write_text(text)
         return path
 
-    def write_user_roles(self, roles, budget="default"):
+    def write_user_roles(self, roles, budget="default", mode=None):
         directory = Path(os.environ["XDG_CONFIG_HOME"]) / "pstack-t3"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "roles.json"
-        path.write_text(json.dumps({"version": 1, "budget": budget, "roles": roles}))
+        document = {"version": 1, "budget": budget, "roles": roles}
+        if mode is not None:
+            document["mode"] = mode
+        path.write_text(json.dumps(document))
         return path
 
-    def write_launch_seats(self, *roles):
-        """Name the Grok xhigh seat for each role, so a full seat prints xhigh and a light brief caps it to medium."""
-        self.write_user_roles({role: [XHIGH_SEAT] for role in roles})
+    def write_launch_seats(self, *roles, mode=None):
+        """Name the Grok xhigh seat for each role, so a full seat prints xhigh and light caps it to medium. Mode, when given, is written to the user roles file; omitted, the file has no mode."""
+        self.write_user_roles({role: [XHIGH_SEAT] for role in roles}, mode=mode)
 
     def write_project_roles(self, roles, budget="default"):
         directory = self.project / ".pstack"
@@ -104,19 +107,19 @@ class LaunchTest(BrigadeTest):
     def show_payload(self, payload):
         self.install_show(text=json.dumps(payload))
 
-    def test_bug_fix_with_no_brief_prints_the_xhigh_seat(self):
+    def test_bug_fix_with_no_brief_prints_the_medium_seat(self):
         self.fired_bug_fix()
         self.write_launch_seats("bug-fix")
         before = self.store_files()
-        self.assert_launch(XHIGH)
+        self.assert_launch(MEDIUM)
         self.assertEqual(self.store_files(), before)
 
-    def test_a_brief_with_no_mode_line_prints_the_xhigh_seat(self):
+    def test_a_brief_with_no_mode_line_prints_the_medium_seat(self):
         self.fired_bug_fix()
         self.write_launch_seats("bug-fix")
         self.write_brief("GOAL: keep the seat\n")
         before = self.store_files()
-        self.assert_launch(XHIGH)
+        self.assert_launch(MEDIUM)
         self.assertEqual(self.store_files(), before)
 
     def test_mode_full_prints_the_xhigh_seat(self):
@@ -135,16 +138,16 @@ class LaunchTest(BrigadeTest):
         self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "light")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
-        self.write_launch_seats("bug-fix")
+        self.write_launch_seats("bug-fix", mode="full")
         self.assert_launch(XHIGH)
 
-    def test_perf_issue_and_hillclimb_print_the_xhigh_seat(self):
+    def test_perf_issue_and_hillclimb_print_the_medium_seat(self):
         self.open_wide()
         self.write_launch_seats("perf-issue", "hillclimb")
         self.fire_station("perf-issue")
-        self.assert_launch(XHIGH, "D1")
+        self.assert_launch(MEDIUM, "D1")
         self.fire_station("hillclimb")
-        self.assert_launch(XHIGH, "D2")
+        self.assert_launch(MEDIUM, "D2")
 
     def test_feature_and_refactoring_print_the_seat_stored_on_feature_refactoring(self):
         self.open_wide()
@@ -175,7 +178,7 @@ class LaunchTest(BrigadeTest):
         self.fired_bug_fix()
         self.write_user_roles({
             "bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
-        })
+        }, mode="full")
         self.assert_launch(BARE)
 
     def test_fast_mode_false_is_copied(self):
@@ -237,7 +240,7 @@ class LaunchTest(BrigadeTest):
         self.fired_bug_fix()
         self.write_user_roles({
             "bug-fix": [{"providerInstanceId": "grok", "model": "grok-4.7"}],
-        })
+        }, mode="full")
         root = Path(self.temporary.name)
         directory = root / "catalog-dir"
         directory.mkdir()
@@ -374,7 +377,7 @@ class LaunchTest(BrigadeTest):
 
     def test_inherit_seats_are_not_one_seat(self):
         self.fired_bug_fix()
-        self.write_user_roles({"bug-fix": ["inherit"]})
+        self.write_user_roles({"bug-fix": ["inherit"]}, mode="full")
         payload = json.loads(CATALOG.read_text())
         for provider in payload["providers"]:
             if provider["providerInstanceId"] != "claudeAgent":

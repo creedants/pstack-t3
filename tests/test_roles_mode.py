@@ -152,7 +152,18 @@ class ModeCommandTest(unittest.TestCase):
             Repo(directory)
             completed = run_mode(directory)
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout, "Mode: full\nMode source: default\n")
+        self.assertEqual(completed.stdout, "Mode: light\nMode source: default\n")
+
+    def test_unset_mode_falls_back_to_light_not_full(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            unset = run_mode(directory)
+            repo.put(repo.user, {"mode": "full"})
+            user_full = run_mode(directory)
+        self.assertEqual(unset.returncode, 0, unset.stderr)
+        self.assertEqual(unset.stdout, "Mode: light\nMode source: default\n")
+        self.assertEqual(user_full.returncode, 0, user_full.stderr)
+        self.assertEqual(user_full.stdout, "Mode: full\nMode source: roles.json\n")
 
     def test_coordinator_light_over_project_full(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -445,14 +456,18 @@ class ModeCommandTest(unittest.TestCase):
             "Waived by mode: How, Why, Architect, Comment Sicko\n",
         )
 
-    def test_bug_fix_fix_under_full_prints_no_waivers(self):
+    def test_bug_fix_fix_with_no_files_prints_default_waivers(self):
         with tempfile.TemporaryDirectory() as directory:
             Repo(directory)
             completed = run_mode(directory, "--playbook", "bug-fix", "--attempt", "fix")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(
             completed.stdout,
-            "Playbook: playbooks/bug-fix.md\nMode: full\nMode source: default\nAttempt: fix\n",
+            "Playbook: playbooks/bug-fix.md\n"
+            "Mode: light\n"
+            "Mode source: default\n"
+            "Attempt: fix\n"
+            "Waived by mode: How, Why, Architect, Comment Sicko\n",
         )
 
     def test_feature_first_under_light(self):
