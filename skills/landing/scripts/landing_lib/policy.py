@@ -471,7 +471,7 @@ def shrink_baseline(path, sizes, maximum=None):
             continue
         tokens = seam.tokens_for(sizes[name])
         if tokens < files[name]:
-            if tokens <= effective:
+            if files[name] > effective and tokens <= effective:
                 del files[name]
             else:
                 files[name] = tokens
