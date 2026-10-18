@@ -186,11 +186,17 @@ def refused_policy_change(base_raw, cand_raw):
         base_files = {}
     if not isinstance(cand_files, dict):
         return None
+    if isinstance(base_max, int) and not isinstance(base_max, bool) and base_max >= 1:
+        base_ceiling = base_max
+    else:
+        base_ceiling = DEFAULT_MAX_TOKENS
     for name, value in cand_files.items():
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             continue
         old = base_files.get(name)
         if old is None:
+            if value <= base_ceiling:
+                continue
             return f"size baseline adds a grandfathered file {name}; a person merges that raise outside the queue"
         if isinstance(old, int) and not isinstance(old, bool) and value > old:
             return f"size baseline raises the allowance for {name}; a person merges that raise outside the queue"
