@@ -232,7 +232,7 @@ class RolesTest(unittest.TestCase):
             "options": {"reasoningEffort": "medium"},
         }])
 
-    def test_unrunnable_provider_falls_back_to_inherit_with_a_note(self):
+    def test_unrunnable_provider_falls_back_to_the_parent_made_explicit_with_a_note(self):
         entry = roles.resolve(config(**{"swarm workers": [{"providerInstanceId": "cursor", "model": "default"}]}), CATALOG, ["swarm workers"])["roles"]["swarm workers"]
         self.assertEqual(entry["seats"], [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}}])
         self.assertIn("not authenticated", entry["notes"][0])

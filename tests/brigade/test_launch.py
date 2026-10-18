@@ -76,7 +76,7 @@ class LaunchTest(BrigadeTest):
         return path
 
     def write_launch_seats(self, *roles, mode=None):
-        """Name the Grok xhigh seat for each role, so a full seat prints xhigh and light caps it to medium."""
+        """Name the Grok xhigh seat for each role, so a full seat prints xhigh and light caps it to medium. Mode, when given, is written to the user roles file; omitted, the file has no mode and light applies."""
         self.write_user_roles({role: [XHIGH_SEAT] for role in roles}, mode=mode)
 
     def write_project_roles(self, roles, budget="default"):
