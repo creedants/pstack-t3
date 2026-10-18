@@ -1,3 +1,4 @@
+"""For AFFECTED_KEY, DEFAULT_SUITE, Layout, layout, PIN_CHARS, _diff_names, and _found_files, this module re-exports them from _affected. Patching one of those names here need not reroute bare-name calls inside _affected."""
 import ast
 from pathlib import Path, PurePosixPath
 from brigade_lib import generated

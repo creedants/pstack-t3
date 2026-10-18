@@ -1,3 +1,4 @@
+"""Re-exports names from _leases. Patching a name here need not reroute bare-name calls inside _leases."""
 from brigade_lib._leases.blocks import block_holds, block_inputs, blocked_waiting, fire_command, holding_blocks, lease_block, recheck_blocks
 from brigade_lib._leases.caps import Flight, Hold, KindLimits, Refill, STANDINGS, StandingText, admit, autofire_of, counted_pairs, flight_of, kind_limits, refill_of, require_workers, running_workers, worker_cap, workers_line, with_item
 from brigade_lib._leases.claims import Claim, ClaimError, ENTRY_LINE, FragmentGap, _claim_norm, claim_lease, claim_paths, contract_mode, entry_line, fired_line, fragment_for, fragment_lines, holder, land_result, lease_check, lease_states, missing_checkout_paths, paths_inside, paths_overlap, refusal_kind, release_lease, renew_line, repository_cap, with_fragment
