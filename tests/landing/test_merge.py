@@ -148,6 +148,40 @@ class LandingTest(LandingTestBase):
             self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
+    def age_absence(self, *idents):
+        """Backdate these entries' absent markers past the grace, for a repo with truly no required checks."""
+        with land.Store.for_repo(self.work) as store:
+            with store.tx() as db:
+                row = db.execute("SELECT value FROM contract WHERE key = 'absentDrain'").fetchone()
+                raw = json.loads(row["value"]) if row else {}
+                aged = land.stamp(land.now() - land.ABSENT_CHECKS_GRACE - land.timedelta(seconds=1))
+                for ident in idents:
+                    candidate = db.execute("SELECT candidate FROM entry WHERE id = ?", (ident,)).fetchone()["candidate"]
+                    raw[str(ident)] = {"since": aged, "candidate": candidate}
+                db.execute("INSERT OR REPLACE INTO contract VALUES ('absentDrain', ?)", (json.dumps(raw),))
+
+    def test_merge_mode_does_not_merge_absent_checks_on_a_later_drain(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
+            self.init(mode="merge")
+            self.queue_one()
+            opened = self.land("land")
+            self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", opened)
+            self.assertNotIn("landed", opened)
+            for _ in range(2):
+                self.assertEqual(self.land("land"), "nothing to land")
+                self.assertIn("waiting for required checks", self.land("status", "E1"))
+            self.assertFalse((self.base / "merge-calls").exists())
+
+    def test_merge_mode_merges_absent_checks_after_the_grace(self):
+        with self.fake_gh():
+            (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
+            self.init(mode="merge")
+            self.queue_one()
+            self.land("land")
+            self.age_absence(1)
+            self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
     def test_merge_mode_lands_a_merged_pr_when_a_later_check_fails(self):
         with self.fake_gh():
             (self.base / "required-checks").write_text("")
