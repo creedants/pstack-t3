@@ -289,14 +289,13 @@ def handle_dish(restaurant, args):
             with restaurant.checked():
                 _, current = restaurant.find("dishes.tsv", args.id)
                 sha = current.get("sha", "")
-        if sha:
-            snapshot = gate_outside(restaurant, args.id, sha)
-            if snapshot is None:
-                with restaurant.checked():
-                    return seam.command(restaurant, args)
+        snapshot = gate_outside(restaurant, args.id, sha or "")
+        if snapshot is None:
             with restaurant.checked():
-                gate_recheck(restaurant, args.id, snapshot)
                 return seam.command(restaurant, args)
+        with restaurant.checked():
+            gate_recheck(restaurant, args.id, snapshot)
+            return seam.command(restaurant, args)
     if args.branch and args.lease is None:
         with restaurant.checked():
             result = seam.command(restaurant, args)
