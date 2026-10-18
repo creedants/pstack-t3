@@ -403,7 +403,7 @@ class WatchTest(BrigadeTest, _WakeRace):
             script.chmod(0o755)
         return bindir
 
-    def test_trunk_red_reports_streak_start_via_path_gh(self):
+    def test_trunk_red_reports_streak_start_among_last_five(self):
         self.started()
         self._remote_trunk()
         payload = ('[{"conclusion":"failure","status":"completed","headSha":"aaa111",'
