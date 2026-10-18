@@ -17,8 +17,8 @@ GENERATED = "skills,docs/cli,docs/skills.md"
 MAP = ",".join([
     "t3/added/**=skills/**",
     "t3/overrides/**=skills/**",
-    "t3/overrides/*/SKILL.md=docs/skills.md!",
-    "vendor/pstack/skills/*/SKILL.md=docs/skills.md!",
+    "t3/overrides/*/SKILL.md=docs/skills.md!^",
+    "vendor/pstack/skills/*/SKILL.md=docs/skills.md!^",
 ])
 
 
