@@ -536,7 +536,7 @@ def size_report(path, staged, all_files, shrink, baseline):
                 try:
                     index_raw = json.loads(index_raw_text.stdout)
                 except json.JSONDecodeError:
-                    index_raw = None
+                    raise seam.LandError("size baseline cannot be read")
             else:
                 index_raw = _read_worktree_baseline_raw(baseline_path)
             try:
@@ -612,7 +612,7 @@ def check_candidate_size(store, base, candidate):
         try:
             cand_obj = json.loads(cand_shown.stdout)
         except json.JSONDecodeError:
-            cand_obj = None
+            return "size baseline cannot be read"
         problem = seam.refused_policy_change(base_raw, cand_obj, effective)
         if problem:
             return problem

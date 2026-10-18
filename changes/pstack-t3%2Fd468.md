@@ -11,3 +11,6 @@
 - shrink uses the effective maximum
 - status and status json output matches the prior shape while the limit is off
 - the queue refuses a candidate baseline with a maximum or files map that cannot be read when the trunk tip holds a baseline
+- the queue bounces a candidate baseline that does not parse as size baseline cannot be read
+- the staged check refuses an index baseline that does not parse as size baseline cannot be read
+- the queue refuses a candidate file allowance below zero as size baseline cannot be read
