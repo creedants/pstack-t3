@@ -245,7 +245,7 @@ def without(text, spans):
 
 
 class Privacy:
-    """The one filter of both output forms. The module docstring states what it removes.
+    """The one filter of both output forms. The activity.py module docstring states what it removes.
     clean() is the filter. encode() passes it each string of the document's data, and render_text passes it each line.
     field(), model(), and link() shape one value of the store or of T3 for a page, and each calls clean().
     """
