@@ -1,0 +1,67 @@
+## Pull request lifecycle
+
+This section states once what `land` does with an entry's pull request in `merge` and `human` mode. The mode table and step 6 of [Run writers through it](SKILL.md#run-writers-through-it) link here.
+
+### Open
+
+In both modes `land` builds a candidate, runs the checks on it, pushes `landing/e<n>`, and opens a PR. In `human` mode the candidate is the entry rebased onto trunk. In `merge` mode it is the entry rebased onto the end of [the line](pauses.md#the-line). An open pull request on `landing/e<n>` is adopted, and so is a closed or merged one whose head is this entry's candidate. A closed or merged pull request at another head is a reused id. `land` then opens a new pull request on `landing/e<n>`, and first pushes the checked candidate there when git lists no such branch on the remote.
+
+### The line
+
+This subsection covers `merge` mode.
+
+The line is a chain of candidates from awaiting-merge entries. `land` works it out again in every run. The first entry is the lowest-numbered awaiting-merge entry whose candidate was built on a commit that holds trunk's tree. Each next entry is the one whose candidate was built on the candidate before it. With the merge method `rebase` the line stops after its first entry.
+
+With the merge method `squash` or `merge`, `land` builds a queued entry on the last candidate of the line, or on trunk when the line is empty. The PR of an entry behind the first then holds trunk, every entry ahead of it, and its own change.
+
+With `squash` or `merge`, `land` also rebuilds every awaiting-merge entry that has a PR, is outside the line, and is not noted `merge requested by the queue`. It does that before it builds queued entries. It rebases the entry onto the end of the line, runs the fingerprint check and the checks, force-pushes `landing/e<n>`, and prints `rebuilt E<n> (<holder>) <url>`. The PR stays the same. A rebuild that conflicts, differs from the reviewed change, has a foreign commit author the contract's `authorPolicy` bounces, or fails the checks bounces that entry and leaves its PR open. A rebuild whose change is already in trunk lands the entry as `already in trunk` when the end of the line holds trunk's tree, and leaves the entry as it was otherwise.
+
+With `rebase`, `land` builds at most one entry in a run, and none while an awaiting-merge entry is in the line or is noted `merge requested by the queue`.
+
+An entry opened by an older `land.py` stores no commit its candidate was built on. `land` uses the merge base of its candidate and trunk.
+
+### Merge
+
+In `merge` mode `land` merges or requests a merge only for the first entry of [the line](pauses.md#the-line). It reads posted checks before it runs `gh pr merge`, including `--auto`. The same read returns the PR's head commit. `land` merges when the read succeeds, the head is the entry's candidate, no posted check is pending or failed, and after a fetch trunk holds the tree the candidate was built on. When the head is not the candidate, `land` neither merges nor bounces the entry on that read. A pending posted check waits. A failed posted check bounces the first entry of the line, or an entry already noted `merge requested by the queue`, and makes the lease active. The first land that sees no posted check records the time and waits. A later `land` waits while less than 5 minutes passed since that time and merges when the grace has passed with checks still absent. To merge, `land` runs `gh pr merge --auto` first. When that command succeeds, `land` runs no plain merge. When it fails, `land` runs the plain `gh pr merge`. Either success notes the entry `merge requested by the queue`. The `--auto` command and each plain merge pass `--match-head-commit` with the entry's candidate. `gh pr merge --help` describes that flag as the commit the PR's head must match to allow the merge. When the plain merge is refused with `Base branch was modified`, `land` waits 2 seconds and runs it again, at most 3 more times. When that plain merge fails, the entry waits and the queue does not pause in two cases. One is that no check is posted and the refusal says the base branch policy prohibits the merge. The other is that the last refusal says `Base branch was modified`. After any other plain merge failure `land` reads the PR state. When that read shows the PR open at a head that is not the candidate, the queue pauses per [When the queue pauses](pauses.md#when-the-queue-pauses). Every plain merge failure that is none of these pauses the queue and names that failure, including when the `--auto` attempt said auto-merge is disabled. A failed or unreadable check read pauses the queue and does not merge.
+
+For an open PR of the line whose state read shows the candidate head, `land` reads its checks. For an entry behind the first that is not noted `merge requested by the queue`, the following notes apply when the check read returns the candidate head and no review requirement. A pending posted check or no posted check records `waiting for required checks before merging`. Passed or failed checks record `waiting for E<n> to merge first`, where `E<n>` is the entry ahead of it. That check read neither merges nor bounces the entry. After a merge lands an entry, the same run judges the next entry of the line.
+
+In `human` mode `land` leaves the PR open and marks the entry landed when someone merges it.
+
+### Bounce
+
+This subsection covers `merge` mode. The check read includes `autoMergeRequest`. The bounce runs `gh pr merge --disable-auto` only when that field is not null, and leaves the PR open. It posts no comment. A bounce of a rebuild reads no checks, calls no `gh pr merge --disable-auto`, and leaves the PR open. When the field is null, the bounce does not call `--disable-auto`. When that call fails, the PR can still merge on its own, so the queue pauses instead of bouncing, per [When the queue pauses](pauses.md#when-the-queue-pauses).
+
+### Merged
+
+Every `land` after the one that opened or adopted the PR reads the PR state before it reads checks. In `merge` mode the queue pauses when that read fails. A PR already merged at the candidate head is landed in that run per [Branch cleanup](pauses.md#branch-cleanup), even when one of its checks failed, unless the check below leaves it awaiting merge. For an entry noted `merge requested by the queue`, `land` reads the PR state again after the check read and before it acts on a failed check, so a PR that merged between the two reads is landed and not bounced. For the first entry of the line with any other note, a failed check bounces with no second state read.
+
+In `merge` mode `land` checks a PR merged at the candidate head before [Branch cleanup](pauses.md#branch-cleanup). It fetches trunk. It reads the tree of the merge commit and the tree of the candidate, each by its full id, and fetches that id from the contract remote when the first read fails. It then runs `git merge-base --is-ancestor` on the merge commit and the fetched trunk commit, and compares the two trees only when that command exits 0. When the trees are equal, the entry lands per [Branch cleanup](pauses.md#branch-cleanup). When the trees differ, the run that lands the entry also pauses the queue. When that command exits 1, trunk does not hold the merge commit. When it exits with another code, git could not tell. In both cases, and when either tree cannot be read or the state read gave no full commit id for the merge commit, `land` does not delete `landing/e<n>`, the entry stays awaiting merge, and the queue pauses. Each pause is in [When the queue pauses](pauses.md#when-the-queue-pauses).
+
+### Branch cleanup
+
+In both modes `land` deletes remote `landing/e<n>` after the PR merges. When the server accepts the delete, the entry lands. When the delete fails, `land` asks the forge when the contract remote has exactly one push URL and that URL names the same owner/repo `gh repo view --json nameWithOwner` resolves. It asks `gh api repos/{owner}/{repo}/branches/landing/e<n>`, and that answer alone decides whether `landing/e<n>` exists. HTTP 404 lands the entry. HTTP 200, or any other result, leaves the entry for the next run. Where the forge cannot be asked, a failed delete lands the entry only when git says `landing/e<n>` does not exist and `gh pr view` shows the PR was opened from another branch. An older queue opened such a PR on `landing/q<n>`, and the queue leaves that branch in place. Any other result there leaves the entry for the next run. `land` also deletes a local `landing/e<n>` branch when one exists and git can delete it. When that delete fails, `land` still marks the entry landed and prints the branch it left.
+
+## When the queue pauses
+
+`land` pauses the queue when trunk no longer contains the last landed commit, because someone rewound or replaced it. It also pauses when the tree comparison in [Merged](pauses.md#merged) finds different trees, and that pause names the entry, the merge commit, and the candidate. `land` makes that comparison only after git showed that trunk holds the merge commit. Either pause is the user's call. Report it as a decision with the two commits from the message. Run `resume` only after the user confirms trunk is right.
+
+A pause that starts `<url> is recorded as merged at <sha>, and trunk at <sha> does not hold that commit` means `git merge-base --is-ancestor` exited 1 for the merge commit and the trunk commit that run fetched. The entry stays awaiting merge, and `land` did not compare the trees. This is the user's call. Report it with the two commits from the message. Run `resume`, then `land`, once that merge commit is back on trunk. `land` then makes the check in [Merged](pauses.md#merged) again. While trunk does not hold that commit, `resume` then `land` pauses again for the same reason.
+
+A pause that starts `The merge of E<n> could not be checked` means `land` did not compare the trees. It names the commit git could not read, says the state read gave no full commit id for the merge commit, or says git could not tell whether trunk holds the merge commit and gives the exit code of `git merge-base --is-ancestor`. This pause does not say the trees differ and does not say trunk lost the merge commit. Make the check the message names, then run `resume`, then `land`, which makes the check in [Merged](pauses.md#merged) again.
+
+The pause in [Merge](pauses.md#merge) for a PR open at a head that is not the candidate names the PR, that head, and the candidate. The entry stays awaiting merge, and its `status E<n>` shows `PR head changed to <sha> outside the queue`. This is the user's call. Report it with the two commits from the message. Close the PR, or push the candidate back to the PR's branch, as the message says. Then run `resume`, then `land`. `land` bounces the entry of a closed PR.
+
+A pause that starts `could not check that trunk contains the last landed commit` means `git merge-base --is-ancestor` exited with a code other than 0 or 1 on that commit. It does not say trunk was rewound. Check that `git cat-file -e <sha>` reads the commit in the checkout, then run `resume`.
+
+A pause that starts `the configured git identity is now` means `git config user.name` or `git config user.email`, read in the repository, differs from the pair an earlier `land` remembered, or at least one of them is now unset or empty. That run fetched nothing, opened no pull request, pushed nothing, and changed no entry. This is the user's call. Report it with the identity the message gives as configured now, or its note that the identity is unset, and the identity the queue last ran as. Run `git config --show-origin user.email` and `git config --show-origin user.name` in the repository to see which file sets each value. Restore the config, or confirm with the user that the new identity is right, then run `resume`. That `resume` forgets the remembered pair. The next `land` remembers the pair configured then when both values are non-empty.
+
+A pause that starts `could not read the state of <url>` means a PR state read failed. It gives the error `gh` printed, or `nothing` when `gh` printed none. Run `resume`, then `land`, when `gh pr view <url>` answers again.
+
+When `land` cannot turn off auto-merge on a PR whose checks failed, the pause names the PR and the failure, and the entry stays awaiting merge. Turn auto-merge off on GitHub, then run `resume`, then `land`, which bounces the entry.
+
+When GitHub refuses the merge method, the pause names `land.py mode merge --merge-method` with an allowed method, then `land.py resume`. Run that mode command, then `resume`, then `land`.
+
+In `merge` mode the pause report keeps the run's `landed`, `adopted`, and `bounced` lines. It keeps an `opened` or `rebuilt` line only for an entry still awaiting merge.
+
+Every command except `slot` stops with `land: <config path> sets core.worktree to <value>, where git does not find this repository; remove it with git --work-tree=. config --file <config path> --unset-all core.worktree` when the repository's common `config` file sets `core.worktree` to a value that is not empty and where git does not find this repository. Run the printed command, then run the command again.
