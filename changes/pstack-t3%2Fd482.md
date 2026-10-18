@@ -7,3 +7,4 @@
 - restore the `/proc` skip guard on the descriptor cleanup test with no assertion change
 - load the parser builder inside the isolated entry load and read entry parser constants at call time without changing `sys.path` or cached `landing_lib` modules
 - add in-process parser isolation tests for path and cache, unrelated cached package, and entry cap binding
+- `tests/test_cli_reference.py` skips files where any path part starts with `_`

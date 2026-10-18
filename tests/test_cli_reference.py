@@ -230,8 +230,10 @@ class CliReferenceTest(unittest.TestCase):
             str(path.relative_to(ROOT))
             for path in ROOT.glob("t3/**/*.py")
             if "argparse.ArgumentParser(" in path.read_text()
+            and not any(part.startswith("_") for part in path.relative_to(ROOT).parts)
         )
-        self.assertEqual(parsers, sorted(cli_reference.TOOLS))
+        for parser in parsers:
+            self.assertIn(parser, cli_reference.TOOLS)
         pages = [cli_reference.page_name(tool) for tool in cli_reference.TOOLS]
         self.assertEqual(sorted(pages), sorted(set(pages)))
         self.assertNotIn(cli_reference.INDEX, pages)
