@@ -13,6 +13,8 @@ from .support import (
     sys,
     time,
 )
+import types
+from unittest import mock
 
 
 class LandingTest(LandingTestBase):
@@ -457,6 +459,34 @@ class LandingTest(LandingTestBase):
             calls = (self.base / "gh-calls").read_text()
             self.assertIn("protection/required_status_checks", calls)
             self.assertIn("rules/branches", calls)
+
+    def test_ruleset_contexts_finds_required_check_only_on_second_page(self):
+        first = [{"type": "other"} for _ in range(100)]
+        second = [{"type": "required_status_checks",
+                   "parameters": {"required_status_checks": [{"context": "test (3.12)"}]}}]
+
+        def fake_gh(*args, cwd=None):
+            endpoint = args[1] if len(args) > 1 else ""
+            if "page=2" in endpoint:
+                return types.SimpleNamespace(returncode=0, stdout=json.dumps(second), stderr="")
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(first), stderr="")
+
+        store = types.SimpleNamespace(contract={"trunk": "main"}, repo=str(self.work))
+        with mock.patch.object(land, "gh", side_effect=fake_gh):
+            self.assertEqual(land._ruleset_contexts(store), ("test (3.12)",))
+
+    def test_ruleset_contexts_returns_none_when_second_page_unreadable(self):
+        first = [{"type": "other"} for _ in range(100)]
+
+        def fake_gh(*args, cwd=None):
+            endpoint = args[1] if len(args) > 1 else ""
+            if "page=2" in endpoint:
+                return types.SimpleNamespace(returncode=1, stdout="", stderr="unavailable")
+            return types.SimpleNamespace(returncode=0, stdout=json.dumps(first), stderr="")
+
+        store = types.SimpleNamespace(contract={"trunk": "main"}, repo=str(self.work))
+        with mock.patch.object(land, "gh", side_effect=fake_gh):
+            self.assertIsNone(land._ruleset_contexts(store))
 
     def test_merge_mode_lands_a_green_rollup_whose_check_name_contains_a_quote(self):
         with self.fake_gh():
