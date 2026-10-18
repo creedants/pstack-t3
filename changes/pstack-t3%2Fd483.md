@@ -1,0 +1,4 @@
+- kind polish
+- entry is a thin facade over `scripts/_install/` with same commands and output
+- `tests/install/` replaces `tests/test_install.py` with one area module per behavior
+- test checkouts copy `scripts/_install/` beside the entry
