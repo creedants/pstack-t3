@@ -153,7 +153,7 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.land("lease", "list"), "no leases held")
 
     def age_absence(self, *idents):
-        """Backdate these entries' absent markers past the grace, for a repo with truly no required checks."""
+        """Backdate these entries' absent markers past the grace."""
         with land.Store.for_repo(self.work) as store:
             with store.tx() as db:
                 row = db.execute("SELECT value FROM contract WHERE key = 'absentDrain'").fetchone()
@@ -425,8 +425,7 @@ class LandingTest(LandingTestBase):
     def open_pr_with_a_merge_requested(self):
         """One merge-mode entry noted merge requested by the queue, with its PR open.
 
-        The shared helper stops at the first waiting land. This one ages the
-        absence first, for a repo with truly no required checks."""
+        This one ages the absence before the second land."""
         (self.base / "required-checks").write_text("")
         self.init(mode="merge")
         self.queue_one()
