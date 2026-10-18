@@ -120,7 +120,7 @@ def _walk_sizes(root):
 
 
 def findings(root):
-    """Size findings for one repo worktree. Empty when the limit is off."""
+    """Size findings for one repo worktree. Empty when the limit is off, except an unparsable baseline is one finding."""
     sizes = load_sizes()
     root = Path(root)
     contract = read_contract(root)
