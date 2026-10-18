@@ -79,7 +79,8 @@ def _read_worker_runs(threads):
 
     Reads statev2.sqlite read-only through activity.py. Never raises.
     A missing database returns empty runs with no line. Any other
-    failure returns empty runs with one line.
+    failure, including a threads table without updated_at, returns
+    empty runs with one line.
     """
     wanted = list(dict.fromkeys(thread for thread in threads if thread))
     if not wanted:
@@ -118,13 +119,10 @@ def _read_worker_runs(threads):
                 runs[thread] = {"status": status_text, "requested": requested_ts, "completed": completed_ts,
                                 "updated": None}
         threads_table = loaded["THREADS"]
-        try:
-            thread_rows = connection.execute(
-                f"SELECT thread_id, updated_at FROM {threads_table} WHERE thread_id IN ({marks})",
-                wanted,
-            ).fetchall()
-        except Exception:
-            thread_rows = []
+        thread_rows = connection.execute(
+            f"SELECT thread_id, updated_at FROM {threads_table} WHERE thread_id IN ({marks})",
+            wanted,
+        ).fetchall()
         for thread_id_raw, updated_raw in thread_rows:
             thread = loaded["text_in"](thread_id_raw, threads_table, "thread_id")
             if thread not in runs:
@@ -218,12 +216,10 @@ def recovery_lines(dish, error):
     return [f"{ident}: worker ended with no report; the recorded reason is {error}", *steps]
 
 
-def dish_progress(restaurant, dish, moment, held=False, runs=None):
+def dish_progress(restaurant, dish, moment, held=False):
     """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
 
     The report file's mtime is read here. Call this under the store lock.
-    When runs maps thread ids to their latest T3 runs, an idle worker
-    with no report prints its idle line before the timebox check.
     """
     if held or dish["state"] != "in-progress":
         return []
@@ -249,10 +245,6 @@ def dish_progress(restaurant, dish, moment, held=False, runs=None):
     ended = ended_row(restaurant, dish)
     if ended:
         return recovery_lines(dish, ended["note"])
-    if runs is not None and dish.get("thread"):
-        completed = _idle_completed(runs, dish["thread"], moment)
-        if completed is not None:
-            return [_idle_line(dish, completed)]
     if minutes > timebox:
         return [f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})"]
     return [f"{dish['id']}: running {minutes}m of {timebox}m ({where})"]
