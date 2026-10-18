@@ -81,14 +81,14 @@ class CheckSizeTrunkTipTest(unittest.TestCase):
         self.scratch = self._scratch.name
 
     def test_missing_trunk_with_committed_enabled_baseline_reports_trunk_tip_through_check_cli(self):
-        """Subprocess reads exit status."""
+        """Subprocess reads exit status, stdout, and stderr."""
         proc = self.run_check(trunk=False)
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(proc.stdout, "size-baseline.json: size baseline at trunk tip cannot be read\n")
         self.assertEqual(proc.stderr, "")
 
     def test_present_trunk_with_unchanged_baseline_passes_through_check_cli(self):
-        """Subprocess reads exit status."""
+        """Subprocess reads exit status, stdout, and stderr."""
         proc = self.run_check(trunk=True)
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "ok\n")
