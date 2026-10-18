@@ -312,3 +312,19 @@ class LandingTest(LandingTestBase):
         reported = self.land("land")
         self.assertIn("bounced E1 (r/D1)", reported)
         self.assertIn("skills/agent.py", reported)
+
+    def test_a_candidate_baseline_without_a_trunk_baseline_lands_instead_of_crashing(self):
+        self.init_with_limit()
+        payload = json.dumps({"maxFileTokens": 5000, "files": {"fresh.py": 4000}, "skip": []})
+        sha = self.worker("w1", {"size-baseline.json": payload})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
+    def test_seed_omits_a_skipped_over_limit_file(self):
+        (self.work / "vendor").mkdir(exist_ok=True)
+        (self.work / "vendor" / "big.py").write_text("x" * 20004)
+        self.assertIn("size ok", self.land("size"))
+        baseline = json.loads((self.work / "size-baseline.json").read_text())
+        self.assertNotIn("vendor/big.py", baseline["files"])

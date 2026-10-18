@@ -450,11 +450,13 @@ def _show_baseline_raw(repo, commit, baseline_rel):
         return None, False
 
 
-def seed_baseline(path, maximum, sizes):
-    """Write a baseline naming each over-limit file at its current tokens."""
+def seed_baseline(path, maximum, sizes, skip=None):
+    """Write a baseline naming each counted over-limit file at its current tokens."""
+    if skip is None:
+        skip = seam.DEFAULT_SKIP
     over = {name: seam.tokens_for(count) for name, count in sorted(sizes.items())
-            if seam.tokens_for(count) > maximum}
-    _write_baseline(path, maximum, seam.DEFAULT_SKIP, over)
+            if not seam.skipped(name, skip) and seam.tokens_for(count) > maximum}
+    _write_baseline(path, maximum, skip, over)
 
 
 def shrink_baseline(path, sizes, maximum=None):
@@ -505,10 +507,11 @@ def size_report(path, staged, all_files, shrink, baseline):
         raise seam.LandError(f"no baseline at {baseline_rel}; run land.py size without --shrink to seed one")
     if not baseline_path.is_file():
         maximum = contract.get("sizeMaxTokens") or seam.DEFAULT_MAX_TOKENS
+        seed_skip = tuple(seam.DEFAULT_SKIP) + tuple(generated) + (baseline_rel,)
         if staged or contract.get("sizeMaxTokens") is not None:
-            seed_baseline(baseline_path, maximum, _head_sizes(repo))
+            seed_baseline(baseline_path, maximum, _head_sizes(repo), seed_skip)
         else:
-            seed_baseline(baseline_path, maximum, _worktree_sizes(repo, _all_worktree_names(repo)))
+            seed_baseline(baseline_path, maximum, _worktree_sizes(repo, _all_worktree_names(repo)), seed_skip)
     try:
         stored = seam.load_baseline_file(str(baseline_path))
     except ValueError as error:
@@ -582,6 +585,7 @@ def check_candidate_size(store, base, candidate):
         if maximum is None:
             return None
         base_raw = None
+        effective = maximum
         limit = seam.Limit(maximum, seam.DEFAULT_SKIP, {})
     else:
         try:
