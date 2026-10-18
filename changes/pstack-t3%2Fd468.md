@@ -4,3 +4,9 @@
 - the queue bounces an entry whose rebased change grows a file past its allowance
 - land.py size judges changed worktree files and staged files with staged and every file with all
 - land.py size with shrink lowers stored allowances that fell and never raises one
+- the contract limit set by init max-file-tokens turns the queue check on and a baseline filename alone never does
+- the queue reads the actual trunk tip for every entry in a batch and refuses any entry that raises an allowance or the maximum or widens skips or removes enabled policy
+- seeding reads only the committed tree at the base and never reads the change under judgment
+- generic skips cover vendor and cache and images case-insensitive including svg and lockfiles by basename at any depth
+- shrink uses the effective maximum
+- status and status json output matches the prior shape while the limit is off
