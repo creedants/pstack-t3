@@ -15,7 +15,7 @@ If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (n
 ### Pre-0.1.0 nightlies
 
 - On T3 Code 0.0.46-nightly.20261015.3145 or later, a child's question for the user does wake this thread, per [Pending requests](SKILL.md#pending-requests).
-- On T3 Code 0.0.46-nightly.20261015.3145 or later it is `true` while a question blocks the child.
+- On T3 Code 0.0.46-nightly.20261015.3145 or later, `hasPendingQuestion` is `true` while a question blocks the child.
 - On T3 Code 0.0.46-nightly.20261015.3145 or later, a question that blocks the child also ends the wait, with `hasPendingQuestion: true` and `waitTimedOut: false`.
 - On T3 Code 0.0.46-nightly.20261008.2813 or later, a turn held in a stopped queue does not count, and startup recovery on that host repairs a task an older build left `working` behind a held queue.
 - On T3 Code 0.0.46-nightly.20261015.3145 or later, `task_status` also shows `hasPendingQuestion: true` while a question blocks the child.
