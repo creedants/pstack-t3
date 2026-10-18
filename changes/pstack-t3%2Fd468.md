@@ -1,0 +1,23 @@
+- kind feature
+- the queue holds agent-written files to 5000 tokens per file, or the stored maximum, while the limit is on.
+- size-baseline.json names the allowance of each larger file
+- the queue bounces an entry whose rebased change grows a file past its allowance
+- land.py size judges changed worktree files and staged files with staged and every file with all
+- land.py size with shrink lowers stored allowances that fell and never raises one
+- the contract limit set by init max-file-tokens turns the queue check on and a baseline filename alone never does
+- the queue reads the actual trunk tip for every entry in a batch and refuses any entry that weakens the trunk tip policy when one exists by raising an allowance, adding a grandfathered file above the effective maximum, raising the maximum, widening skips, or removing enabled policy
+- seeding reads committed HEAD when the contract sets a maximum or staged runs and never reads staged content and otherwise reads the worktree without enabled
+- generic skips cover top-level vendor and cache and images case-insensitive including svg and lockfiles by basename at any depth
+- shrink uses the effective maximum
+- status and status json output matches the prior shape while the limit is off
+- while the size limit is on and the trunk tip holds a baseline, the queue refuses a candidate baseline with a maximum or files map that cannot be read
+- while the size limit is on, the queue bounces a candidate baseline that does not parse with size baseline cannot be read
+- when HEAD holds a readable baseline, the staged check refuses an index baseline that does not parse with size baseline cannot be read
+- while the size limit is on and the trunk tip holds a baseline, the queue refuses a candidate file allowance below zero with size baseline cannot be read
+- the trusted policy records whether the committed baseline enabled it
+- while the contract sets a maximum the queue and staged and bridge comparisons keep the committed enabled marker when it is true
+- while the trunk tip cannot be read but HEAD holds an enabled baseline the bridge reports size baseline at trunk tip cannot be read
+- while the trunk tip cannot be read the bridge never reads the candidate baseline to decide enablement
+- without HEAD and without a contract maximum the bridge stays off even when the candidate enables itself
+- without HEAD but with a contract maximum the bridge reports size baseline at trunk tip cannot be read
+- the queue and the staged check and the bridge refuse a candidate that disables or unmarks a committed enabled baseline while the contract sets a maximum

@@ -16,12 +16,12 @@ Land many agents' work on one repository through one queue.
 | --- | --- | --- | --- | --- |
 | `--repo REPO` |  |  | `.` | any checkout of the repository (default: current directory) |
 
-`<command>` is one of `init`, `cap`, `mode`, `times`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `status`, `slot`.
+`<command>` is one of `init`, `cap`, `mode`, `times`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `status`, `size`, `slot`.
 
 ## land.py init
 
 ```text
-land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--pr-item-line PR_ITEM_LINE] [--heartbeat-ms HEARTBEAT_MS] [--merge-heartbeat-ms MERGE_HEARTBEAT_MS] [--cap CAP] [--generated PATHS] [--generated-map MAP] [--rebuild COMMAND]
+land.py [flags] init --trunk TRUNK --mode MODE [--remote REMOTE] [--base BASE] [--check CHECK] [--setup SETUP] [--batch BATCH] [--timeout TIMEOUT] [--merge-method MERGE_METHOD] [--author-policy AUTHOR_POLICY] [--pr-item-line PR_ITEM_LINE] [--heartbeat-ms HEARTBEAT_MS] [--merge-heartbeat-ms MERGE_HEARTBEAT_MS] [--cap CAP] [--generated PATHS] [--generated-map MAP] [--rebuild COMMAND] [--max-file-tokens MAX_FILE_TOKENS] [--size-baseline PATH]
 ```
 
 write the repository's landing contract
@@ -45,6 +45,8 @@ write the repository's landing contract
 | `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
 | `--generated-map MAP` |  |  |  | comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages and a trailing ^ to skip doc items, such as src=dst!^ for a catalog page. An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none |
 | `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |
+| `--max-file-tokens MAX_FILE_TOKENS` |  |  |  | token maximum using bytes // 4. Omitted keeps the stored limit; a first init stores none |
+| `--size-baseline PATH` |  |  |  | repository-relative baseline path. Omitted keeps the stored path; the fallback is size-baseline.json |
 
 ## land.py cap
 
@@ -272,7 +274,24 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [--json] [id]
 | `id` |  |  |  |  |
 | `--holder HOLDER` |  |  |  | list this holder's entries; a value ending in / matches every holder under it |
 | `--sha SHA` |  |  |  | with --holder, only entries at exactly this commit |
-| `--json` |  |  |  | print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, and map |
+| `--json` |  |  |  | print one JSON object. It holds mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit |
+
+## land.py size
+
+```text
+land.py [flags] size [--staged] [--all] [--shrink] [--baseline PATH]
+```
+
+check changed worktree file sizes; --staged reads changed index files; --all reads tracked and unignored untracked files. Seed a missing baseline, except with --shrink, which refuses.
+
+In a pstack-t3 checkout with no hook, run `h=$(git rev-parse --git-path hooks/pre-commit) && test ! -e "$h" && printf '#!/bin/sh\nexec python3 skills/landing/scripts/land.py size --staged\n' > "$h" && chmod +x "$h"`.
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--staged` |  |  |  | judge staged files from the index instead of the worktree |
+| `--all` |  |  |  | judge tracked and unignored untracked files |
+| `--shrink` |  |  |  | lower stored allowances that fell, never raising any, before judging |
+| `--baseline PATH` |  |  |  | baseline file to read and write instead of the contract one |
 
 ## land.py slot
 

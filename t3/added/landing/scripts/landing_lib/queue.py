@@ -285,7 +285,7 @@ class Integration:
                 return f"rebuild failed. `{command}` {type(error).__name__}: {error}"
             raise
 
-    def apply(self, entry):
+    def apply(self, entry, trunk_tip=None):
         """Replay the pinned commits onto HEAD. Returns None, or why the entry cannot land."""
         before = self.head()
         spec = f"{entry['base']}..{seam.pin_ref(entry['sha'])}"
@@ -333,6 +333,10 @@ class Integration:
         if seam.fingerprint(self.path, before, self.head(), generated_paths) != entry["fingerprint"]:
             return self._give_up(before, "the rebased change differs from the reviewed one; review it again")
         reason = seam.foreign_author(self.store, entry)
+        if reason:
+            return self._give_up(before, reason)
+        size_base = trunk_tip or before
+        reason = seam.check_candidate_size(self.store, size_base, self.head())
         if reason:
             return self._give_up(before, reason)
         return reason
@@ -466,7 +470,7 @@ def attempt(store, integration, entries):
     integration.reset(base)
     applied, bounced, landed = [], [], []
     for entry in entries:
-        reason = integration.apply(entry)
+        reason = integration.apply(entry, base)
         candidate = "" if reason else integration.head()
         with store.tx() as db:
             if reason == "already-in-trunk":
@@ -518,7 +522,7 @@ Outcome = namedtuple("Outcome", "landed bounced opened adopted rebuilt")
 def build(store, integration, entry, onto, trunk, out):
     contract, ident = store.contract, entry["id"]
     integration.reset(onto)
-    reason = integration.apply(entry)
+    reason = integration.apply(entry, trunk)
     if not reason:
         reason = integration.check()
         reason = f"checks failed: {reason}" if reason else None

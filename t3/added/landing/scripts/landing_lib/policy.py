@@ -178,14 +178,46 @@ def heartbeat_note(contract):
     return f"heartbeat everyMs {every} merge wait {merge}"
 
 
+def refused_size_maximum(value):
+    """Why an init size flag value is refused, or None. None passes."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return "--max-file-tokens must be an integer at or above 1"
+    return None
+
+
+def size_baseline_value(passed, stored):
+    """The baseline path an init stores. None keeps the stored path, which may be none."""
+    if passed is None:
+        return stored
+    text = passed.strip().replace("\\", "/").rstrip("/")
+    parts = text.split("/")
+    if not text or text.startswith("/") or any(part in ("", ".", "..") for part in parts):
+        raise seam.LandError(f"size baseline {passed!r} must be a repository-relative path with no '.', '..', or empty component")
+    return text
+
+
+def size_note(contract):
+    """The stored size limit for repo status. Empty when the contract sets none."""
+    maximum = contract.get("sizeMaxTokens")
+    if maximum is None:
+        return ""
+    return f"size limit {maximum} tokens via {contract.get('sizeBaseline') or seam.DEFAULT_BASELINE}"
+
+
 def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None,
-         author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None, generated_map=None):
+         author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None, generated_map=None,
+         size_max_tokens=None, size_baseline=None):
     mode = seam.LEGACY_MODES.get(mode, mode)
     for flag, value, floor in (("--heartbeat-ms", heartbeat_ms, HEARTBEAT_MS),
                                ("--merge-heartbeat-ms", merge_heartbeat_ms, MERGE_HEARTBEAT_MS)):
         reason = refused_heartbeat(flag, value, floor)
         if reason:
             raise seam.LandError(reason)
+    reason = refused_size_maximum(size_max_tokens)
+    if reason:
+        raise seam.LandError(reason)
     common = seam.common_dir(path)
     repo = common.parent if common.name == ".git" else Path(seam.git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
     directory = seam.state_home() / "landing" / seam.store_name(common)
@@ -235,10 +267,13 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
     if generated_map is not None:
         early_roots = generated_list(generated, stored.get("generated") or [])
         seam.parse_map(generated_map, early_roots)
+    # A refused size flag must fail the same way.
+    baseline_to_store = size_baseline_value(size_baseline, stored.get("sizeBaseline"))
     with seam.Store(directory) as store:
         with store.tx() as db:
             current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
             refuse_clash(current)
+            baseline_to_store = size_baseline_value(size_baseline, current.get("sizeBaseline"))
             wanted = {"commonDir": str(common), "repo": str(repo), "trunk": trunk, "mode": mode, "remote": remote,
                       "checks": filled(current, "checks", checks, []),
                       "setup": filled(current, "setup", setup, ""),
@@ -258,6 +293,11 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                     db.execute("INSERT OR REPLACE INTO contract VALUES (?, ?)", (key, json.dumps(value)))
             if cap is not None:
                 set_cap(db, cap)
+            # Size keys stay absent until a flag sets them, so an older contract keeps no size key.
+            if size_max_tokens is not None:
+                db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeMaxTokens', ?)", (json.dumps(size_max_tokens),))
+            if baseline_to_store is not None:
+                db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeBaseline', ?)", (json.dumps(baseline_to_store),))
         if mode == "local" and seam.git("rev-parse", "--verify", "--quiet", trunk_ref(wanted), cwd=repo, check=False).returncode != 0:
             if not base:
                 raise seam.LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
@@ -320,3 +360,336 @@ def change_mode(store, mode, merge_method):
         holders = seam.holders_of(seam.in_flight(db))
     return (f"landing mode is now {mode}" + (f", merging with --{method}" if method else "")
             + (f"; leases held by {holders}" if holders else ""))
+
+
+def repo_root(path):
+    """Toplevel of the repository holding this path."""
+    return Path(seam.git("rev-parse", "--show-toplevel", cwd=path).stdout.strip())
+
+
+def _tracked_names(repo, *args):
+    out = seam.git("ls-files", "-z", *args, cwd=repo, exact=True).stdout
+    return [path for path in out.split("\0") if path]
+
+
+def _diff_names(repo, *args):
+    out = seam.git("diff", "--name-only", "-z", "--no-renames", *args, cwd=repo, exact=True).stdout
+    return [path for path in out.split("\0") if path]
+
+
+def _worktree_sizes(root, names):
+    """Byte counts of the names that are regular files, following symlinks, in this worktree."""
+    sizes = {}
+    for path in names:
+        try:
+            kind = os.stat(Path(root) / path)
+        except OSError:
+            continue
+        if stat.S_ISREG(kind.st_mode):
+            sizes[path] = kind.st_size
+    return sizes
+
+
+def _all_worktree_names(repo):
+    return _tracked_names(repo) + _tracked_names(repo, "--others", "--exclude-standard")
+
+
+def _index_sizes(repo, names):
+    """Byte counts of the names as staged in the index."""
+    sizes = {}
+    for path in names:
+        sized = seam.git("cat-file", "-s", f":0:{path}", cwd=repo, check=False)
+        if sized.returncode != 0:
+            continue
+        try:
+            sizes[path] = int(sized.stdout.strip())
+        except ValueError:
+            continue
+    return sizes
+
+
+def _commit_sizes(repo, commit, names, skip):
+    """Byte counts of the names as stored in one commit."""
+    sizes = {}
+    for path in names:
+        if seam.skipped(path, skip):
+            continue
+        sized = seam.git("cat-file", "-s", f"{commit}:{path}", cwd=repo, check=False)
+        if sized.returncode != 0:
+            continue
+        try:
+            sizes[path] = int(sized.stdout.strip())
+        except ValueError:
+            continue
+    return sizes
+
+
+def _write_baseline(path, maximum, skip, files, enabled=None):
+    payload = {"maxFileTokens": maximum, "skip": list(skip), "files": dict(files)}
+    if enabled is True:
+        payload["enabled"] = True
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _read_worktree_baseline_raw(baseline_path):
+    try:
+        return json.loads(Path(baseline_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _show_baseline_raw(repo, commit, baseline_rel):
+    shown = seam.git("show", f"{commit}:{baseline_rel}", cwd=repo, check=False)
+    if shown.returncode != 0:
+        return None, True
+    try:
+        return json.loads(shown.stdout), False
+    except json.JSONDecodeError:
+        return None, False
+
+
+def seed_baseline(path, maximum, sizes, skip=None):
+    """Write a baseline naming each counted over-limit file at its current tokens."""
+    if skip is None:
+        skip = seam.DEFAULT_SKIP
+    over = {name: seam.tokens_for(count) for name, count in sorted(sizes.items())
+            if not seam.skipped(name, skip) and seam.tokens_for(count) > maximum}
+    _write_baseline(path, maximum, skip, over)
+
+
+def shrink_baseline(path, sizes, maximum=None):
+    """Lower stored allowances that fell. Never raises one. Drops entries whose stored allowance sat above the maximum once the file fits."""
+    stored = seam.load_baseline_file(str(path))
+    raw = _read_worktree_baseline_raw(path)
+    kept = raw.get("enabled") is True if isinstance(raw, dict) else None
+    files = dict(stored.files)
+    effective = maximum if isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 1 else stored.max_tokens
+    for name in list(files):
+        if name not in sizes:
+            continue
+        tokens = seam.tokens_for(sizes[name])
+        if tokens < files[name]:
+            if files[name] > effective and tokens <= effective:
+                del files[name]
+            else:
+                files[name] = tokens
+    _write_baseline(path, stored.max_tokens, stored.skip, files, kept)
+
+
+def _size_contract(path):
+    try:
+        with seam.Store.for_repo(path) as store:
+            return dict(store.contract)
+    except seam.LandError:
+        return {}
+
+
+def _index_baseline_broken(repo, baseline_rel):
+    """True when the index holds a baseline file that does not parse."""
+    try:
+        shown = seam.git("show", f":0:{baseline_rel}", cwd=repo, check=False)
+    except seam.LandError:
+        return False
+    if shown is None or shown.returncode != 0:
+        return False
+    try:
+        json.loads(shown.stdout)
+    except json.JSONDecodeError:
+        return True
+    return False
+
+
+def _head_names(repo):
+    out = seam.git("ls-tree", "-r", "--name-only", "-z", "HEAD", cwd=repo, check=False, exact=True).stdout
+    return [path for path in out.split("\0") if path]
+
+
+def _head_sizes(repo, skip=()):
+    names = _head_names(repo)
+    return _commit_sizes(repo, "HEAD", names, skip)
+
+
+def size_report(path, staged, all_files, shrink, baseline):
+    """Judge repo files and raise LandError for size violations."""
+    repo = str(repo_root(path))
+    contract = _size_contract(path)
+    generated = list(contract.get("generated") or [])
+    baseline_rel = baseline or contract.get("sizeBaseline") or seam.DEFAULT_BASELINE
+    baseline_path = Path(baseline_rel) if Path(baseline_rel).is_absolute() else Path(repo) / baseline_rel
+    if shrink and not baseline_path.is_file():
+        raise seam.LandError(f"no baseline at {baseline_rel}; run land.py size without --shrink to seed one")
+    if not baseline_path.is_file():
+        maximum = contract.get("sizeMaxTokens") or seam.DEFAULT_MAX_TOKENS
+        seed_skip = tuple(seam.DEFAULT_SKIP) + tuple(generated) + (baseline_rel,)
+        if staged or contract.get("sizeMaxTokens") is not None:
+            seed_baseline(baseline_path, maximum, _head_sizes(repo), seed_skip)
+        else:
+            seed_baseline(baseline_path, maximum, _worktree_sizes(repo, _all_worktree_names(repo)), seed_skip)
+    try:
+        stored = seam.load_baseline_file(str(baseline_path))
+    except ValueError as error:
+        # The staged path reports the index failure when HEAD holds a baseline and both copies do not parse.
+        if staged:
+            _, head_missing = _show_baseline_raw(repo, "HEAD", baseline_rel)
+            if not head_missing and _index_baseline_broken(repo, baseline_rel):
+                raise seam.LandError("size baseline cannot be read") from error
+        raise seam.LandError(str(error)) from error
+    if shrink:
+        maximum = contract.get("sizeMaxTokens") or stored.max_tokens
+        shrink_baseline(baseline_path, _worktree_sizes(repo, _all_worktree_names(repo)), maximum)
+        try:
+            stored = seam.load_baseline_file(str(baseline_path))
+        except ValueError as error:
+            raise seam.LandError(str(error)) from error
+    maximum = contract.get("sizeMaxTokens") or stored.max_tokens
+    if staged:
+        head_raw, head_missing = _show_baseline_raw(repo, "HEAD", baseline_rel)
+        contract_max = contract.get("sizeMaxTokens")
+        trusted = seam.resolve_trusted(contract_max, None if head_missing else head_raw, head_missing, None)
+        if trusted.error:
+            raise seam.LandError(trusted.error)
+        if trusted.enabled:
+            try:
+                index_raw_text = seam.git("show", f":0:{baseline_rel}", cwd=repo, check=False)
+            except seam.LandError:
+                index_raw_text = None
+            if index_raw_text is not None and index_raw_text.returncode == 0:
+                try:
+                    index_raw = json.loads(index_raw_text.stdout)
+                except json.JSONDecodeError:
+                    raise seam.LandError("size baseline cannot be read")
+            else:
+                index_raw = None
+            if index_raw is None:
+                if not head_missing:
+                    raise seam.LandError("size baseline removes enabled policy; a person merges that raise outside the queue")
+            else:
+                contract_on = isinstance(contract_max, int) and not isinstance(contract_max, bool) and contract_max >= 1
+                if contract_on:
+                    if not head_missing and isinstance(head_raw, dict):
+                        raw_max = head_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
+                        if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
+                            raw_max = trusted.limit.max_tokens
+                    else:
+                        raw_max = trusted.limit.max_tokens
+                    base_for_compare = {"maxFileTokens": raw_max,
+                                        "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+                    if trusted.committed_enabled:
+                        base_for_compare["enabled"] = True
+                else:
+                    base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
+                                        "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+                problem = seam.refused_policy_change(base_for_compare, index_raw, trusted.limit.max_tokens)
+                if problem:
+                    raise seam.LandError(problem)
+            skip = tuple(seam.DEFAULT_SKIP) + tuple(trusted.limit.skip) + tuple(generated) + (baseline_rel,)
+            limit = seam.Limit(trusted.limit.max_tokens, skip, dict(trusted.limit.files))
+        elif not head_missing:
+            try:
+                index_raw_text = seam.git("show", f":0:{baseline_rel}", cwd=repo, check=False)
+            except seam.LandError:
+                index_raw_text = None
+            index_raw = None
+            if index_raw_text is not None and index_raw_text.returncode == 0:
+                try:
+                    index_raw = json.loads(index_raw_text.stdout)
+                except json.JSONDecodeError:
+                    raise seam.LandError("size baseline cannot be read")
+            try:
+                head_limit = seam.parse_limit(head_raw) if isinstance(head_raw, dict) else stored
+            except ValueError as error:
+                raise seam.LandError(str(error)) from error
+            effective = contract.get("sizeMaxTokens") or head_limit.max_tokens
+            problem = seam.refused_policy_change(head_raw, index_raw, effective)
+            if problem:
+                raise seam.LandError(problem)
+            head_max = effective
+            skip = tuple(seam.DEFAULT_SKIP) + tuple(head_limit.skip) + tuple(generated) + (baseline_rel,)
+            limit = seam.Limit(head_max, skip, dict(head_limit.files))
+        else:
+            skip = tuple(seam.DEFAULT_SKIP) + tuple(stored.skip) + tuple(generated) + (baseline_rel,)
+            limit = seam.Limit(maximum, skip, dict(stored.files))
+        names = _diff_names(repo, "--cached", "HEAD")
+        sizes = _index_sizes(repo, names)
+    else:
+        skip = tuple(seam.DEFAULT_SKIP) + tuple(stored.skip) + tuple(generated) + (baseline_rel,)
+        limit = seam.Limit(maximum, skip, dict(stored.files))
+        if all_files:
+            sizes = _worktree_sizes(repo, _all_worktree_names(repo))
+        else:
+            names = _diff_names(repo, "HEAD") + _tracked_names(repo, "--others", "--exclude-standard")
+            sizes = _worktree_sizes(repo, names)
+    verdict = seam.judge(sizes, limit)
+    if verdict.over:
+        raise seam.LandError(seam.format_verdict(verdict))
+    return f"size ok: checked {len(sizes)} paths via {baseline_rel}"
+
+
+def check_candidate_size(store, base, candidate):
+    """Why the candidate fails the size limit, or None.
+
+    The check runs at land time, not at submit time, so the rebased change is
+    what is judged. The limit comes from the contract maximum, or from the baseline file committed at the
+    trunk tip, read with git show. The contract points at that file with sizeBaseline and may set the maximum with sizeMaxTokens, which overrides the baseline maxFileTokens. A human raise goes through a reviewed PR that a person merges outside the queue.
+    """
+    contract = store.contract
+    maximum = contract.get("sizeMaxTokens")
+    baseline_rel = contract.get("sizeBaseline") or seam.DEFAULT_BASELINE
+    repo = store.repo
+    shown = seam.git("show", f"{base}:{baseline_rel}", cwd=repo, check=False)
+    if shown.returncode != 0:
+        base_missing = True
+        base_raw = None
+        base_error = None
+    else:
+        base_missing = False
+        try:
+            base_raw = json.loads(shown.stdout)
+        except json.JSONDecodeError as error:
+            base_raw = None
+            base_error = str(error)
+        else:
+            base_error = None
+    trusted = seam.resolve_trusted(maximum, base_raw, base_missing, base_error)
+    if trusted.error:
+        return trusted.error
+    if not trusted.enabled:
+        return None
+    effective = trusted.limit.max_tokens
+    contract_on = isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 1
+    if contract_on:
+        if not base_missing and isinstance(base_raw, dict):
+            raw_max = base_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
+            if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
+                raw_max = effective
+        else:
+            raw_max = effective
+        base_for_compare = {"maxFileTokens": raw_max,
+                            "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+        if trusted.committed_enabled:
+            base_for_compare["enabled"] = True
+    else:
+        base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
+                            "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+    cand_shown = seam.git("show", f"{candidate}:{baseline_rel}", cwd=repo, check=False)
+    if cand_shown.returncode == 0:
+        try:
+            cand_obj = json.loads(cand_shown.stdout)
+        except json.JSONDecodeError:
+            return "size baseline cannot be read"
+        problem = seam.refused_policy_change(base_for_compare, cand_obj, effective)
+        if problem:
+            return problem
+    elif not base_missing:
+        return "size baseline removes enabled policy; a person merges that raise outside the queue"
+    limit = trusted.limit
+    generated = list(contract.get("generated") or [])
+    limit = seam.Limit(limit.max_tokens, tuple(seam.DEFAULT_SKIP) + tuple(limit.skip) + tuple(generated) + (baseline_rel,), limit.files)
+    changed = seam.changed_paths(repo, base, candidate)
+    sizes = _commit_sizes(repo, candidate, changed, limit.skip)
+    verdict = seam.judge(sizes, limit)
+    if verdict.over:
+        return seam.format_verdict(verdict)
+    return None
