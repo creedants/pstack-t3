@@ -335,6 +335,9 @@ class Integration:
         reason = seam.foreign_author(self.store, entry)
         if reason:
             return self._give_up(before, reason)
+        reason = seam.check_candidate_size(self.store, before, self.head())
+        if reason:
+            return self._give_up(before, reason)
         return reason
 
     def check(self):
