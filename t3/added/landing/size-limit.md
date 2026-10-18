@@ -1,8 +1,8 @@
 ## File size limit
 
-Agent-written files stay small enough to review. Tokens equal bytes divided by 4 with integer division. The limit is 5000 tokens per file unless the contract sets another maximum.
+Agent-written files stay small enough to review. Tokens equal bytes divided by 4 with integer division. The limit is 5000 tokens per file unless --max-file-tokens or the baseline maxFileTokens sets another maximum. The queue judges only while the contract sets a limit or the trunk tip holds the baseline file.
 
-The committed size-baseline.json names the allowance of each larger file. The landing contract only points at that file with sizeBaseline. The queue reads the baseline from the trunk tip with git show and judges the rebased candidate at land time. Submit never judges sizes. A failure bounces the entry with one line per file naming the path, the tokens, the allowance, and the split step.
+The committed size-baseline.json names the allowance of each larger file. The contract points at that file with sizeBaseline and may set the maximum with sizeMaxTokens, which overrides the baseline maxFileTokens. The queue reads the baseline from the trunk tip with git show and judges the files the rebased candidate changes at land time. Submit never judges sizes. A failure bounces the entry with one line per file naming the path, the tokens, the allowance, and the split step.
 
 Turn the limit on with `python3 <skills>/landing/scripts/land.py --repo <checkout> init --trunk main --mode <mode> --max-file-tokens 5000`. A rerun without the flags keeps the stored values. `land.py status` names the limit while the contract sets one.
 

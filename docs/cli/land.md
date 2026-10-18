@@ -45,7 +45,7 @@ write the repository's landing contract
 | `--generated PATHS` |  |  |  | comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none |
 | `--generated-map MAP` |  |  |  | comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages and a trailing ^ to skip doc items, such as src=dst!^ for a catalog page. An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none |
 | `--rebuild COMMAND` |  |  |  | command that regenerates the generated paths while landing, such as "python3 scripts/build.py". An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none |
-| `--max-file-tokens MAX_FILE_TOKENS` |  |  |  | most tokens one file may hold; a file holds its bytes divided by 4. Omitted, a rerun keeps the stored limit and a first init stores none, which turns the limit off |
+| `--max-file-tokens MAX_FILE_TOKENS` |  |  |  | most tokens one file may hold; a file holds its bytes divided by 4. Omitted, a rerun keeps the stored limit and a first init stores none, so the limit applies only through a baseline file |
 | `--size-baseline PATH` |  |  |  | repository-relative baseline file naming each larger file's allowance, such as size-baseline.json. Omitted, a rerun keeps the stored path and a first init stores none, which reads size-baseline.json |
 
 ## land.py cap
@@ -274,7 +274,7 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [--json] [id]
 | `id` |  |  |  |  |
 | `--holder HOLDER` |  |  |  | list this holder's entries; a value ending in / matches every holder under it |
 | `--sha SHA` |  |  |  | with --holder, only entries at exactly this commit |
-| `--json` |  |  |  | print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, and map |
+| `--json` |  |  |  | print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, map, sizeMaxTokens, and sizeBaseline |
 
 ## land.py size
 

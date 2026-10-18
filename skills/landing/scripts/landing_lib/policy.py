@@ -439,7 +439,7 @@ def seed_baseline(path, maximum, sizes):
 
 
 def shrink_baseline(path, sizes):
-    """Lower stored allowances that fell. Never raises one. Drops entries at or below the maximum."""
+    """Lower stored allowances that fell. Never raises one. Drops entries whose file fell to the maximum or less."""
     stored = seam.load_baseline_file(str(path))
     files = dict(stored.files)
     for name in list(files):
@@ -506,7 +506,7 @@ def check_candidate_size(store, base, candidate):
 
     The check runs at land time, not at submit time, so the rebased change is
     what is judged. The limit comes from the baseline file committed at the
-    trunk tip, read with git show. The contract only points at that file.
+    trunk tip, read with git show. The contract points at that file with sizeBaseline and may set the maximum with sizeMaxTokens, which overrides the baseline maxFileTokens.
     """
     contract = store.contract
     maximum = contract.get("sizeMaxTokens")

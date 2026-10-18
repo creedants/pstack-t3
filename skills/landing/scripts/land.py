@@ -134,7 +134,7 @@ def parser():
                         "An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none")
     p.add_argument("--max-file-tokens", type=int, default=None, dest="max_file_tokens",
                    help="most tokens one file may hold; a file holds its bytes divided by 4. "
-                        "Omitted, a rerun keeps the stored limit and a first init stores none, which turns the limit off")
+                        "Omitted, a rerun keeps the stored limit and a first init stores none, so the limit applies only through a baseline file")
     p.add_argument("--size-baseline", metavar="PATH", default=None, dest="size_baseline",
                    help="repository-relative baseline file naming each larger file's allowance, such as size-baseline.json. "
                         "Omitted, a rerun keeps the stored path and a first init stores none, which reads size-baseline.json")
@@ -228,7 +228,7 @@ def parser():
     p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p.add_argument("--json", action="store_true",
-                   help="print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, and map")
+                   help="print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, map, sizeMaxTokens, and sizeBaseline")
 
     size_help = ("judge files against the size limit and seed the baseline when it is absent. "
                  "The default judges changed worktree files, --staged judges staged files from the index, "

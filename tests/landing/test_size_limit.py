@@ -46,7 +46,7 @@ class LandingTest(LandingTestBase):
                          "bounced E1 (r/D1): data.txt: 7000 tokens over allowance 6000 for text; "
                          "skill and doc text moves rarely needed sections to an on-demand file with a pointer saying when to read it")
 
-    def test_a_file_shrunk_to_its_allowance_lands(self):
+    def test_a_file_shrunk_below_its_allowance_lands(self):
         (self.work / "data.txt").write_text("x" * 24000)
         self.land("size")
         self.commit("seed")

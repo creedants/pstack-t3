@@ -2,10 +2,10 @@
 """Report worktree files over the file size limit.
 
 This bridge loads the pure sizes module with spec_from_file_location, so it
-needs no landing imports. check.py appends these findings to its own. The
-limit runs when size-baseline.json exists at the repo root, or when the
-landing contract for the repo sets a size limit. A bad baseline is one
-finding, never a crash.
+needs no landing imports. check.py appends these findings when run without a tree argument. The
+limit runs when the baseline file (size-baseline.json, or the contract sizeBaseline) exists, or when the
+landing contract for the repo sets a size limit. A baseline that is not valid is one
+finding.
 """
 
 import hashlib

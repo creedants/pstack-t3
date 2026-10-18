@@ -1,8 +1,7 @@
 """Per-file token limit for agent-written files.
 
 Tokens equal bytes divided by 4 with integer division. The committed
-size-baseline.json names the allowance of each larger file. The landing
-contract only points at that file. The queue checks at land time.
+size-baseline.json names the allowance of each larger file. The contract points at that file with sizeBaseline and may set the maximum with sizeMaxTokens, which overrides the baseline maxFileTokens. The queue checks at land time.
 """
 
 import fnmatch
