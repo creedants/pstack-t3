@@ -927,3 +927,32 @@ class WakeTest(BrigadeTest):
         rows = [line.split("\t") for line in
                 (self.store / "bridge-kit" / ".admin" / "log.tsv").read_text().splitlines()[1:] if line]
         self.assertEqual([row[1] for row in rows], [])
+
+    def _seed_trunk(self, state, note, ident="main"):
+        stamp = datetime.now(timezone.utc).isoformat()
+        with open(self.at / "log.tsv", "a") as handle:
+            handle.write(f"{stamp}\ttrunk\t{ident}\t{state}\t{note}\n")
+
+    def test_red_trunk_owes_fix_and_tell_at_all_levels(self):
+        self.fired_bug_fix()
+        note = json.dumps({"sha": "aaa111", "workflow": "CI",
+                           "url": "https://example.com/run/2", "since": "2026-10-01T00:00:00+00:00"})
+        self._seed_trunk("red", note)
+        for level in ("every-turn", "milestones", "digest"):
+            self.brigade("set", "--reporting", level)
+            for wake in (("liveness",), ("merge", "D1")):
+                sheet = self.next_sheet(*wake)
+                self.assertIn("Read the failing jobs", sheet)
+                self.assertIn("urgent fix", sheet)
+                self.assertIn("Tell the owner", sheet)
+                self.assertIn("trunk", sheet.lower())
+                self.assertTrue(sheet.splitlines()[-1].startswith("reply: yes"))
+
+    def test_green_trunk_owes_no_cue(self):
+        self.fired_bug_fix()
+        self._seed_trunk("green", "ddd444")
+        for wake in (("liveness",), ("merge", "D1")):
+            sheet = self.next_sheet(*wake)
+            self.assertNotIn("failing jobs", sheet)
+            self.assertNotIn("urgent fix", sheet)
+            self.assertNotIn("red trunk", sheet)

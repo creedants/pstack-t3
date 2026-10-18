@@ -27,7 +27,7 @@ from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
 from brigade_lib.store import MESSAGE_ONLY, ROUND_BUDGET, ROUND_KIND, TABLES, reporting_of, store_path
 from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels, request_files
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
-from brigade_lib.watch import closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
+from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
 
 
 DRAIN_LABELS = ("in progress", "in review", "passed review", "waiting to land")
@@ -166,6 +166,7 @@ class Snapshot:
     warn: object
     place: str
     report_gaps: tuple
+    trunk: object
 
 
 def dish_by_id(snapshot, ident):
@@ -300,13 +301,14 @@ def load_snapshot(restaurant, moment):
             blocked_since[event["id"]] = event["at"]
     pending = tuple((path.stem, path.read_text().strip()) for path in request_files(restaurant)[0])
     block = restaurant.owner_block() or ""
+    trunk = _latest_trunk(restaurant.rows("log.tsv"))
     return Snapshot(
         reporting_of(meta), meta.get("reportsTo") or "", since, block, slug(meta["restaurant"]),
         tuple(meta.get("intake") or ()), dishes, tickets, decisions, tuple(debts), round_counts,
         tuple(seam.events_since(restaurant, since).values()), seam.counts(restaurant), tuple(progress),
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
         tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
-        store_path(restaurant.dir), tuple(gaps))
+        store_path(restaurant.dir), tuple(gaps), trunk)
 
 
 def inbox_ready(snapshot):
@@ -468,6 +470,9 @@ def held_occasions(snapshot, trigger, failure, unsent):
         holding["stuck"] = ("stuck", False)
     if failure == "fixable" or (trigger.wake == "checks" and trigger.result == "fail" and not failure):
         holding["failure"] = ("fixable" if failure == "fixable" else "fail", False)
+    if trigger.wake in ("liveness", "merge") and _trunk_red(snapshot) is not None:
+        red = _trunk_red(snapshot)
+        holding["red-trunk"] = (red.get("id") or "trunk", True)
     note_unsent(holding, unsent, failure)
     found = [(name, *holding[name]) for name in OCCASION_ORDER if name in holding]
     for name, pair in holding.items():
@@ -576,6 +581,30 @@ def housekeeping(dish):
             f"Remove the worktree and delete the branch after that. Do not claim they are already gone.")
 
 
+def _trunk_red(snapshot):
+    """The stored red trunk dict or None."""
+    trunk = getattr(snapshot, "trunk", None)
+    if isinstance(trunk, dict) and trunk.get("state") == "red":
+        return trunk
+    return None
+
+
+def _trunk_cues(snapshot):
+    """The See cues owed while the stored trunk stays red."""
+    red = _trunk_red(snapshot)
+    if red is None:
+        return []
+    ident = red.get("id") or "trunk"
+    since = red.get("since") or ""
+    workflow = red.get("workflow") or ""
+    url = red.get("url") or ""
+    return [
+        See(f"Trunk {ident} CI failing since {since}: {workflow} {url}. Read the failing jobs."),
+        See(f"File or fire an urgent fix for the red trunk {ident}."),
+        See(f"Tell the owner the trunk {ident} is red."),
+    ]
+
+
 def prefix_cues(snapshot, trigger, failure):
     wake, dish_id = trigger.wake, trigger.dish
     if wake == "report-back":
@@ -630,10 +659,12 @@ def prefix_cues(snapshot, trigger, failure):
         dish = dish_by_id(snapshot, dish_id)
         run = maybe_run(snapshot, ("dish", dish_id, "--state", "merged"))
         cues = [run] if run else [See(merge_why(snapshot, dish))]
+        cues.extend(_trunk_cues(snapshot))
         cues.append(See(housekeeping(dish)))
         return cues
     if wake == "liveness":
         cues = [See("watch")]
+        cues.extend(_trunk_cues(snapshot))
         for dish in snapshot.dishes:
             if dish["state"] == "queued":
                 cues.append(land_follow(dish["id"]))
