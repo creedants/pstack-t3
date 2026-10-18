@@ -123,6 +123,8 @@ SCRATCH_KEY = "scratchDir"
 SCRATCH_REFUSAL = "--scratch-dir takes an absolute directory path outside /tmp, or empty string to clear it"
 # The restaurant.json key that overrides LOW_RESERVE.
 LOW_RESERVE_KEY = "lowReserve"
+# The restaurant.json key that overrides ROUND_BUDGET.
+ROUND_BUDGET_KEY = "roundBudget"
 # The restaurant.json key that overrides the liveness interval.
 LIVENESS_KEY = "livenessMs"
 LIVENESS_FLOOR = 60000
@@ -241,6 +243,30 @@ def parse_low_reserve(text):
         raise BrigadeError(f"--low-reserve takes a whole number of 0 or more, got '{text}'") from None
     if value < 0:
         raise BrigadeError(f"--low-reserve takes a whole number of 0 or more, got '{text}'")
+    return value
+
+
+def round_budget_of(meta):
+    """The round budget this store enforces.
+
+    A missing key takes ROUND_BUDGET. A present value that is a boolean, is not an integer, or is under 1 is refused.
+    """
+    if ROUND_BUDGET_KEY not in meta:
+        return ROUND_BUDGET
+    value = meta[ROUND_BUDGET_KEY]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        refuse_setting(ROUND_BUDGET_KEY, value, "it is not a whole number of 1 or more")
+    return value
+
+
+def parse_round_budget(text):
+    """The integer a --round-budget flag stores. Empty string is the caller's clear signal, not this function's."""
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise BrigadeError(f"--round-budget takes a whole number of 1 or more, got '{text}'") from None
+    if value < 1:
+        raise BrigadeError(f"--round-budget takes a whole number of 1 or more, got '{text}'")
     return value
 
 

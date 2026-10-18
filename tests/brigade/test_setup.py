@@ -89,3 +89,44 @@ class SetupBoundaryTest(BrigadeTest):
         self.assertIn("brigade: warning: restaurant.json caps '1' is invalid: 'fix' needs a whole number of 1 or more",
                       error)
         self.assertEqual(self.store_files(), store)
+
+
+class RoundBudgetSetupTest(BrigadeTest):
+    def meta(self):
+        return json.loads((self.at / "restaurant.json").read_text())
+
+    def write_meta(self, **changes):
+        meta = self.meta()
+        meta.update(changes)
+        (self.at / "restaurant.json").write_text(json.dumps(meta))
+
+    def test_open_holds_no_round_budget_key_and_the_decision_opens_at_three(self):
+        self.fired_bug_fix()
+        self.assertNotIn("roundBudget", self.meta())
+        error = self.brigade("86", "add", "--dish", "D1", "--round-budget", ok=False)
+        self.assertIn("opens at 3", error)
+
+    def test_set_stores_and_clears_the_round_budget(self):
+        self.open()
+        self.brigade("set", "--round-budget", "2")
+        self.assertEqual(self.meta()["roundBudget"], 2)
+        self.brigade("set", "--round-budget", "")
+        self.assertNotIn("roundBudget", self.meta())
+
+    def test_set_refuses_a_round_budget_below_one_or_not_a_number_and_writes_nothing(self):
+        self.open()
+        for bad in ("two", "0", "-1"):
+            with self.subTest(bad=bad):
+                before = self.store_files()
+                self.assertEqual(self.brigade("set", "--round-budget", bad, code=1),
+                                 f"brigade: --round-budget takes a whole number of 1 or more, got '{bad}'")
+                self.assertEqual(self.store_files(), before)
+
+    def test_set_refuses_a_stored_boolean_round_budget_and_writes_nothing(self):
+        self.open()
+        self.write_meta(roundBudget=True)
+        before = self.store_files()
+        error = self.brigade("set", "--reporting", "digest", code=1)
+        self.assertIn("brigade: warning: restaurant.json roundBudget True is invalid: "
+                      "it is not a whole number of 1 or more", error)
+        self.assertEqual(self.store_files(), before)

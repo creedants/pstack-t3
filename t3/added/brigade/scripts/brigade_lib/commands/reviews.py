@@ -24,7 +24,7 @@ from brigade_lib import seam
 from brigade_lib.items import announce_archive
 from brigade_lib.reviews import latest_verdict, pass_check, pass_json, pass_stats, record_pass, round_decision, verify_edits, write_threads
 from brigade_lib.shared import BrigadeError, clean
-from brigade_lib.store import EDITS_VERDICT, REASONS, ROUND_BUDGET, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
+from brigade_lib.store import EDITS_VERDICT, REASONS, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
 from brigade_lib.wake import closing_options, open_item_decisions, option_key
 
 COMMANDS = ("thread", "pass", "edits", "86")
@@ -148,7 +148,7 @@ def register_86(sub):
     a.add_argument("--default")
     a.add_argument("--dish", default="")
     a.add_argument("--round-budget", action="store_true",
-                   help=f"with --dish: write the decision a dish owes at {ROUND_BUDGET} send-backs; takes no question, options, or default")
+                   help="with --dish: write the decision a dish owes at its stored roundBudget send-backs; takes no question, options, or default")
     a = t.add_parser("answer")
     a.add_argument("id")
     a.add_argument("--answer", required=True)

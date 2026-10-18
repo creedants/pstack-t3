@@ -24,7 +24,7 @@ from brigade_lib import seam
 from brigade_lib.items import attempt_starts
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
-from brigade_lib.store import MESSAGE_ONLY, ROUND_BUDGET, ROUND_KIND, TABLES, reporting_of, store_path
+from brigade_lib.store import MESSAGE_ONLY, ROUND_KIND, TABLES, reporting_of, round_budget_of, store_path
 from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels, request_files
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
 from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
@@ -167,6 +167,7 @@ class Snapshot:
     place: str
     report_gaps: tuple
     trunk: object
+    round_budget: int
 
 
 def dish_by_id(snapshot, ident):
@@ -196,16 +197,17 @@ def lowest_id(idents, warn):
 
 
 def crossing_send_back(restaurant, dish_id):
-    """The at of the send-back that reached ROUND_BUDGET, using the same rows round_count counts."""
+    """The at of the send-back that reached the round budget, using the same rows round_count counts."""
+    budget = round_budget_of(restaurant.meta)
     verdicts = item_verdicts(restaurant.rows("pass.tsv"), dish_id)
     settled = [row["at"] for row in verdicts if row["verdict"] == "pass"]
     settled += [row["answered"] for row in restaurant.rows("86.tsv")
                 if row["dish"] == dish_id and row["kind"] == ROUND_KIND and row["state"] == "answered"]
     since = max(settled, default="")
     backs = [row["at"] for row in verdicts if row["verdict"] == "send-back" and row["at"] > since]
-    if len(backs) < ROUND_BUDGET:
+    if len(backs) < budget:
         return ""
-    return backs[ROUND_BUDGET - 1]
+    return backs[budget - 1]
 
 
 def load_inbox(restaurant):
@@ -308,7 +310,7 @@ def load_snapshot(restaurant, moment):
         tuple(seam.events_since(restaurant, since).values()), seam.counts(restaurant), tuple(progress),
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
         tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
-        store_path(restaurant.dir), tuple(gaps), trunk)
+        store_path(restaurant.dir), tuple(gaps), trunk, round_budget_of(meta))
 
 
 def inbox_ready(snapshot):
@@ -378,7 +380,7 @@ def budget_reached(snapshot, trigger):
     count = snapshot.round_counts.get(trigger.dish, 0)
     if trigger.verdict == "send-back":
         count += 1
-    return count >= ROUND_BUDGET
+    return count >= snapshot.round_budget
 
 
 def blocked_needs_user(snapshot, trigger, failure):
@@ -632,7 +634,7 @@ def prefix_cues(snapshot, trigger, failure):
         cues = [See(recorded)]
         if trigger.verdict in ("send-back", "pass-with-edits"):
             run = maybe_run(snapshot, ("86", "add", "--dish", dish_id, "--round-budget"))
-            already = snapshot.round_counts.get(dish_id, 0) >= ROUND_BUDGET
+            already = snapshot.round_counts.get(dish_id, 0) >= snapshot.round_budget
             if not run and not already and budget_reached(snapshot, trigger):
                 cues.append(If(f"{dish_id} reaches the round budget and no decision is open",
                                f"run 86 add --dish {dish_id} --round-budget"))
