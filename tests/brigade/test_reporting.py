@@ -258,6 +258,23 @@ class ReportingTest(BrigadeTest, _ReportingRace):
         for word in ("86", "plate", "heard", "chef", "fire", "pass "):
             self.assertNotIn(word, self.brigade("status").lower())
 
+    def test_status_prints_the_round_budget_only_when_it_is_stored_off_the_default(self):
+        self.open()
+        before = self.brigade("status")
+        self.assertNotIn("round budget", before)
+        self.brigade("set", "--round-budget", "2")
+        lines = before.splitlines()
+        at = next(index for index, line in enumerate(lines) if line.startswith("liveness:"))
+        self.assertEqual(self.brigade("status").splitlines(),
+                         lines[:at + 1] + ["round budget: 2 send-backs"] + lines[at + 1:])
+        self.assertIn("roundBudget", self.brigade("86", "add", "--help"))
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        meta["roundBudget"] = 3
+        (self.at / "restaurant.json").write_text(json.dumps(meta, indent=2) + "\n")
+        self.assertEqual(self.brigade("status"), before)
+        self.brigade("set", "--round-budget", "")
+        self.assertEqual(self.brigade("status"), before)
+
     def test_status_without_a_contract_ignores_a_stored_landing_field(self):
         self.open()
         self.assertNotIn("landing", json.loads((self.at / "restaurant.json").read_text()))
