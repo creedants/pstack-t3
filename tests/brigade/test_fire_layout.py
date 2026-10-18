@@ -12,11 +12,38 @@ import subprocess
 
 
 class FireLayoutTest(BrigadeTest):
+    GENERATED = "skills,docs/cli,docs/skills.md"
+    MAP = ",".join([
+        "t3/added/**=skills/**",
+        "t3/overrides/**=skills/**",
+        "t3/agents/**=skills/pstack-runtime/agents/**",
+        "t3/runtime.md=skills/pstack-runtime/SKILL.md",
+        "t3/scripts/roles.py=skills/pstack-runtime/scripts/roles.py",
+        "t3/setup.md=skills/setup-pstack/SKILL.md",
+        "t3/added/brigade/scripts/activity.py=docs/cli/activity.md!",
+        "t3/added/brigade/scripts/brigade.py=docs/cli/brigade.md!",
+        "t3/added/landing/scripts/land.py=docs/cli/land.md!",
+        "t3/scripts/roles.py=docs/cli/roles.md!",
+        "t3/runtime.md=docs/skills.md!",
+        "t3/setup.md=docs/skills.md!",
+        "t3/removed.txt=docs/skills.md!",
+        "t3=docs/skills.md!",
+        "t3/overrides=docs/skills.md!",
+        "t3/added=docs/skills.md!",
+        "vendor/pstack=docs/skills.md!",
+        "vendor/pstack/skills=docs/skills.md!",
+        "t3/overrides/*=docs/skills.md!",
+        "t3/added/*=docs/skills.md!",
+        "vendor/pstack/skills/*=docs/skills.md!",
+        "t3/overrides/*/SKILL.md=docs/skills.md!",
+        "t3/added/*/SKILL.md=docs/skills.md!",
+        "vendor/pstack/skills/*/SKILL.md=docs/skills.md!",
+    ])
+
     def vendor_layout(self):
         target = self.project / "scripts"
         target.mkdir(parents=True, exist_ok=True)
-        for name in ("build.py", "cli_reference.py"):
-            (target / name).write_bytes((ROOT / "scripts" / name).read_bytes())
+        self.init_landing("--generated", self.GENERATED, "--generated-map", self.MAP)
 
     def commit_paths(self, paths):
         for part in paths.split(","):
@@ -236,8 +263,8 @@ class FireLayoutTest(BrigadeTest):
         self.commit_paths("t3/runtime.md")
         cli = self.project / "scripts" / "cli_reference.py"
         marker = self.project / "project-code-ran"
-        text = cli.read_text()
-        cli.write_text(text + f'\nPath(__file__).with_name("project-code-ran").write_text("executed")\nraise SystemExit(99)\n')
+        cli.parent.mkdir(parents=True, exist_ok=True)
+        cli.write_text('from pathlib import Path\nPath(__file__).with_name("project-code-ran").write_text("executed")\nraise SystemExit(99)\n')
         self.init_landing()
         self.landing_env()
         self.open()
