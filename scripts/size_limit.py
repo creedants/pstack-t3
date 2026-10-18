@@ -5,8 +5,9 @@ This bridge loads the pure sizes module with spec_from_file_location, so it
 needs no landing imports. check.py appends these findings when run without a tree argument. The
 limit runs when the landing contract for the repo sets a size limit, or when the
 baseline file committed at the trunk base explicitly opts in with enabled true. A baseline filename
-alone never turns the limit on. A baseline that does not parse or has an unreadable maximum or files map is one
-finding while the limit is on.
+alone never turns the limit on. When the trunk base is readable, a baseline that does not parse or has an unreadable maximum or files map is one
+finding while the limit is on. When the trunk base cannot be read, the bridge reads HEAD and reports size baseline at trunk tip cannot be read
+while the limit is on, else stays off, without reading the candidate.
 """
 
 import hashlib
