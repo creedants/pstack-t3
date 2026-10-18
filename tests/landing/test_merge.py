@@ -38,6 +38,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", self.land("land"))
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
             self.assertEqual((self.base / "merge-calls").read_text().splitlines(),
                              [self.pinned(9, "--auto", "--merge"), self.pinned(9, "--merge")])
@@ -51,6 +52,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.assertEqual(self.land("land"), "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9")
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             candidate = sh("git", "rev-parse", "landing/e1", cwd=self.base / "origin.git")
             self.on_origin("update-ref", "refs/heads/main", candidate)
@@ -101,6 +103,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.assertEqual(self.land("land"), "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9")
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
             (self.base / "checks").write_text("failed")
@@ -141,6 +144,7 @@ class LandingTest(LandingTestBase):
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
             self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
             self.assertFalse((self.base / "merge-calls").exists())
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
             self.assertEqual((self.base / "merge-calls").read_text().splitlines(),
                              [self.pinned(9, "--auto", "--merge"),
@@ -188,6 +192,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
             candidate = sh("git", "rev-parse", "landing/e1", cwd=self.base / "origin.git")
@@ -210,6 +215,7 @@ class LandingTest(LandingTestBase):
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", opened)
             self.assertNotIn("queue paused", opened)
             self.assertFalse((self.base / "merge-calls").exists())
+            self.age_absence(1)
             paused = self.land("land")
             self.assertIn("queue paused", paused)
             self.assertIn("merge conflict", paused)
@@ -232,6 +238,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
+            self.age_absence(1)
             still = self.land("land")
             self.assertNotIn("queue paused", still)
             self.assertNotIn("landed", still)
@@ -407,6 +414,27 @@ class LandingTest(LandingTestBase):
             self.assertIn("bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", opened)
             self.assertTrue(self.land("lease", "list").startswith("L1 active"))
 
+    def assert_absent(self, *idents):
+        """These entries hold absent markers for their stored candidates."""
+        marker = self.absent_marker()
+        self.assertEqual(set(marker), {str(ident) for ident in idents})
+        for ident in idents:
+            self.assertEqual(set(marker[str(ident)]), {"since", "candidate"})
+            self.assertEqual(marker[str(ident)]["candidate"], self.entry_fields(ident, "candidate")[0])
+
+    def open_pr_with_a_merge_requested(self):
+        """One merge-mode entry noted merge requested by the queue, with its PR open.
+
+        The shared helper stops at the first waiting land. This one ages the
+        absence first, for a repo with truly no required checks."""
+        (self.base / "required-checks").write_text("")
+        self.init(mode="merge")
+        self.queue_one()
+        self.land("land")
+        self.age_absence(1)
+        self.assertEqual(self.land("land"), "nothing to land")
+        self.assertIn("merge requested by the queue", self.land("status", "E1"))
+
     def test_merge_mode_drops_the_absent_marker_when_the_entry_lands(self):
         with self.fake_gh():
             (self.base / "pr-checks.json").write_text('{"reviewDecision":"","statusCheckRollup":[]}')
@@ -414,7 +442,8 @@ class LandingTest(LandingTestBase):
             self.queue_one()
             opened = self.land("land")
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", opened)
-            self.assertEqual(self.absent_marker(), {"1": 1})
+            self.assert_absent(1)
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
             self.assertNotIn("1", self.absent_marker())
 
@@ -424,7 +453,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
-            self.assertEqual(self.absent_marker(), {"1": 1})
+            self.assert_absent(1)
             (self.base / "pr-checks.json").unlink()
             (self.base / "checks").write_text("failed")
             self.assertIn("bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", self.land("land"))
@@ -454,6 +483,7 @@ class LandingTest(LandingTestBase):
             self.queue_one()
             opened = self.land("land")
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", opened)
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
             self.assertIn("refs/heads/landing/e1", (self.base / "race-deleted").read_text())
             self.assertEqual(self.land("lease", "list"), "no leases held")
@@ -467,6 +497,7 @@ class LandingTest(LandingTestBase):
             self.queue_one()
             self.land("land")
             sh("git", "config", "receive.denyDeletes", "true", cwd=self.base / "origin.git")
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("awaiting-merge", self.land("status", "E1"))
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
@@ -487,6 +518,7 @@ class LandingTest(LandingTestBase):
             listed = subprocess.run(["git", "ls-remote", "origin", "refs/heads/landing/e1"],
                                     cwd=self.work, capture_output=True, text=True)
             self.assertEqual((listed.returncode, listed.stdout.strip()), (0, ""))
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertTrue(self.ref_exists("refs/heads/landing/e1", remote))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
@@ -504,6 +536,7 @@ class LandingTest(LandingTestBase):
             listed = subprocess.run(["git", "ls-remote", "origin", "refs/heads/landing/e1"],
                                     cwd=self.work, capture_output=True, text=True)
             self.assertEqual((listed.returncode, listed.stdout.strip()), (0, ""))
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertTrue(self.ref_exists("refs/heads/landing/e1", remote))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
@@ -517,6 +550,7 @@ class LandingTest(LandingTestBase):
             self.land("land")
             remote = self.base / "origin.git"
             sh("git", "config", "receive.hideRefs", "refs/heads/landing/e1", cwd=remote)
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertTrue(self.ref_exists("refs/heads/landing/e1", remote))
             self.assertTrue(self.land("lease", "list").startswith("L1 submitted"))
@@ -702,6 +736,7 @@ class LandingTest(LandingTestBase):
             opened = self.land("land")
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", opened)
             self.assertNotIn("landed", opened)
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
             self.assertEqual(self.land("lease", "list"), "no leases held")
             self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
@@ -730,6 +765,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", self.land("land"))
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
             candidate = sh("git", "rev-parse", "landing/e1", cwd=self.base / "origin.git")
@@ -780,6 +816,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
             (self.base / "checks").write_text("failed")
@@ -799,6 +836,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
+            self.age_absence(1)
             self.land("land")
             (self.base / "checks").write_text("failed")
             self.assertEqual(self.land("land"), "queue paused: required checks failed on https://github.com/o/r/pull/9: test (3.12). "
@@ -833,6 +871,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
+            self.age_absence(1)
             self.land("land")
             (self.base / "checks").write_text("failed")
             out = self.land("land")
@@ -937,6 +976,7 @@ class LandingTest(LandingTestBase):
                 "E2 (r/D2) https://github.com/o/r/pull/10")
             self.assertEqual(self.merge_calls(), [])
             self.assertEqual(self.origin_log(), ["init"])
+            self.age_absence(1, 2)
             self.assertEqual(self.land("land"), "landed E1 (r/D1), E2 (r/D2)")
             self.assertEqual(self.origin_log(), ["w2", "w1", "init"])
 
@@ -959,7 +999,7 @@ class LandingTest(LandingTestBase):
             self.post_check(9, "failed")
             self.post_check(10, "passed")
             self.post_check(11, "passed")
-            self.assertEqual(self.absent_marker(), {"1": 1, "2": 1, "3": 1})
+            self.assert_absent(1, 2, 3)
             self.assertEqual(
                 self.land("land"),
                 "bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)\n"
@@ -971,7 +1011,7 @@ class LandingTest(LandingTestBase):
             self.assertEqual(self.on_origin("rev-parse", "landing/e2^"), self.on_origin("rev-parse", "main"))
             self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "landing/e2"))
             self.assertEqual(self.listed(), ["L1 active r/D1: a.txt", "L2 submitted r/D2: b.txt", "L3 submitted r/D3: lib/x.py"])
-            self.assertEqual(self.absent_marker(), {"2": 2, "3": 2})
+            self.assert_absent(2, 3)
             self.assertEqual(self.land("status", "E2"),
                              "E2 awaiting-merge (r/D2, w2). https://github.com/o/r/pull/10. waiting for required checks before merging")
             self.post_check(10, "passed")
@@ -1255,6 +1295,7 @@ class LandingTest(LandingTestBase):
             self.init(mode="merge")
             self.queue_one()
             self.land("land")
+            self.age_absence(1)
             self.assertEqual(self.land("land"), "nothing to land")
             self.assertIn("merge requested by the queue", self.land("status", "E1"))
             (self.base / "checks").write_text("failed")
@@ -1377,6 +1418,7 @@ class LandingTest(LandingTestBase):
                 "opened PRs that merge when their checks pass: E1 (r/D1) https://github.com/o/r/pull/9\n"
                 "still queued: E2")
             self.assertEqual(self.created_heads(), ["landing/e1"])
+            self.age_absence(1)
             self.assertEqual(
                 self.land("land"),
                 "landed E1 (r/D1)\n"
@@ -1543,6 +1585,7 @@ class LandingTest(LandingTestBase):
             self.assertIn("opened PRs that merge when their checks pass: E1 (r/D1)", self.land("land"))
             (self.base / "plain-merge-fails").write_text(refusal)
             self.allow_methods(squash=True)
+            self.age_absence(1)
             self.assertEqual(
                 self.land("land"),
                 "queue paused: GitHub refused to merge https://github.com/o/r/pull/9: "

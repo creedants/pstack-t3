@@ -1,0 +1,5 @@
+- kind fix
+- `t3/added/landing/scripts/landing_lib/merge.py` waits out absent checks by wall time instead of the drain count, with `ABSENT_CHECKS_GRACE` of 5 minutes and an `absentDrain` marker holding `since` and `candidate` per entry.
+- `t3/added/landing/scripts/landing_lib/drain.py` no longer advances the drain count on a merge-mode run.
+- `tests/landing/test_merge.py` drains quickly with checks absent and shows no merge, merges after the grace, and ages the absence where a repo has truly no required checks.
+- `t3/added/landing/SKILL.md` states the 5 minute grace for absent checks.
