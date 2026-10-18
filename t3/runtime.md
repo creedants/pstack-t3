@@ -16,7 +16,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | [roles.md](roles.md) | before resolving seats, weighing seat agreement, writing or validating a roles file, or when `roles.py` prints a note the section does not explain |
 | [waiting.md](waiting.md) | before waiting on children |
 | [host.md](host.md) | when a thread settles, snoozes, or runs on an older host, before you install or locate skills, or for history notes |
-| [threads.md](threads.md) | before `t3_thread_configure` and related calls |
+| [threads.md](threads.md) | before `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_fork`, `t3_thread_merge_back`, `run_scheduled_task_now`, or pausing a finite program's schedule |
 | [light.md](light.md) | before every spawn in light mode |
 | [gate-review.md](gate-review.md) | before reusing a gate verdict |
 | [failures.md](failures.md) | on usage limit or after restart |
