@@ -944,6 +944,7 @@ class WakeTest(BrigadeTest):
                 sheet = self.next_sheet(*wake)
                 self.assertIn("Read the failing jobs", sheet)
                 self.assertIn("urgent fix", sheet)
+                self.assertIn("Tell the owner", sheet)
                 self.assertIn("trunk", sheet.lower())
                 self.assertTrue(sheet.splitlines()[-1].startswith("reply: yes"))
 
