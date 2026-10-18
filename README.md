@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml"><img src="https://github.com/creedants/pstack-t3/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license: MIT"></a>
-  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.25-555.svg" alt="upstream pstack 0.15.25"></a>
+  <a href="upstream.json"><img src="https://img.shields.io/badge/upstream%20pstack-0.15.26-555.svg" alt="upstream pstack 0.15.26"></a>
   <a href="https://github.com/creedants/pstack-t3/releases"><img src="https://img.shields.io/github/v/release/creedants/pstack-t3" alt="release"></a>
 </p>
 
@@ -43,6 +43,6 @@ The maintainers keep a byte-identical copy of the pinned upstream commit and re-
 
 Start with [1. Install (two minutes)](docs/guide.md#1-install-two-minutes).
 
-See [all 59 skills and every playbook](docs/skills.md).
+See [all 60 skills and every playbook](docs/skills.md).
 
 pstack is by [Lauren Tan (poteto)](https://x.com/poteto). MIT licensed. See [LICENSE](LICENSE).

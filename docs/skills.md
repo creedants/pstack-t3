@@ -105,6 +105,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 
 | Skill | What it does |
 | --- | --- |
+| [`create-formal-verification-skill`](../skills/create-formal-verification-skill/SKILL.md) | Generate a project-local skill that formally verifies the code where a bug costs the most and tests reach the least, in any language, with whichever verification tool fits. Use for /create-formal-verification-skill, "model-check this race", "prove this invariant", or when concurrency, retries, state machines, parsers, or unsafe code need more than tests. |
 | [`in-your-own-words`](../skills/in-your-own-words/SKILL.md) | Restate in your own words what you think the user's goals are and what problem they're trying to solve. Use for /in-your-own-words. |
 | [`sharpen`](../skills/sharpen/SKILL.md) | Sharpen a task before starting: the expert approach, what the user is really after, and the right level of specification. Use for /sharpen. |
 
