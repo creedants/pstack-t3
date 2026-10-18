@@ -99,6 +99,7 @@ class LandingTest(InProcessBase, LandingTestBase):
         self.assertEqual(code, 0, out + err)
         self.assertEqual(_open_land_db(database), [])
 
+    @unittest.skipUnless(os.path.isdir("/proc"), "the test lists a real /proc/self/fd as /dev/fd")
     def test_descriptor_cleanup_keeps_a_pipe_whose_path_query_fails(self):
         """Pin that a pipe whose path query fails stays listed, and a later pipe is still cleaned up.
 
