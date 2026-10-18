@@ -559,9 +559,10 @@ class BriefsTest(BrigadeTest):
         self.coordinator(mode=None)
         text = self.brigade(*self.BRIEF)
         self.assertEqual(text.split("\n\n", 1)[0], self.head(
-            "Playbook: playbooks/feature.md", "Mode: full", "Mode source: default", "Attempt: first"))
-        self.assertIn(self.REPEAT, text)
-        self.assertNotIn("Contested:", text)
+            "Playbook: playbooks/feature.md", "Mode: light", "Mode source: default", "Attempt: first",
+            "Waived by mode: Arena, Interrogate, Comment Sicko"))
+        report = text.split("REPORT:\n", 1)[1].splitlines()
+        self.assertEqual(report[3:5], [self.REPEAT, self.CONTESTED])
 
     def test_a_dish_of_a_kind_whose_depth_is_full_briefs_full_from_that_kind(self):
         self.coordinator(mode=None)
