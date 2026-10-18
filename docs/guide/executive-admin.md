@@ -3,7 +3,7 @@ See [the rule set](../multi-coordinator/admin-rulings.md#rulings) for the full r
 
 #### An executive admin
 
-Everything above works with no admin. Add one when several coordinators share a repository and you would rather hear from one thread than from each of them. The executive admin works for you on one repository. It forwards your requests, files shared intake once, settles conflicts between coordinators by published rules, and sends you one plain update. It never writes code, starts work, lands work, or overrides a review. Each coordinator still owns its own work, reviews, and queue entries. If the admin's thread goes away, every coordinator keeps working and replies to you directly again.
+A repository works with no admin. Add one when several coordinators share a repository and you would rather hear from one thread than from each of them. The executive admin works for you on one repository. It forwards your requests, files shared intake once, settles conflicts between coordinators by published rules, and sends you one plain update. It never writes code, starts work, lands work, or overrides a review. Each coordinator still owns its own work, reviews, and queue entries. If the admin's thread goes away, every coordinator keeps working and replies to you directly again.
 
 **Opening it.** Type this in any thread.
 

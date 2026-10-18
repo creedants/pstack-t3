@@ -40,7 +40,7 @@ Every `probe_ok` value was 1. These readings include other work on the machine.
 
 ### What the numbers show
 
-In this measurement, four runs at `-j 4` allowed 16 workers on 16 threads and 8 cores. Their `load1` median was 19.2, above the 16 line this document uses for degradation. Three runs allowed 12 workers and had a median of 15.0 and a maximum of 17.2. These points do not isolate the effect of adding a run, because other work was running too.
+In this measurement, four runs at `-j 4` allowed 16 workers on 16 threads and 8 cores. Their `load1` median was 19.2, above the 16 line the [agents part](agents.md#what-was-measured) defines for degradation. Three runs allowed 12 workers and had a median of 15.0 and a maximum of 17.2. These points do not isolate the effect of adding a run, because other work was running too.
 
 In round 2, MemAvailable stayed above 9.7 GiB in every sample, and swap used rose from 4.4 to 5.1 GiB over the five steps.
 

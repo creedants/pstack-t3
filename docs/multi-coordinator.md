@@ -27,7 +27,7 @@ Part of the pstack-t3 docs. Each part below names its file. Read the part it nam
 | 11 | Store collision | Two repositories with the same directory name share a store directory. `open` returns the other repository's coordinator | 3 |
 | 12 | Renew breaks the lease invariant | `lease renew` revives an expired lease after a sibling claimed the same paths, leaving two active leases on one file | 2 |
 
-Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. Changes 1 to 11 are listed in landing order under [Changes](#changes). Changes 1 to 7 close every gap without a new role, and they are built and tested in a [live two-coordinator run](multi-coordinator/live-run.md#live-two-coordinator-run) before any admin work starts. Changes 8 to 10 then add the optional [executive admin](multi-coordinator/admin.md#the-executive-admin) the user asked for, for one repository. It keeps the user up to date across every coordinator on that repository. It settles conflicts between them by published rules, and logs every ruling for the user to review and overrule.
+Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. The Map table below lists where each change lives. Changes 1 to 7 close every gap without a new role, and they are built and tested in a [live two-coordinator run](multi-coordinator/live-run.md#live-two-coordinator-run) before any admin work starts. Changes 8 to 10 then add the optional [executive admin](multi-coordinator/admin.md#the-executive-admin) the user asked for, for one repository. It keeps the user up to date across every coordinator on that repository. It settles conflicts between them by published rules, and logs every ruling for the user to review and overrule.
 
 ## Method
 
@@ -36,7 +36,7 @@ Gaps 1 to 8 were known before this audit. Gaps 9 to 12 are new. Changes 1 to 11 
 Two sources fed the audit.
 
 1. The code in `t3/added/brigade/scripts/brigade.py`, `t3/added/landing/scripts/land.py`, both `SKILL.md` files, and `docs/guide.md`.
-2. A scratch experiment, rerunnable from the [experiment script](multi-coordinator/live-run.md#the-experiment-script) at the end of this document. It creates a repository under `mktemp -d` with a local bare origin, sets `XDG_STATE_HOME` and `BRIGADE_STORE` to scratch directories, runs `land.py init --mode push --check true`, and opens coordinators `docs` and `engine` on it with the generated `skills/` scripts. It then adds tickets with the same `--ref`, starts overlapping work, submits and lands from one coordinator, changes the mode from one, lets a lease expire, and runs `walk`. The real stores under `~/.local/state` were only read, never written.
+2. A scratch experiment, rerunnable from the [experiment script](multi-coordinator/live-run.md#the-experiment-script) in the live run part. It creates a repository under `mktemp -d` with a local bare origin, sets `XDG_STATE_HOME` and `BRIGADE_STORE` to scratch directories, runs `land.py init --mode push --check true`, and opens coordinators `docs` and `engine` on it with the generated `skills/` scripts. It then adds tickets with the same `--ref`, starts overlapping work, submits and lands from one coordinator, changes the mode from one, lets a lease expire, and runs `walk`. The real stores under `~/.local/state` were only read, never written.
 
 The numbers about real use come from the pstack-t3 coordinator's store (`dishes.tsv`, `log.tsv`) and its landing database (`land.db`, opened read-only). They cover 49 work items and 50 leases over the 40 hours between the first lease claim and the last release.
 
