@@ -193,14 +193,24 @@ def git_run(repo, *args):
 
 
 def read_status(project_root):
-    """Status text from land.py. Return the text on success. Return None only when the failed read names has no landing contract; run land.py init in it. That phrase is printed via land.py:337 and implies repository identity was read. Refuse every other failed or empty read. A not a git repository diagnostic is not proof of no contract."""
+    """Return successful nonempty status text from land.py, stripped. Return None for a failed read classified as a missing contract. Refuse other failed or empty reads."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
+    try:
+        common = git_run(project_root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    except BrigadeError as error:
+        raise BrigadeError(f"could not read repository identity: {error}") from error
+    expected_root = str(Path(common).parent)
     result = land_result(project_root, "status")
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        if "has no landing contract; run land.py init in it" in detail:
+        stdout = result.stdout if isinstance(result.stdout, str) else ""
+        stderr = result.stderr if isinstance(result.stderr, str) else ""
+        if stderr.endswith("\n"):
+            stderr = stderr[:-1]
+        expected = f"land: {expected_root} has no landing contract; run land.py init in it"
+        if stdout == "" and stderr == expected:
             return None
+        detail = (result.stderr or result.stdout).strip()
         raise BrigadeError(f"could not read landing status: {detail or result.returncode}")
     if not result.stdout.strip():
         raise BrigadeError("land.py status printed empty output")
@@ -285,7 +295,7 @@ def widen(restaurant, ident, add_text):
 
 
 def gate_outside(restaurant, ident, sha):
-    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease. None only for a clean missing-contract read on an identifiable repository. None when status names no trunk ref and a SHA is present. Refuse when the dish holds a lease under a contract but names no SHA. Refuse when the status read fails or when a fetch, merge-base, or diff step fails."""
+    """Coverage gate outside the lock. Return snapshot or None. Return None when the dish holds no lease or the status read is classified as a missing contract. Return None when status names no trunk ref and a SHA is present. Refuse when status succeeds but the leased dish names no SHA. Refuse other failed or empty status reads and failed fetch, merge-base, or diff steps."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
     with restaurant.checked():
