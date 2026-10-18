@@ -217,6 +217,23 @@ class LandingTest(LandingTestBase):
         self.assertNotIn("landed E1", reported)
         self.assertNotIn("landed E2", reported)
 
+    def test_a_new_allowance_below_the_maximum_lands(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        base_raw = json.loads((self.work / "size-baseline.json").read_text())
+        tightened = dict(base_raw)
+        tightened_files = dict(base_raw.get("files", {}))
+        tightened_files["fresh.py"] = 4000
+        tightened["files"] = tightened_files
+        sha = self.worker("w1", {"size-baseline.json": json.dumps(tightened, indent=2, sort_keys=True) + "\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        self.assertEqual(self.land("land"), "landed E1 (r/D1)")
+
     def test_a_nested_generated_root_lands_over_the_limit(self):
         self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh",
                   "--generated", "build/output", "--max-file-tokens", "5000")
