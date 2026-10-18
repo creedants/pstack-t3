@@ -1414,11 +1414,26 @@ def _machine_identity():
     return Identity(entry.pw_dir, entry.pw_name, socket.gethostname())
 
 
+_size_limit_module = None
+
+
+def _size_limit():
+    global _size_limit_module
+    if _size_limit_module is None:
+        spec = importlib.util.spec_from_file_location("pstack_size_limit", Path(__file__).resolve().parent / "size_limit.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _size_limit_module = module
+    return _size_limit_module
+
+
 def main(argv):
     tree = Path(argv[0]) if argv else Path(__file__).resolve().parents[1] / "skills"
     problems = check_tree(tree, guide=not argv) + fence_findings(TESTS_DIR)
     if not argv:
         problems += badge_findings(README_PATH, UPSTREAM_PATH)
+        problems += _size_limit().findings(Path(__file__).resolve().parents[1])
     print("\n".join(problems) or "ok")
     return 1 if problems else 0
 
