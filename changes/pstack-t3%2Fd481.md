@@ -5,4 +5,4 @@
 - `t3/added/brigade/scripts/brigade_lib/wake.py` keeps `trigger_from` and `next_text`. Code lives in `_wake` snapshot hangs occasions and cues.
 - Tests live in `tests/brigade/reporting` `tests/brigade/spend` `tests/brigade/wake` and `tests/brigade/watch` with matching test counts.
 - `_watch/sweep.py` adds the `_worker_skip` import. Its fallback line for unreadable worker runs resolves again.
-- Facade docstrings state the patch rule. Patch the private module that reads the name.
+- Facade docstrings state the patch rule. For bare-name calls in a private package, patch the module that reads the name.
