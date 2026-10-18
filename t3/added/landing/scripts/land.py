@@ -59,13 +59,14 @@ try:
     import landing_lib.governor as _governor_mod
     import landing_lib.store as _store_mod
     import landing_lib.policy as _policy_mod
+    import landing_lib.genmap as _genmap_mod
     import landing_lib.leases as _leases_mod
     import landing_lib.queue as _queue_mod
     import landing_lib.merge as _merge_mod
     import landing_lib.contests as _contests_mod
     import landing_lib.drain as _drain_mod
     import landing_lib.times as _times_mod
-    for _mod in (_governor_mod, _store_mod, _policy_mod, _leases_mod, _queue_mod,
+    for _mod in (_governor_mod, _store_mod, _policy_mod, _genmap_mod, _leases_mod, _queue_mod,
                 _merge_mod, _contests_mod, _drain_mod, _times_mod):
         globals().update({k: v for k, v in vars(_mod).items() if not k.startswith("__") and k != "seam"})
 finally:
@@ -73,7 +74,7 @@ finally:
     _drop_cached_landing("landing_lib", _pkg)
     _sys.modules.update(_prior_landing)
 del _bw, _drop_cached_landing, _pkg, _alias, _libdir, _types, _uuid, _prior_landing
-del _foundation_mod, _governor_mod, _store_mod, _policy_mod, _leases_mod, _queue_mod
+del _foundation_mod, _governor_mod, _store_mod, _policy_mod, _genmap_mod, _leases_mod, _queue_mod
 del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod
 
 def parser():
@@ -123,6 +124,10 @@ def parser():
     p.add_argument("--generated", metavar="PATHS", default=None,
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
                         "An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none")
+    p.add_argument("--generated-map", metavar="MAP", default=None,
+                   help="comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages "
+                        "and a trailing ^ to skip doc items, such as src=dst!^ for a catalog page. "
+                        "An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none")
     p.add_argument("--rebuild", metavar="COMMAND", default=None,
                    help="command that regenerates the generated paths while landing, such as \"python3 scripts/build.py\". "
                         "An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none")
@@ -215,6 +220,8 @@ def parser():
     p.add_argument("id", nargs="?")
     p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
+    p.add_argument("--json", action="store_true",
+                   help="print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, and map")
     p = sub.add_parser("slot", help="run a heavy command under a governor slot")
     p.add_argument("--exclusive", action="store_true", help="hold every slot: for benchmarks that need a quiet machine")
     p.add_argument("--slots", metavar="N", default=None,
@@ -251,7 +258,7 @@ def run(argv):
         pr_item_line = None if args.pr_item_line is None else args.pr_item_line == "on"
         return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
                     args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy, pr_item_line,
-                    args.heartbeat_ms, args.merge_heartbeat_ms), 0
+                    args.heartbeat_ms, args.merge_heartbeat_ms, args.generated_map), 0
     if args.command == "times":
         return landing_times(args.repo, args.last, args.holder, args.json), 0
     with Store.for_repo(args.repo) as store:
@@ -298,9 +305,19 @@ def run(argv):
         if args.holder:
             if args.id:
                 raise LandError("status takes an entry id or --holder, not both")
+            if args.json:
+                raise LandError("status --json takes no --holder")
             return holder_status(store, args.holder, args.sha), 0
         if args.sha:
             raise LandError("status --sha needs --holder")
+        if args.json:
+            if args.id:
+                raise LandError("status --json takes no id")
+            payload = {"mode": store.contract.get("mode"), "trunk": store.contract.get("trunk"),
+                       "generated": list(store.contract.get("generated") or []),
+                       "rebuild": store.contract.get("rebuild"),
+                       "map": list(store.contract.get("map") or [])}
+            return json.dumps(payload, indent=2, sort_keys=True), 0
         line = status(store, args.id)
         if not args.id:
             note = generated_note(store.contract.get("generated") or [], store.contract.get("rebuild"))

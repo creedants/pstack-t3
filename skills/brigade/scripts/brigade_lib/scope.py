@@ -5,7 +5,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from brigade_lib import seam
+from brigade_lib import generated, seam
 from brigade_lib.leases import Claim, claim_lease, claim_paths, holder, land_result, lease_states, release_lease
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import HELD_LOCKS
@@ -291,6 +291,12 @@ def gate_outside(restaurant, ident, sha):
         holder_name = holder(restaurant, ident)
     if not lease:
         return None
+    try:
+        generated.read(project_root)
+    except BrigadeError:
+        raise
+    except Exception:
+        pass
     try:
         status_text = read_status(project_root)
     except BrigadeError as error:

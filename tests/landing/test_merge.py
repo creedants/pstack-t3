@@ -371,6 +371,93 @@ class LandingTest(LandingTestBase):
             self.assertIn("queue paused", second)
             self.assertNotIn("landed", second)
 
+    def test_merge_mode_waits_when_only_protection_requires_an_unposted_check(self):
+        with self.fake_gh():
+            parts = [
+                {"name": f"part {number}", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                for number in range(1, 9)
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": parts}))
+            (self.base / "policy-until-passed").write_text("")
+            (self.base / "protection-required.json").write_text(json.dumps({
+                "contexts": ["test (3.12)"],
+            }))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertNotIn("queue paused", first)
+            self.assertNotIn("landed", first)
+            self.assertIn("waiting for required checks", self.land("status", "E1"))
+            calls = (self.base / "gh-calls").read_text()
+            self.assertIn("protection/required_status_checks", calls)
+            self.assertIn("rules/branches", calls)
+
+    def test_merge_mode_waits_when_only_rulesets_require_an_unposted_check(self):
+        with self.fake_gh():
+            parts = [
+                {"name": f"part {number}", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                for number in range(1, 9)
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": parts}))
+            (self.base / "policy-until-passed").write_text("")
+            (self.base / "rules-required.json").write_text(json.dumps([
+                {"type": "required_status_checks",
+                 "parameters": {"required_status_checks": [{"context": "test (3.12)"}]}},
+            ]))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertNotIn("queue paused", first)
+            self.assertNotIn("landed", first)
+            self.assertIn("waiting for required checks", self.land("status", "E1"))
+            calls = (self.base / "gh-calls").read_text()
+            self.assertIn("rules/branches", calls)
+
+    def test_merge_mode_waits_when_union_holds_unposted_ruleset_check(self):
+        with self.fake_gh():
+            posted = [
+                {"name": "test (3.10)", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": posted}))
+            (self.base / "policy-until-passed").write_text("")
+            (self.base / "protection-required.json").write_text(json.dumps({
+                "contexts": ["test (3.10)"],
+            }))
+            (self.base / "rules-required.json").write_text(json.dumps([
+                {"type": "required_status_checks",
+                 "parameters": {"required_status_checks": [{"context": "test (3.12)"}]}},
+            ]))
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertNotIn("queue paused", first)
+            self.assertNotIn("landed", first)
+            self.assertIn("waiting for required checks", self.land("status", "E1"))
+            calls = (self.base / "gh-calls").read_text()
+            self.assertIn("protection/required_status_checks", calls)
+            self.assertIn("rules/branches", calls)
+
+    def test_merge_mode_pauses_when_neither_source_is_readable(self):
+        with self.fake_gh():
+            parts = [
+                {"name": f"part {number}", "status": "COMPLETED", "conclusion": "SUCCESS"}
+                for number in range(1, 9)
+            ]
+            (self.base / "pr-checks.json").write_text(
+                json.dumps({"reviewDecision": "", "statusCheckRollup": parts}))
+            (self.base / "policy-until-passed").write_text("")
+            self.init(mode="merge")
+            self.queue_one()
+            first = self.land("land")
+            self.assertIn("queue paused", first)
+            self.assertIn("the base branch policy prohibits the merge", first)
+            calls = (self.base / "gh-calls").read_text()
+            self.assertIn("protection/required_status_checks", calls)
+            self.assertIn("rules/branches", calls)
+
     def test_merge_mode_lands_a_green_rollup_whose_check_name_contains_a_quote(self):
         with self.fake_gh():
             posted = [

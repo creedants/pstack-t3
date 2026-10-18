@@ -1,0 +1,12 @@
+- kind feature
+- Landing stores the generated map in the contract
+- Status json prints mode and trunk and generated and rebuild and map
+- Brigade expands fire paths from the map
+- Required checks union protection and rulesets
+- Queue pauses for unreadable required checks only when both sources return None
+- Tests pin added and overrides and vendor expansions
+- Tests cover protection only and rulesets only and both and neither
+- Build regenerates with no diff
+- Generated map uses trailing ! for index and trailing ^ to skip doc items
+- Doc items keep CLI pages and skip catalog pages
+- Generated roots with no map refuse and name land.py init --generated-map

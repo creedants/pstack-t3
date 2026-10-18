@@ -100,6 +100,34 @@ def _base_resolve_import(edge, loader_path, root, roots=None):
 
 
 class AffectedTest(BrigadeTest):
+    GENERATED = "skills,docs/cli,docs/skills.md"
+    MAP = ",".join([
+        "t3/added/**=skills/**",
+        "t3/overrides/**=skills/**",
+        "t3/agents/**=skills/pstack-runtime/agents/**",
+        "t3/runtime.md=skills/pstack-runtime/SKILL.md",
+        "t3/scripts/roles.py=skills/pstack-runtime/scripts/roles.py",
+        "t3/setup.md=skills/setup-pstack/SKILL.md",
+        "t3/added/brigade/scripts/activity.py=docs/cli/activity.md!",
+        "t3/added/brigade/scripts/brigade.py=docs/cli/brigade.md!",
+        "t3/added/landing/scripts/land.py=docs/cli/land.md!",
+        "t3/scripts/roles.py=docs/cli/roles.md!",
+        "t3/runtime.md=docs/skills.md!^",
+        "t3/setup.md=docs/skills.md!^",
+        "t3/removed.txt=docs/skills.md!^",
+        "t3=docs/skills.md!^",
+        "t3/overrides=docs/skills.md!^",
+        "t3/added=docs/skills.md!^",
+        "vendor/pstack=docs/skills.md!^",
+        "vendor/pstack/skills=docs/skills.md!^",
+        "t3/overrides/*=docs/skills.md!^",
+        "t3/added/*=docs/skills.md!^",
+        "vendor/pstack/skills/*=docs/skills.md!^",
+        "t3/overrides/*/SKILL.md=docs/skills.md!^",
+        "t3/added/*/SKILL.md=docs/skills.md!^",
+        "vendor/pstack/skills/*/SKILL.md=docs/skills.md!^",
+    ])
+
     def setUp(self):
         super().setUp()
         patch = mock.patch.dict(os.environ, {"BRIGADE_STORE": str(self.store)})
@@ -107,6 +135,18 @@ class AffectedTest(BrigadeTest):
         self.addCleanup(patch.stop)
         self.restaurant(self.project, self.at)
         self.restaurant(self.archive_root(), self.store / "archive" / "perf")
+        self.landing_env()
+        import subprocess
+        archive = self.archive_root()
+        exists = subprocess.run(["git", "-C", str(archive), "rev-parse", "--verify", "--quiet", "main"],
+                                capture_output=True)
+        if exists.returncode != 0:
+            subprocess.run(["git", "-C", str(archive), "add", "-A"], check=True,
+                           capture_output=True, text=True)
+            subprocess.run(["git", "-C", str(archive), "-c", "user.name=t", "-c", "user.email=t@t",
+                            "commit", "-qm", "archive"], check=True, capture_output=True, text=True)
+        self.land_repo(archive, "init", "--trunk", "main", "--mode", "local", "--base", "main",
+                       "--generated", self.GENERATED, "--generated-map", self.MAP)
 
     def restaurant(self, root, directory=None, layout=LAYOUT, build="python3 scripts/build.py",
                    check="python3 scripts/check.py", note=None):
@@ -188,11 +228,33 @@ class AffectedTest(BrigadeTest):
         return module._close
 
     def vendor_layout(self):
-        target = self.project / "scripts"
-        target.mkdir(parents=True, exist_ok=True)
-        archive = self.archive_root()
-        for name in ("build.py", "cli_reference.py"):
-            (target / name).write_bytes((archive / "scripts" / name).read_bytes())
+        self.landing_env()
+        self.init_landing("--generated", "skills,docs/cli,docs/skills.md", "--generated-map", ",".join([
+            "t3/added/**=skills/**",
+            "t3/overrides/**=skills/**",
+            "t3/agents/**=skills/pstack-runtime/agents/**",
+            "t3/runtime.md=skills/pstack-runtime/SKILL.md",
+            "t3/scripts/roles.py=skills/pstack-runtime/scripts/roles.py",
+            "t3/setup.md=skills/setup-pstack/SKILL.md",
+            "t3/added/brigade/scripts/activity.py=docs/cli/activity.md!",
+            "t3/added/brigade/scripts/brigade.py=docs/cli/brigade.md!",
+            "t3/added/landing/scripts/land.py=docs/cli/land.md!",
+            "t3/scripts/roles.py=docs/cli/roles.md!",
+            "t3/runtime.md=docs/skills.md!^",
+            "t3/setup.md=docs/skills.md!^",
+            "t3/removed.txt=docs/skills.md!^",
+            "t3=docs/skills.md!^",
+            "t3/overrides=docs/skills.md!^",
+            "t3/added=docs/skills.md!^",
+            "vendor/pstack=docs/skills.md!^",
+            "vendor/pstack/skills=docs/skills.md!^",
+            "t3/overrides/*=docs/skills.md!^",
+            "t3/added/*=docs/skills.md!^",
+            "vendor/pstack/skills/*=docs/skills.md!^",
+            "t3/overrides/*/SKILL.md=docs/skills.md!^",
+            "t3/added/*/SKILL.md=docs/skills.md!^",
+            "vendor/pstack/skills/*/SKILL.md=docs/skills.md!^",
+        ]))
 
     def test_brigade_script_load_maps_fails_when_run_path_ignored(self):
         self.git_project()

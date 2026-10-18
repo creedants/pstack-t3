@@ -269,15 +269,15 @@ def pause_for_review(store, url, detail, disarm, armed=False):
     raise seam.Infrastructure(f"{url} {requirement}")
 
 
-def read_required_contexts(store):
-    """Contexts for store.contract["trunk"] from branch protection, or None.
+def _protection_contexts(store):
+    """Contexts for the trunk from branch protection, or None.
 
     The gh path is repos/{owner}/{repo}/branches/<trunk>/protection/required_status_checks.
     gh fills {owner} and {repo} from the checkout, as forge_branch_status already does.
     Return a tuple of non-empty strings when gh exits 0 and the body is a JSON object whose contexts is a list of non-empty strings.
     An empty list returns ().
     Return None on a non-zero gh exit, on a body that is not that object, and on a contexts element that is not a non-empty string.
-    Ignore checks. Do not call the rules endpoint.
+    Ignore checks.
     """
     result = seam.gh(
         "api",
@@ -298,6 +298,83 @@ def read_required_contexts(store):
     return tuple(contexts)
 
 
+def _ruleset_contexts(store):
+    """Contexts for the trunk from rulesets, or None.
+
+    The gh path is repos/{owner}/{repo}/rules/branches/<trunk>.
+    gh fills {owner} and {repo} from the checkout, as forge_branch_status already does.
+    Return a tuple of non-empty strings from rules carrying required status checks when gh exits 0 and the body is a JSON list of dicts or a JSON object holding a rules list of dicts. An endpoint with no required status check rule returns (). Return None on a non-zero gh exit, on stdout that is not valid JSON, on a body that is neither that list nor that object, on a rule that is not a dict, and on a context that is not a non-empty string.
+    """
+    result = seam.gh(
+        "api",
+        "repos/{owner}/{repo}/rules/branches/" + store.contract["trunk"],
+        cwd=store.repo,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        body = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(body, dict) and isinstance(body.get("rules"), list):
+        body = body["rules"]
+    if not isinstance(body, list):
+        return None
+    found = []
+    for rule in body:
+        if not isinstance(rule, dict):
+            return None
+        params = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+        is_checks = rule.get("type") == "required_status_checks"
+        checks_value = None
+        if isinstance(params.get("required_status_checks"), list):
+            checks_value = params["required_status_checks"]
+            is_checks = True
+        elif isinstance(rule.get("required_status_checks"), list):
+            checks_value = rule["required_status_checks"]
+            is_checks = True
+        elif is_checks and isinstance(params.get("contexts"), list):
+            checks_value = params["contexts"]
+        if not is_checks:
+            continue
+        if checks_value is None:
+            continue
+        if not isinstance(checks_value, list):
+            return None
+        for item in checks_value:
+            if isinstance(item, str):
+                if item == "":
+                    return None
+                found.append(item)
+            elif isinstance(item, dict):
+                context = item.get("context")
+                if not isinstance(context, str) or context == "":
+                    return None
+                found.append(context)
+            else:
+                return None
+    return tuple(found)
+
+
+def read_required_contexts(store):
+    """Contexts for store.contract["trunk"] from protection and rulesets, or None.
+
+    The gh paths are repos/{owner}/{repo}/branches/<trunk>/protection/required_status_checks and repos/{owner}/{repo}/rules/branches/<trunk>.
+    gh fills {owner} and {repo} from the checkout, as forge_branch_status already does.
+    Union both sources with ordered dedup. Return None only when both return None.
+    An empty union returns ().
+    """
+    first = _protection_contexts(store)
+    second = _ruleset_contexts(store)
+    if first is None and second is None:
+        return None
+    seen = []
+    for item in list(first or ()) + list(second or ()):
+        if item not in seen:
+            seen.append(item)
+    return tuple(seen)
+
+
 def missing_required(contexts, rollup_names):
     """Context strings that rollup_names does not contain, in contexts order."""
     posted = set(rollup_names)
@@ -307,7 +384,7 @@ def missing_required(contexts, rollup_names):
 def refusal_waits(store, plain, checks):
     """True when this plain-merge stderr waits instead of pausing the queue.
 
-    The policy phrase must be in plain. A blocker of absent waits and does not read protection.
+    The policy phrase must be in plain. A blocker of absent waits and does not read required contexts.
     Any other blocker waits only when read_required_contexts returns a tuple and missing_required is non-empty.
     None does not wait. An empty tuple does not wait.
     Stderr without the policy phrase returns False.

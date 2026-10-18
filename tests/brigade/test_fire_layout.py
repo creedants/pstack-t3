@@ -12,11 +12,38 @@ import subprocess
 
 
 class FireLayoutTest(BrigadeTest):
+    GENERATED = "skills,docs/cli,docs/skills.md"
+    MAP = ",".join([
+        "t3/added/**=skills/**",
+        "t3/overrides/**=skills/**",
+        "t3/agents/**=skills/pstack-runtime/agents/**",
+        "t3/runtime.md=skills/pstack-runtime/SKILL.md",
+        "t3/scripts/roles.py=skills/pstack-runtime/scripts/roles.py",
+        "t3/setup.md=skills/setup-pstack/SKILL.md",
+        "t3/added/brigade/scripts/activity.py=docs/cli/activity.md!",
+        "t3/added/brigade/scripts/brigade.py=docs/cli/brigade.md!",
+        "t3/added/landing/scripts/land.py=docs/cli/land.md!",
+        "t3/scripts/roles.py=docs/cli/roles.md!",
+        "t3/runtime.md=docs/skills.md!^",
+        "t3/setup.md=docs/skills.md!^",
+        "t3/removed.txt=docs/skills.md!^",
+        "t3=docs/skills.md!^",
+        "t3/overrides=docs/skills.md!^",
+        "t3/added=docs/skills.md!^",
+        "vendor/pstack=docs/skills.md!^",
+        "vendor/pstack/skills=docs/skills.md!^",
+        "t3/overrides/*=docs/skills.md!^",
+        "t3/added/*=docs/skills.md!^",
+        "vendor/pstack/skills/*=docs/skills.md!^",
+        "t3/overrides/*/SKILL.md=docs/skills.md!^",
+        "t3/added/*/SKILL.md=docs/skills.md!^",
+        "vendor/pstack/skills/*/SKILL.md=docs/skills.md!^",
+    ])
+
     def vendor_layout(self):
         target = self.project / "scripts"
         target.mkdir(parents=True, exist_ok=True)
-        for name in ("build.py", "cli_reference.py"):
-            (target / name).write_bytes((ROOT / "scripts" / name).read_bytes())
+        self.init_landing("--generated", self.GENERATED, "--generated-map", self.MAP)
 
     def commit_paths(self, paths):
         for part in paths.split(","):
@@ -236,8 +263,8 @@ class FireLayoutTest(BrigadeTest):
         self.commit_paths("t3/runtime.md")
         cli = self.project / "scripts" / "cli_reference.py"
         marker = self.project / "project-code-ran"
-        text = cli.read_text()
-        cli.write_text(text + f'\nPath(__file__).with_name("project-code-ran").write_text("executed")\nraise SystemExit(99)\n')
+        cli.parent.mkdir(parents=True, exist_ok=True)
+        cli.write_text('from pathlib import Path\nPath(__file__).with_name("project-code-ran").write_text("executed")\nraise SystemExit(99)\n')
         self.init_landing()
         self.landing_env()
         self.open()
@@ -335,6 +362,92 @@ class FireLayoutTest(BrigadeTest):
                 self.assertEqual(out, row["out"])
                 self.assertEqual(dish, row["dish"])
                 self.assertEqual(lease, row["lease"])
+
+    def test_doc_item_keeps_cli_pages_for_tool_sources(self):
+        self.case_no = 0
+        rows = [
+            {"name": "activity with flag", "given": "t3/added/brigade/scripts/activity.py", "doc_item": True,
+             "added": "skills/brigade/scripts/activity.py, docs/cli/activity.md",
+             "dish": "t3/added/brigade/scripts/activity.py,skills/brigade/scripts/activity.py,docs/cli/activity.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/activity.md, skills/brigade/scripts/activity.py, t3/added/brigade/scripts/activity.py"]},
+            {"name": "brigade with flag", "given": "t3/added/brigade/scripts/brigade.py", "doc_item": True,
+             "added": "skills/brigade/scripts/brigade.py, docs/cli/brigade.md",
+             "dish": "t3/added/brigade/scripts/brigade.py,skills/brigade/scripts/brigade.py,docs/cli/brigade.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/brigade.md, skills/brigade/scripts/brigade.py, t3/added/brigade/scripts/brigade.py"]},
+            {"name": "land with flag", "given": "t3/added/landing/scripts/land.py", "doc_item": True,
+             "added": "skills/landing/scripts/land.py, docs/cli/land.md",
+             "dish": "t3/added/landing/scripts/land.py,skills/landing/scripts/land.py,docs/cli/land.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/land.md, skills/landing/scripts/land.py, t3/added/landing/scripts/land.py"]},
+            {"name": "roles with flag", "given": "t3/scripts/roles.py", "doc_item": True,
+             "added": "skills/pstack-runtime/scripts/roles.py, docs/cli/roles.md",
+             "dish": "t3/scripts/roles.py,skills/pstack-runtime/scripts/roles.py,docs/cli/roles.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/roles.md, skills/pstack-runtime/scripts/roles.py, t3/scripts/roles.py"]},
+        ]
+        for row in rows:
+            with self.subTest(row["name"]):
+                out, dish, lease = self.fresh_fire(row["given"], True, doc_item=row["doc_item"])
+                self.assertEqual(out, f"D1 (lease L1 held by perf/D1)\nadded {row['added']}")
+                self.assertEqual(dish, row["dish"])
+                self.assertEqual(lease, row["lease"])
+                self.assertNotIn("docs/skills.md", dish)
+                self.assertNotIn("docs/skills.md", lease[0])
+
+    def test_doc_item_keeps_cli_pages_for_ancestor_scopes(self):
+        self.case_no = 0
+        rows = [
+            {"name": "brigade scripts dir with flag", "given": "t3/added/brigade/scripts", "doc_item": True,
+             "added": "skills/brigade/scripts, docs/cli/activity.md, docs/cli/brigade.md",
+             "dish": "t3/added/brigade/scripts,skills/brigade/scripts,docs/cli/activity.md,docs/cli/brigade.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/activity.md, docs/cli/brigade.md, skills/brigade/scripts, t3/added/brigade/scripts"]},
+            {"name": "landing scripts dir with flag", "given": "t3/added/landing/scripts", "doc_item": True,
+             "added": "skills/landing/scripts, docs/cli/land.md",
+             "dish": "t3/added/landing/scripts,skills/landing/scripts,docs/cli/land.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/land.md, skills/landing/scripts, t3/added/landing/scripts"]},
+            {"name": "scripts dir with flag", "given": "t3/scripts", "doc_item": True,
+             "added": "skills/pstack-runtime/scripts/roles.py, docs/cli/roles.md",
+             "dish": "t3/scripts,skills/pstack-runtime/scripts/roles.py,docs/cli/roles.md,changes/perf%2Fd1.md",
+             "lease": ["L1 active perf/D1: changes/perf%2Fd1.md, docs/cli/roles.md, skills/pstack-runtime/scripts/roles.py, t3/scripts"]},
+        ]
+        for row in rows:
+            with self.subTest(row["name"]):
+                out, dish, lease = self.fresh_fire(row["given"], True, doc_item=row["doc_item"])
+                self.assertEqual(out, f"D1 (lease L1 held by perf/D1)\nadded {row['added']}")
+                self.assertEqual(dish, row["dish"])
+                self.assertEqual(lease, row["lease"])
+                self.assertNotIn("docs/skills.md", dish)
+
+    def test_missing_map_refuses_fire_affected_startable_and_claim(self):
+        self.git_project()
+        self.commit_paths("t3/runtime.md,t3/setup.md")
+        self.init_landing("--generated", self.GENERATED)
+        self.landing_env()
+        self.open()
+        self.brigade("set", "--change-note-dir", "changes")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
+        want = "land.py init --generated-map"
+        fire_err = self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "s",
+                                "--paths", "t3/runtime.md", ok=False)
+        self.assertIn(want, fire_err)
+        import json
+        meta_path = self.at / "restaurant.json"
+        meta = json.loads(meta_path.read_text())
+        meta["affectedTests"] = {
+            "always": "tests.test_pstack_t3",
+            "entryPoints": ["t3/added/brigade/scripts/brigade.py"],
+            "helpers": [],
+            "suite": "python3 -m unittest discover -s tests",
+        }
+        meta_path.write_text(json.dumps(meta))
+        affected_err = self.brigade("affected", "--root", str(self.project), "--paths", "t3/runtime.md", ok=False)
+        self.assertIn(want, affected_err)
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "t")
+        startable_text = self.brigade("startable", ok=False)
+        self.assertIn(want, startable_text)
+        from .support import run_globals, SCRIPT
+        claimed = run_globals(self, SCRIPT)["claim_paths"]
+        with self.assertRaises(Exception) as ctx:
+            claimed({"projectRoot": str(self.project), "restaurant": "perf"}, "t3/runtime.md", "perf/d1", False)
+        self.assertIn(want, str(ctx.exception))
 
     def test_startable_doc_item_lease_omits_catalog_for_other_holder(self):
         self.git_project()

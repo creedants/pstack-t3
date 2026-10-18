@@ -145,6 +145,15 @@ def generated_note(generated, rebuild):
     return f"generated: {', '.join(generated) if generated else 'none'}; rebuild: {rebuild or 'none'}"
 
 
+def map_list(passed, stored, roots):
+    """The map rows an init stores. None keeps the stored rows. An empty value clears them."""
+    if passed is None:
+        return list(stored)
+    if not passed.strip():
+        return []
+    return seam.parse_map(passed, roots)
+
+
 HEARTBEAT_MS = 3600000
 
 
@@ -170,7 +179,7 @@ def heartbeat_note(contract):
 
 
 def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None,
-         author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None):
+         author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None, generated_map=None):
     mode = seam.LEGACY_MODES.get(mode, mode)
     for flag, value, floor in (("--heartbeat-ms", heartbeat_ms, HEARTBEAT_MS),
                                ("--merge-heartbeat-ms", merge_heartbeat_ms, MERGE_HEARTBEAT_MS)):
@@ -223,6 +232,9 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
     # A bad generated path must be refused before the store exists, so a first init leaves no database.
     if generated is not None:
         generated_list(generated, [])
+    if generated_map is not None:
+        early_roots = generated_list(generated, stored.get("generated") or [])
+        seam.parse_map(generated_map, early_roots)
     with seam.Store(directory) as store:
         with store.tx() as db:
             current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
@@ -235,6 +247,7 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                       "mergeMethod": merge_method_to_store(merge_method, current.get("mergeMethod"), mode, allowed),
                       "generated": generated_list(generated, current.get("generated") or []),
                       "rebuild": rebuild_command(rebuild, current.get("rebuild")),
+                      "map": map_list(generated_map, current.get("map") or [], generated_list(generated, current.get("generated") or [])),
                       "authorPolicy": filled(current, "authorPolicy", author_policy, "any"),
                       "prItemLine": filled(current, "prItemLine", pr_item_line, False),
                       "heartbeatMs": filled(current, "heartbeatMs", heartbeat_ms, HEARTBEAT_MS),
