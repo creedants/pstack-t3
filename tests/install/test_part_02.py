@@ -30,7 +30,7 @@ class Part02Test(OwnershipCase):
     def share_skills(self, source, dest):
             shutil.rmtree(dest / "skills")
             os.symlink(source / "skills", dest / "skills")
-    def test_row_11b_deleted_owner_is_restored_untracked_beside_a_live_owner(self):
+    def test_row_11b_deleted_checkout_links_are_restored_beside_a_live_owner(self):
             a, b = self.two()
             later = make_checkout(self.home, "l")
             self.ok(run(self.home, a, "--harness", "grok"))

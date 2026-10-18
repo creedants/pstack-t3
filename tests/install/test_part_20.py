@@ -54,9 +54,6 @@ class Part20Test(OwnershipCase):
             return result.stdout.splitlines()
     def harness_line(self, harness, rest):
             return f"{harness:7} {provider_link(self.home, harness, 'swarm').parent}: {rest}"
-    def holders(self):
-            """Every hidden directory an installer made to move an entry through, anywhere under the home."""
-            return sorted(str(path) for path in self.home.rglob(".pstack-t3-*"))
     def installed_for_grok(self):
             a = make_checkout(self.home, "a")
             self.ok(run(self.home, a, "--harness", "grok"), "linked 3 skills into grok")

@@ -226,6 +226,9 @@ class OwnershipCase(unittest.TestCase):
     def assert_gone(self, names=NAMES, harness="grok"):
             for name in names:
                 self.assertFalse(os.path.lexists(provider_link(self.home, harness, name)))
+    def holders(self):
+            """Every path under the home whose name starts with `.pstack-t3-`. In these tests each match is a hidden directory the installer made to move an entry through."""
+            return sorted(str(path) for path in self.home.rglob(".pstack-t3-*"))
     def two(self):
             return make_checkout(self.home, "a"), make_checkout(self.home, "b")
     def base(self):

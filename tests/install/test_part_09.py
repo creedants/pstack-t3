@@ -54,7 +54,7 @@ class Part09Test(OwnershipCase):
             rows = read_legacy(self.home)["backups"]
             self.assertEqual([row["original"] for row in rows], [str(swarm)])
             return a, swarm, rows
-    def test_a_directory_restore_preserves_hard_links_xattrs_fifo_modes_and_relative_symlinks(self):
+    def test_a_directory_restore_preserves_hard_links_fifo_modes_and_relative_symlinks_and_xattrs_where_offered(self):
             """A same-filesystem directory move keeps hard links, FIFO type, modes, and relative symlink targets, and xattrs where the platform offers them."""
             self.use_fresh()
             a, swarm, rows = self.displaced_by("directory")
@@ -101,9 +101,6 @@ class Part09Test(OwnershipCase):
             self.assertEqual(read_legacy(self.home)["backups"], [row for row in rows if row["backup"] == str(backup)])
             self.assert_claims(a, [str(swarm)])
             self.assert_grok_text(b)
-    def holders(self):
-            """Every hidden directory an installer made to move an entry through, anywhere under the home."""
-            return sorted(str(path) for path in self.home.rglob(".pstack-t3-*"))
     def strand_backup(self, hook, kind="directory", *, reason=None):
             """Checkout a's uninstall, stopped by `hook` with the backup of a displaced swarm left aside."""
             a, swarm, rows = self.displaced_by(kind)

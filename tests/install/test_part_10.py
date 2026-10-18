@@ -52,9 +52,6 @@ class Part10Test(OwnershipCase):
             rows = read_legacy(self.home)["backups"]
             self.assertEqual([row["original"] for row in rows], [str(swarm)])
             return a, swarm, rows
-    def holders(self):
-            """Every hidden directory an installer made to move an entry through, anywhere under the home."""
-            return sorted(str(path) for path in self.home.rglob(".pstack-t3-*"))
     def plant(self, beside, holder=".pstack-t3-unproven"):
             """A file in a holder beside `beside` that no installer put there."""
             stray = beside.parent / holder / beside.name

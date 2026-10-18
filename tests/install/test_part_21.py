@@ -43,7 +43,7 @@ class Part21Test(OwnershipCase):
             a = make_checkout(self.home, "a")
             self.ok(run(self.home, a, "--harness", "grok"), "linked 3 skills into grok")
             return a, provider_link(self.home, "grok", "swarm")
-    def test_an_uninstall_with_a_backup_row_for_a_linked_path_whose_backup_holds_a_nul_byte_removes_every_link_and_exits_0(self):
+    def test_an_uninstall_with_a_backup_row_for_a_linked_path_whose_backup_path_holds_a_nul_byte_removes_every_link_and_exits_0(self):
             a, swarm = self.installed_for_grok()
             row = {"harnesses": ["grok"], "original": str(swarm), "backup": f"{state_dir(self.home)}/backups/a\x00b/grok/swarm"}
             self.add_rows(backups=[row])

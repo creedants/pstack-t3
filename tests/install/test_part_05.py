@@ -66,7 +66,7 @@ class Part05Test(OwnershipCase):
             lines = result.stderr.strip().splitlines()
             self.assertEqual(len(lines), 1, result.stderr)
             self.assertIn(str(file), lines[0])
-    def test_legacy_file_that_is_not_an_object_is_refused_unchanged(self):
+    def test_malformed_legacy_file_is_refused_unchanged(self):
             a = make_checkout(self.home, "a")
             for text in ('["kept"]\n', '{"links": {"kept": 1}}\n', "{not json\n"):
                 legacy_file(self.home).parent.mkdir(parents=True, exist_ok=True)

@@ -40,7 +40,9 @@ def put_back_race(path, swap, occupy=None, link_error=False, rename=None):
     )
 
 def without_noreplace(hooked, link_error, rename):
-    """Hook code that wraps the no-replace rename in `hooked`, takes hard links away when `link_error` is set, and takes the rename away for `"symbol"` and `"libc"`, as `put_back_race` describes."""
+    """Hook code that wraps the no-replace rename in `hooked`, takes hard links away when `link_error` is set, and takes the rename away for `"symbol"` and `"libc"`.
+
+    A hook that sets `rename` has no `/proc` either, so a hard link from a held descriptor finds nothing there."""
     return (
         "noreplace = getattr(module, 'rename_noreplace', None)\n"
         "def record():\n"

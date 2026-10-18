@@ -20,7 +20,7 @@ from .support import _env
 from tests import in_process
 
 class InProcessRestoreTest(unittest.TestCase):
-    def test_skipping_the_restore_of_sys_argv_or_the_working_directory_leaves_them_changed(self):
+    def test_restoring_sys_argv_and_the_working_directory_leaves_them_unchanged(self):
         with tempfile.TemporaryDirectory() as directory:
             program = Path(directory) / "move.py"
             program.write_text(

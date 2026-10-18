@@ -223,7 +223,7 @@ def claims_in(data):
     return claims
 
 def patch_legacy(state, add_links, add_backups, remove_links, remove_backups, adding):
-    """Return the link and backup rows this call appended."""
+    """Return the link rows and backup paths this call appended."""
     if not add_links and not add_backups and not remove_links and not remove_backups:
         return (), ()
     path = Path(state) / layout.LEGACY_NAME

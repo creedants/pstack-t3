@@ -138,7 +138,7 @@ class Part01Test(OwnershipCase):
             alias = self.home / "a-alias"
             os.symlink(checkout, alias)
             return alias
-    def test_row_7_alias_spelled_link_stays_untracked(self):
+    def test_row_7_alias_spelled_link_is_left_alone_by_uninstall(self):
             a, b = self.two()
             alias = self.alias_of(a)
             self.ok(run(self.home, a, "--harness", "grok"))
