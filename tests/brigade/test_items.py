@@ -316,22 +316,27 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         from unittest import mock
         self.init_landing("--cap", "3")
         with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
-            wide = "src,changes/perf%2Fd1.md,changes/perf%2Fd1-r2.md"
             self.assertEqual(self.renamed(), "\n".join([
                 "D1 in-progress",
-                "D1: L1 does not cover changes/perf%2Fd1-r2.md; cover it with these commands:",
-                f"  $L lease claim --holder perf/D1 --paths {wide} --owner perf/@1",
-                f"  $B dish D1 --lease <new lease> --paths {wide}",
-                "  $L lease release L1 --owner perf/@1",
+                "D1: L1 does not cover changes/perf%2Fd1-r2.md; cover it with this command:",
+                "  $B dish D1 --add-paths changes/perf%2Fd1-r2.md",
             ]))
             row = self.table_row(self.at, "dishes.tsv", "D1")
             self.assertEqual((row["branch"], row["lease"], row["paths"]), ("perf/d1-r2", "L1", "src,changes/perf%2Fd1.md"))
             self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1.md, src"])
-            self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1", "--paths", wide, "--owner", "perf/@1"), "L2")
-            self.assertEqual(self.brigade("dish", "D1", "--lease", "L2", "--paths", wide), "D1 in-progress")
-            self.land("lease", "release", "L1", "--owner", "perf/@1")
+            self.assertEqual(self.brigade("dish", "D1", "--add-paths", "changes/perf%2Fd1-r2.md"), "D1: L2 replaces L1")
             self.assertEqual(self.lease_lines(), ["L2 active perf/D1: changes/perf%2Fd1-r2.md, changes/perf%2Fd1.md, src"])
             self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"), "D1 in-progress")
+
+    def test_an_active_fragment_gap_prints_no_manual_claim_or_release(self):
+        from unittest import mock
+        self.init_landing("--cap", "3")
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+            result = self.renamed()
+            self.assertIn("$B dish D1 --add-paths changes/perf%2Fd1-r2.md", result)
+            self.assertNotIn("$L lease claim", result)
+            self.assertNotIn("$L lease release", result)
+            self.assertNotIn("--lease <new lease>", result)
 
     def test_a_branch_rename_by_a_replaced_owner_claims_nothing(self):
         from unittest import mock
@@ -341,7 +346,7 @@ class ItemsTest(BrigadeTest, _ItemsRace):
             result = self.renamed(lambda: taken or taken.append(
                 self.brigade("set", "--thread", "replacement", "--replace")))
             self.assertEqual(len(taken), 1)
-            self.assertIn("$L lease claim --holder perf/D1", result)
+            self.assertIn("$B dish D1 --add-paths", result)
             self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1.md, src"])
             stale = self.run_at(self.at, "--owner", "coordinator@1", "dish", "D1", "--branch", "perf/d1-r3", ok=False)
             self.assertEqual(stale, "brigade: owner coordinator@1 is stale; this store is owned by replacement@2")

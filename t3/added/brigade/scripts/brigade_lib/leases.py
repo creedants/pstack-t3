@@ -521,11 +521,22 @@ def lease_states(project_root):
     return dict(line.split()[:2] for line in result.stdout.splitlines() if line.startswith("L"))
 
 
-def fragment_lines(restaurant, ident, branch):
-    """The commands that lease the new branch's change-note fragment. They are printed, not run.
+@dataclass(frozen=True)
+class FragmentGap:
+    """Uncovered change-note fragment and the lease that should cover it.
 
-    land.py cannot add paths to a lease. A claim made here would stay unrecorded when a drop or a new owner
-    wins the store between the claim and its record. None when the store records no change-note
+    state is active or inactive or submitted. covered is true when the recorded paths already list the fragment.
+    """
+    lease: str
+    state: str
+    fragment: str
+    covered: bool
+
+
+def fragment_lines(restaurant, ident, branch):
+    """The command that widens the lease to the new branch's change-note fragment. It is printed, not run.
+
+    widen owns claim record release and race checks. None when the store records no change-note
     directory, or when the item's recorded paths already list the fragment verbatim.
     """
     fragment = fragment_for(restaurant.meta, branch)
@@ -534,22 +545,21 @@ def fragment_lines(restaurant, ident, branch):
     states = lease_states(restaurant.meta["projectRoot"])
     with restaurant.checked():
         dish = restaurant.find("dishes.tsv", ident)[1]
-    lease, paths = dish["lease"], with_fragment(dish["paths"], fragment)
-    if not lease or dish["state"] in ("merged", "dropped") or paths == dish["paths"]:
+    lease = dish["lease"]
+    covered = with_fragment(dish["paths"], fragment) == dish["paths"]
+    raw = states.get(lease)
+    state = "active" if raw == "active" else "submitted" if raw == "submitted" else "inactive"
+    gap = FragmentGap(lease, state, fragment, covered)
+    if not gap.lease or dish["state"] in ("merged", "dropped") or gap.covered:
         return None
-    if states.get(lease) == "submitted":
-        return (f"{ident}: {lease} is submitted, so it cannot take {fragment}; the submitted commit lands as it is. "
+    if gap.state == "submitted":
+        return (f"{ident}: {gap.lease} is submitted, so it cannot take {gap.fragment}; the submitted commit lands as it is. "
                 f"Run dish {ident} --branch {branch} again if its entry bounces")
-    owner = " ".join(restaurant.land_owner())
-    owner = f" {owner}" if owner else ""
-    active = states.get(lease) == "active"
-    lines = [f"{ident}: {lease} {'does not cover' if active else 'is not active, so nothing covers'} {fragment}; "
-             "cover it with these commands:",
-             f"  $L lease claim --holder {holder(restaurant, ident)} --paths {shlex.quote(paths)}{owner}",
-             f"  $B dish {ident} --lease <new lease> --paths {shlex.quote(paths)}"]
-    if active:
-        lines.append(f"  $L lease release {lease}{owner}")
-    return "\n".join(lines)
+    wording = "does not cover" if gap.state == "active" else "is not active, so nothing covers"
+    return "\n".join([
+        f"{ident}: {gap.lease} {wording} {gap.fragment}; cover it with this command:",
+        f"  $B dish {ident} --add-paths {shlex.quote(gap.fragment)}",
+    ])
 
 
 def next_owner(meta, thread, replace, expect=None, stopped=None):
