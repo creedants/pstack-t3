@@ -586,13 +586,15 @@ def check_candidate_size(store, base, candidate):
         try:
             base_obj = json.loads(shown.stdout)
         except json.JSONDecodeError as error:
+            if maximum is None:
+                return None
             return f"size baseline at trunk tip cannot be read: {error}"
+        if maximum is None and not seam.baseline_enabled(base_obj):
+            return None
         try:
             parsed = seam.parse_limit(base_obj)
         except ValueError as error:
             return f"size baseline at trunk tip cannot be read: {error}"
-        if maximum is None and not seam.baseline_enabled(base_obj):
-            return None
         base_raw = base_obj
         if maximum is not None:
             parsed = seam.Limit(maximum, parsed.skip, parsed.files)
