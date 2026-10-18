@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import pathlib
 import shlex
@@ -19,7 +20,13 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "t3/added/brigade/scripts"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import release  # noqa: E402
+if "pstack_release" in sys.modules:
+    release = sys.modules["pstack_release"]
+else:
+    _spec = importlib.util.spec_from_file_location("pstack_release", ROOT / "scripts/release.py")
+    release = importlib.util.module_from_spec(_spec)
+    sys.modules[_spec.name] = release
+    _spec.loader.exec_module(release)
 import test_pstack_t3  # noqa: E402
 from brigade_lib.store import KINDS as STORE_KINDS  # noqa: E402
 

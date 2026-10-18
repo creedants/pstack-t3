@@ -19,10 +19,10 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "t3/added/brigade/scripts"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import release  # noqa: E402
 import test_pstack_t3  # noqa: E402
 from brigade_lib.store import KINDS as STORE_KINDS  # noqa: E402
 from support import (
+    release,
     ENV,
     CHANGELOG,
     HEADING,
