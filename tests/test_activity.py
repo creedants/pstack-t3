@@ -2741,8 +2741,7 @@ class SkillTest(OutputCase):
     def test_skills_command_lines_run_in_bash_with_a_space_in_the_skills_path_the_store_path_and_t3s_base_directory(self):
         fixture = one_running(self.fixture).write()
         skills, tools = fixture.root / "pathmarker skills", fixture.root / "tools"
-        (skills / "brigade" / "scripts").mkdir(parents=True)
-        shutil.copy(SCRIPT, skills / "brigade" / "scripts" / "activity.py")
+        shutil.copytree(SCRIPT.parent,skills/"brigade"/"scripts")
         tools.mkdir()
         (tools / "python3").symlink_to(sys.executable)
         block = re.search(r"```bash\n(.*?)```", skill_section(), re.S).group(1)
