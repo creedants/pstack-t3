@@ -101,7 +101,7 @@ def findings(root):
         limit = sizes.Limit(maximum, sizes.DEFAULT_SKIP, {})
     else:
         return []
-    skip = tuple(limit.skip) + tuple(_generated_list(contract)) + (baseline_rel,)
+    skip = tuple(sizes.DEFAULT_SKIP) + tuple(limit.skip) + tuple(_generated_list(contract)) + (baseline_rel,)
     limit = sizes.Limit(limit.max_tokens, skip, limit.files)
     try:
         current = _walk_sizes(root)

@@ -485,7 +485,7 @@ def size_report(path, staged, all_files, shrink, baseline):
         except ValueError as error:
             raise seam.LandError(str(error)) from error
     maximum = contract.get("sizeMaxTokens") or stored.max_tokens
-    skip = tuple(stored.skip) + tuple(generated) + (baseline_rel,)
+    skip = tuple(seam.DEFAULT_SKIP) + tuple(stored.skip) + tuple(generated) + (baseline_rel,)
     limit = seam.Limit(maximum, skip, dict(stored.files))
     if staged:
         names = _diff_names(repo, "--cached", "HEAD")
@@ -526,7 +526,7 @@ def check_candidate_size(store, base, candidate):
             parsed = seam.Limit(maximum, parsed.skip, parsed.files)
         limit = parsed
     generated = list(contract.get("generated") or [])
-    limit = seam.Limit(limit.max_tokens, tuple(limit.skip) + tuple(generated) + (baseline_rel,), limit.files)
+    limit = seam.Limit(limit.max_tokens, tuple(seam.DEFAULT_SKIP) + tuple(limit.skip) + tuple(generated) + (baseline_rel,), limit.files)
     changed = seam.changed_paths(repo, base, candidate)
     sizes = _commit_sizes(repo, candidate, changed, limit.skip)
     verdict = seam.judge(sizes, limit)

@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check  # noqa: E402
 import measure_capacity  # noqa: E402
+import size_limit  # noqa: E402
 
 
 def fence_git_environment():
@@ -1927,3 +1928,41 @@ class ThreadOrganizeLintTest(unittest.TestCase):
     def test_a_thread_organize_step_that_names_threadid_passes(self):
         root = self._skill("t3_thread_organize archive this thread by threadId.")
         self.assertEqual(check.check_tree(root), [])
+
+
+class SizeLimitBridgeTest(unittest.TestCase):
+    def _repo(self, baseline=None, files=()):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root)
+        if baseline is not None:
+            (root / "size-baseline.json").write_text(json.dumps(baseline))
+        for name, size in files:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"x" * size)
+        return root
+
+    def test_no_baseline_and_no_contract_reports_nothing(self):
+        self.assertEqual(size_limit.findings(self._repo()), [])
+
+    def test_a_file_over_the_baseline_maximum_is_reported(self):
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {}}, [("big.py", 24)])
+        self.assertEqual(size_limit.findings(root),
+                         ["size limit: big.py: 6 tokens over allowance 5 for code; "
+                          "code moves one responsibility to a sibling module"])
+
+    def test_a_file_within_its_baseline_allowance_passes(self):
+        root = self._repo({"maxFileTokens": 5, "skip": [], "files": {"big.py": 6}}, [("big.py", 24)])
+        self.assertEqual(size_limit.findings(root), [])
+
+    def test_a_skipped_file_over_the_maximum_passes(self):
+        root = self._repo({"maxFileTokens": 5, "skip": ["vendor/*"], "files": {}},
+                          [("vendor/huge.py", 400), ("docs/cli/x.md", 400)])
+        self.assertEqual(size_limit.findings(root), [])
+
+    def test_a_baseline_that_cannot_be_parsed_is_one_finding(self):
+        root = self._repo()
+        (root / "size-baseline.json").write_text("{broken")
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].startswith("size-baseline.json: "), findings)
