@@ -1,0 +1,2 @@
+- kind polish
+- every file under 5000 tokens (bytes//4)
