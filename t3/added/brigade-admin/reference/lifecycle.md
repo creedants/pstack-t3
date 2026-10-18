@@ -1,11 +1,18 @@
 # Lifecycle
 
-Read this when opening, recovering, retiring, or moving intake. The core keeps step 1 and short stubs. This file holds store paths, shared intake, recovery steps 2 to 6, and retirement.
+Read this when opening, recovering, retiring, or moving intake. The core keeps step 1 and short stubs. This file holds store paths, shared intake, the admin thread launch, recovery steps 2 to 6, and retirement.
 
 
 ## Store paths
 
 `<store>` is the store root. Without `--store`, it is `$BRIGADE_STORE` when it is set and not empty, else `$XDG_STATE_HOME/pstack-t3/brigade`, and `$XDG_STATE_HOME` defaults to `~/.local/state` when it is unset or empty. `<root>` is the repository's project root. `<project>` is the last component of `<root>` after symlinks resolve, lowercased, with each run of characters outside `a-z0-9` replaced by `-` and any leading or trailing `-` removed.
+
+
+## Launching the admin thread
+
+Read this for opening step 5 after the user answers.
+
+Find the repository's T3 project in `t3_project_list` by its `workspaceRoot`, as [Open a restaurant](../../brigade/SKILL.md#open-a-restaurant) step 1 lists projects, or register `<root>` with `t3_project_create` when none has `<root>`. Use the matching or newly registered project's `id` as `projectId` in `t3_thread_launch`, as [Open a restaurant](../../brigade/SKILL.md#open-a-restaurant) step 6 passes the target's id. Then launch the thread with `t3_thread_launch` in the repository's T3 project, with `workspaceStrategy: {"type": "root"}`, title `Executive admin`, and the message "Use the brigade-admin skill. You are the executive admin for the store at `<store>/<project>/.admin`. Wait for the start message." Record the returned `threadId` with `$B set --thread <id>`. Then send it "Run your first service. Intake every `<the answer in minutes times 60000>` ms, morning at `<morning>`, evening at `<evening>`." with `t3_thread_send` and mode `"auto"`.
 
 
 ## Shared intake
