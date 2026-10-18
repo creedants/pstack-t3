@@ -95,6 +95,7 @@ class WidenTest(BrigadeTest):
 
     def test_in_review_skips_no_contract_fails_when_bad_sha_has_no_contract(self):
         self.fired_bug_fix()
+        self.hand_edit("dishes.tsv", "D1", lease="L1", paths="README.md")
         bad = "0" * 40
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", bad), "D1 in-review")
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-review")
