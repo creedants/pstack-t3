@@ -28,7 +28,7 @@
     "t3/added/landing/scripts/land.py": 5910,
     "t3/added/landing/scripts/landing_lib/governor.py": 12046,
     "t3/added/landing/scripts/landing_lib/merge.py": 8127,
-    "t3/added/landing/scripts/landing_lib/policy.py": 6624,
+    "t3/added/landing/scripts/landing_lib/policy.py": 6680,
     "t3/added/landing/scripts/landing_lib/queue.py": 7975,
     "t3/overrides/poteto-mode/SKILL.md": 5362,
     "t3/overrides/poteto-mode/playbooks/orchestrate.md": 5265,
