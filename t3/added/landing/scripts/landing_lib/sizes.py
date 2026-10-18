@@ -159,8 +159,13 @@ def baseline_enabled(obj):
     return isinstance(obj, dict) and obj.get("enabled") is True
 
 
-def refused_policy_change(base_raw, cand_raw):
-    """Why a candidate baseline weakens its base policy, or None. Lowering always passes."""
+def refused_policy_change(base_raw, cand_raw, ceiling=None):
+    """Why a candidate baseline weakens its base policy, or None. Lowering always passes.
+
+    Callers pass the effective maximum as ceiling. That is the contract maximum
+    when one is set, else the base maximum. A new allowance above that ceiling
+    is refused even when it sits at or below the base maximum.
+    """
     if base_raw is None:
         return None
     if not isinstance(base_raw, dict):
@@ -190,6 +195,8 @@ def refused_policy_change(base_raw, cand_raw):
         base_ceiling = base_max
     else:
         base_ceiling = DEFAULT_MAX_TOKENS
+    if isinstance(ceiling, int) and not isinstance(ceiling, bool) and ceiling >= 1:
+        base_ceiling = min(base_ceiling, ceiling)
     for name, value in cand_files.items():
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             continue

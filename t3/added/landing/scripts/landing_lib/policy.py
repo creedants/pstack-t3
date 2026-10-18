@@ -597,7 +597,10 @@ def check_candidate_size(store, base, candidate):
             return f"size baseline at trunk tip cannot be read: {error}"
         base_raw = base_obj
         if maximum is not None:
+            effective = maximum
             parsed = seam.Limit(maximum, parsed.skip, parsed.files)
+        else:
+            effective = parsed.max_tokens
         limit = parsed
     cand_shown = seam.git("show", f"{candidate}:{baseline_rel}", cwd=repo, check=False)
     if cand_shown.returncode == 0:
@@ -605,7 +608,7 @@ def check_candidate_size(store, base, candidate):
             cand_obj = json.loads(cand_shown.stdout)
         except json.JSONDecodeError:
             cand_obj = None
-        problem = seam.refused_policy_change(base_raw, cand_obj)
+        problem = seam.refused_policy_change(base_raw, cand_obj, effective)
         if problem:
             return problem
     elif base_raw is not None and isinstance(base_raw, dict) and base_raw.get("enabled") is True:

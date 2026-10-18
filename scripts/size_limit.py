@@ -145,14 +145,14 @@ def findings(root):
         if base is not None:
             base_raw, missing = _show_at(root, base, baseline_rel)
             if not missing:
-                problem = sizes.refused_policy_change(base_raw, work_raw)
-                if problem:
-                    return [f"size limit: {problem}"]
                 try:
                     base_limit = sizes.parse_limit(base_raw) if isinstance(base_raw, dict) else stored
                 except ValueError as error:
                     return [f"{baseline_rel}: {error}"]
                 effective = maximum if contract_on else base_limit.max_tokens
+                problem = sizes.refused_policy_change(base_raw, work_raw, effective)
+                if problem:
+                    return [f"size limit: {problem}"]
                 limit = sizes.Limit(effective, tuple(base_limit.skip), dict(base_limit.files))
                 skip = tuple(sizes.DEFAULT_SKIP) + tuple(limit.skip) + tuple(_generated_list(contract)) + (baseline_rel,)
                 limit = sizes.Limit(limit.max_tokens, skip, limit.files)
