@@ -133,11 +133,11 @@ def parser():
                    help="command that regenerates the generated paths while landing, such as \"python3 scripts/build.py\". "
                         "An empty value clears the stored command. Omitted, a rerun keeps the stored command and a first init stores none")
     p.add_argument("--max-file-tokens", type=int, default=None, dest="max_file_tokens",
-                   help="most tokens one file may hold; a file holds its bytes divided by 4. "
-                        "Omitted, a rerun keeps the stored limit and a first init stores none, so the limit applies only through a baseline file")
+                   help="default token maximum using bytes // 4. "
+                        "Omitted keeps the stored limit; a first init stores none")
     p.add_argument("--size-baseline", metavar="PATH", default=None, dest="size_baseline",
-                   help="repository-relative baseline file naming each larger file's allowance, such as size-baseline.json. "
-                        "Omitted, a rerun keeps the stored path and a first init stores none, which reads size-baseline.json")
+                   help="repository-relative baseline path. "
+                        "Omitted keeps the stored path; the fallback is size-baseline.json")
 
     p = sub.add_parser("cap", help="set the most changes in flight on the repository at once; 0 clears it")
     p.add_argument("count", type=int)
@@ -230,12 +230,12 @@ def parser():
     p.add_argument("--json", action="store_true",
                    help="print one JSON object instead of the lines. It holds mode, trunk, generated, rebuild, map, sizeMaxTokens, and sizeBaseline")
 
-    size_help = ("judge files against the size limit and seed the baseline when it is absent. "
-                 "The default judges changed worktree files, --staged judges staged files from the index, "
-                 "and --all judges every file")
+    size_help = ("check changed worktree file sizes; --staged reads changed index files; "
+                 "--all reads tracked and unignored untracked files. Seed a missing baseline.\n\n"
+                 "In a pstack-t3 checkout with no hook, run `h=$(git rev-parse --git-path hooks/pre-commit) && test ! -e \"$h\" && printf '#!/bin/sh\\nexec python3 skills/landing/scripts/land.py size --staged\\n' > \"$h\" && chmod +x \"$h\"`.")
     p = sub.add_parser("size", help=size_help, description=size_help)
     p.add_argument("--staged", action="store_true", help="judge staged files from the index instead of the worktree")
-    p.add_argument("--all", action="store_true", help="judge every file instead of only changed ones")
+    p.add_argument("--all", action="store_true", help="judge tracked and unignored untracked files")
     p.add_argument("--shrink", action="store_true",
                    help="lower stored allowances that fell, never raising any, before judging")
     p.add_argument("--baseline", metavar="PATH", default=None,
@@ -339,9 +339,10 @@ def run(argv):
             payload = {"mode": store.contract.get("mode"), "trunk": store.contract.get("trunk"),
                        "generated": list(store.contract.get("generated") or []),
                        "rebuild": store.contract.get("rebuild"),
-                       "map": list(store.contract.get("map") or []),
-                       "sizeMaxTokens": store.contract.get("sizeMaxTokens"),
-                       "sizeBaseline": store.contract.get("sizeBaseline")}
+                       "map": list(store.contract.get("map") or [])}
+            if store.contract.get("sizeMaxTokens") is not None:
+                payload["sizeMaxTokens"] = store.contract.get("sizeMaxTokens")
+                payload["sizeBaseline"] = store.contract.get("sizeBaseline")
             return json.dumps(payload, indent=2, sort_keys=True), 0
         line = status(store, args.id)
         if not args.id:
