@@ -14,7 +14,7 @@ class ReviewShaTest(BrigadeTest):
         self.assertEqual(self.store_files(), before)
         self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["state"], "in-progress")
 
-    def test_in_review_passes_stored_sha_fails_when_stored_commit_needs_a_flag(self):
+    def test_in_review_passes_stored_sha_fails_when_stored_sha_is_ignored(self):
         self.started()
         sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
         self.hand_edit("dishes.tsv", "D1", sha=sha)
