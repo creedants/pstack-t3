@@ -32,6 +32,9 @@ BASE_MOVED_RETRIES = 3
 BASE_MOVED_WAIT = 2
 
 
+ABSENT_CHECKS_GRACE = timedelta(minutes=5)
+
+
 BLOCKER_QUERY = (
     'def check_name: .name // .context; '
     '[.reviewDecision // "", '
@@ -139,27 +142,36 @@ def line_of(store, trunk):
     return Line(entries, stale, entries[-1]["candidate"] if entries else trunk)
 
 
-def advance_drain(store):
-    """Count this land run. The same run polls twice, so an empty rollup waits for a later run."""
-    nxt = int(store.contract.get("drain") or 0) + 1
-    with store.tx() as db:
-        db.execute("INSERT OR REPLACE INTO contract VALUES ('drain', ?)", (json.dumps(nxt),))
-    return nxt
+def absent_since(store, ident, candidate):
+    """When this entry first saw no posted check for this candidate.
 
-
-def absent_seen(store, ident):
+    A missing, legacy, unreadable, or other-candidate marker records now and
+    returns that moment. A second read in the same run finds the stored record.
+    """
     raw = store.contract.get("absentDrain") or {}
-    value = raw.get(str(ident))
-    return None if value is None else int(value)
+    record = raw.get(str(ident))
+    since = None
+    if isinstance(record, dict) and record.get("candidate") == candidate:
+        try:
+            since = datetime.fromisoformat(record.get("since") or "")
+        except (ValueError, TypeError):
+            since = None
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+    if since is None:
+        since = seam.now()
+        with store.tx() as db:
+            row = db.execute("SELECT value FROM contract WHERE key = 'absentDrain'").fetchone()
+            raw = json.loads(row["value"]) if row else {}
+            raw[str(ident)] = {"since": seam.stamp(since), "candidate": candidate}
+            db.execute("INSERT OR REPLACE INTO contract VALUES ('absentDrain', ?)", (json.dumps(raw),))
+            store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
+    return since
 
 
-def remember_absent(store, ident, drain):
-    with store.tx() as db:
-        row = db.execute("SELECT value FROM contract WHERE key = 'absentDrain'").fetchone()
-        raw = json.loads(row["value"]) if row else {}
-        raw.setdefault(str(ident), drain)
-        db.execute("INSERT OR REPLACE INTO contract VALUES ('absentDrain', ?)", (json.dumps(raw),))
-        store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
+def absence_waits(since, moment):
+    """True while moment is still inside the grace after since."""
+    return moment - since < ABSENT_CHECKS_GRACE
 
 
 def tsv_field_text(field):
@@ -323,15 +335,13 @@ def request_merge(store, ident, out):
         return False
     if checks.blocker == "review":
         pause_for_review(store, url, checks.detail, disarm=False)
-    drain = int(store.contract.get("drain") or 0)
-    seen = absent_seen(store, ident)
-    repeat_absent = checks.blocker == "absent" and seen is not None and seen < drain
-    if checks.blocker == "pending" or (checks.blocker == "absent" and (ahead or not repeat_absent)):
-        if checks.blocker == "absent":
-            remember_absent(store, ident, drain)
-        else:
-            with store.tx() as db:
-                store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
+    waiting = checks.blocker == "pending"
+    if checks.blocker == "absent":
+        since = absent_since(store, ident, entry["candidate"])
+        waiting = ahead or absence_waits(since, seam.now())
+    if waiting:
+        with store.tx() as db:
+            store.set_entry(db, ident, "awaiting-merge", note=WAITING_FOR_CHECKS)
         return False
     if ahead:
         with store.tx() as db:

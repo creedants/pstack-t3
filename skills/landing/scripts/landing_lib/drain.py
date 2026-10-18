@@ -41,7 +41,6 @@ def land(store):
             if seam.rewound(store, seam.fetch_trunk(store)):
                 return report(store, out)
             if mode == "merge":
-                seam.advance_drain(store)
                 seam.walk(store, out)
                 seam.walk(store, out, seam.build_line(store, integration, out))
             else:
