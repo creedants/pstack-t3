@@ -64,6 +64,123 @@ def worker_where(dish):
     return "no worker recorded"
 
 
+def _worker_skip(error):
+    """The single watch line for an unreadable T3 database."""
+    text = str(error).strip().splitlines()
+    detail = text[-1].strip() if text and text[-1].strip() else "unavailable"
+    detail = " ".join(detail.split())
+    if len(detail) > 200:
+        detail = detail[:200]
+    return f"cannot see worker runs: {detail}"
+
+
+def _read_worker_runs(threads):
+    """The latest run per thread id and an optional skip line.
+
+    Reads statev2.sqlite read-only through activity.py. Never raises.
+    A missing database returns empty runs with no line. Any other
+    failure returns empty runs with one line.
+    """
+    wanted = list(dict.fromkeys(thread for thread in threads if thread))
+    if not wanted:
+        return {}, None
+    try:
+        loaded = runpy.run_path(str(Path(__file__).resolve().parent.parent / "activity.py"))
+    except Exception as error:
+        return {}, _worker_skip(error)
+    try:
+        database = loaded["t3_database"](None, os.environ, Path.home())
+    except Exception as error:
+        if "no T3 Code database" in str(error):
+            return {}, None
+        return {}, _worker_skip(error)
+    try:
+        connection = loaded["open_t3"](database)
+    except Exception as error:
+        return {}, _worker_skip(error)
+    try:
+        loaded["check_shape"](connection)
+        marks = ", ".join("?" * len(wanted))
+        table = loaded["RUNS"]
+        rows = connection.execute(
+            f"SELECT thread_id, status, requested_at, completed_at FROM {table} WHERE thread_id IN ({marks})",
+            wanted,
+        ).fetchall()
+        runs = {}
+        for thread_id, status_raw, requested_raw, completed_raw in rows:
+            thread = loaded["text_in"](thread_id, table, "thread_id")
+            status_text = loaded["text_in"](status_raw, table, "status")
+            requested_ts = loaded["time_in"](requested_raw, table, "requested_at")
+            completed_ts = loaded["time_in"](completed_raw, table, "completed_at")
+            loaded["parse_status"](status_text, completed_ts is not None)
+            prev = runs.get(thread)
+            if prev is None or requested_ts > prev["requested"]:
+                runs[thread] = {"status": status_text, "requested": requested_ts, "completed": completed_ts,
+                                "updated": None}
+        threads_table = loaded["THREADS"]
+        try:
+            thread_rows = connection.execute(
+                f"SELECT thread_id, updated_at FROM {threads_table} WHERE thread_id IN ({marks})",
+                wanted,
+            ).fetchall()
+        except Exception:
+            thread_rows = []
+        for thread_id_raw, updated_raw in thread_rows:
+            thread = loaded["text_in"](thread_id_raw, threads_table, "thread_id")
+            if thread not in runs:
+                continue
+            if updated_raw is None:
+                runs[thread]["updated"] = None
+            else:
+                runs[thread]["updated"] = loaded["time_in"](updated_raw, threads_table, "updated_at")
+    except Exception as error:
+        try:
+            connection.close()
+        except Exception:
+            pass
+        return {}, _worker_skip(error)
+    try:
+        connection.close()
+    except Exception:
+        pass
+    return runs, None
+
+
+def _idle_completed(runs, thread, moment):
+    """The completed or quiet timestamp when this thread is idle, else None.
+
+    Idle means the latest run ended, or its open run saw no thread
+    activity for at least OPEN_RUN_MINUTES.
+    """
+    entry = runs.get(thread) if runs else None
+    if not entry:
+        return None
+    completed = entry.get("completed")
+    if completed is not None:
+        return completed
+    updated = entry.get("updated")
+    if updated is None:
+        return None
+    try:
+        age = moment.timestamp() - updated
+    except Exception:
+        return None
+    if age >= OPEN_RUN_MINUTES * 60:
+        return updated
+    return None
+
+
+def _local_stamp(completed):
+    """The local time text for one completed timestamp."""
+    return datetime.fromtimestamp(completed).astimezone().isoformat(timespec="minutes")
+
+
+def _idle_line(dish, completed):
+    """The watch line for one idle worker with no report."""
+    where = worker_where(dish)
+    return f"{dish['id']}: idle since {_local_stamp(completed)} with no report ({where})"
+
+
 def attempt_count(restaurant, dish):
     """The attempt this dish is on, counted from 1."""
     return len(attempt_starts(restaurant, dish))
@@ -101,10 +218,12 @@ def recovery_lines(dish, error):
     return [f"{ident}: worker ended with no report; the recorded reason is {error}", *steps]
 
 
-def dish_progress(restaurant, dish, moment, held=False):
+def dish_progress(restaurant, dish, moment, held=False, runs=None):
     """The in-progress lines watch prints for one dish. Empty when the dish is held or not in progress.
 
     The report file's mtime is read here. Call this under the store lock.
+    When runs maps thread ids to their latest T3 runs, an idle worker
+    with no report prints its idle line before the timebox check.
     """
     if held or dish["state"] != "in-progress":
         return []
@@ -130,6 +249,10 @@ def dish_progress(restaurant, dish, moment, held=False):
     ended = ended_row(restaurant, dish)
     if ended:
         return recovery_lines(dish, ended["note"])
+    if runs is not None and dish.get("thread"):
+        completed = _idle_completed(runs, dish["thread"], moment)
+        if completed is not None:
+            return [_idle_line(dish, completed)]
     if minutes > timebox:
         return [f"{dish['id']}: over its {timebox}m timebox at {minutes}m with no report; read its thread and decide ({where})"]
     return [f"{dish['id']}: running {minutes}m of {timebox}m ({where})"]
@@ -445,6 +568,8 @@ def watch(restaurant):
             sentences = dish_progress(restaurant, dish, moment, held)
             if sentences:
                 progress[dish["id"]] = sentences
+        threads = [dish["thread"] for dish in dishes
+                   if dish["state"] == "in-progress" and dish.get("thread")]
         lines = []
         for ticket in restaurant.rows("rail.tsv"):
             if ticket["state"] != "moved":
@@ -469,6 +594,30 @@ def watch(restaurant):
         project_root = restaurant.meta.get("projectRoot", "")
         latest = _latest_trunk(restaurant.rows("log.tsv"))
     # land.py waits on the landing database, so every call runs outside the store lock.
+    # The T3 run read also runs outside the lock for the same reason.
+    try:
+        runs, run_skip = _read_worker_runs(threads)
+    except Exception as error:
+        runs, run_skip = {}, None
+        try:
+            run_skip = _worker_skip(error)
+        except Exception:
+            run_skip = "cannot see worker runs: unavailable"
+    if runs:
+        for dish in dishes:
+            if dish["state"] != "in-progress" or not dish.get("thread"):
+                continue
+            if decisions.get(dish["id"]) or debts[dish["id"]]:
+                continue
+            current = progress.get(dish["id"])
+            if not current or len(current) != 1:
+                continue
+            line = current[0]
+            if not (line.startswith(f"{dish['id']}: running ") or line.startswith(f"{dish['id']}: over its ")):
+                continue
+            completed = _idle_completed(runs, dish["thread"], moment)
+            if completed is not None:
+                progress[dish["id"]] = [_idle_line(dish, completed)]
     item_lines, answered = [], True
     for dish in dishes:
         decision = decisions.get(dish["id"])
@@ -517,7 +666,8 @@ def watch(restaurant):
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         restaurant.change_meta(lastActivityAt=seam.now())
-    text = "\n".join([workers, *skipped, *(item_lines + lines or ["no work in progress"])])
+    text = "\n".join([workers, *skipped, *([run_skip] if run_skip else []),
+                      *(item_lines + lines or ["no work in progress"])])
     sentence = handoff_size_line(restaurant.dir)
     if sentence:
         restaurant.warn(sentence)
