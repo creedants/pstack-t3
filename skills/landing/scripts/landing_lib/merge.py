@@ -303,7 +303,7 @@ def _ruleset_contexts(store):
 
     The gh path is repos/{owner}/{repo}/rules/branches/<trunk>.
     gh fills {owner} and {repo} from the checkout, as forge_branch_status already does.
-    Return a tuple of non-empty strings from required status check rules when gh exits 0 and the body is a JSON list of dicts or a JSON object holding a rules list of dicts. An endpoint with no required status check rule returns (). Return None on a non-zero gh exit, on stdout that is not valid JSON, on a body that is neither that list nor that object, on a rule that is not a dict, and on a context that is not a non-empty string.
+    Return a tuple of non-empty strings from rules carrying required status checks when gh exits 0 and the body is a JSON list of dicts or a JSON object holding a rules list of dicts. An endpoint with no required status check rule returns (). Return None on a non-zero gh exit, on stdout that is not valid JSON, on a body that is neither that list nor that object, on a rule that is not a dict, and on a context that is not a non-empty string.
     """
     result = seam.gh(
         "api",

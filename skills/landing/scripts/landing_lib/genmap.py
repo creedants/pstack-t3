@@ -57,7 +57,7 @@ def map_rows(pairs, roots):
         src_made = _norm_item(src_text)
         dst_made = _norm_item(dst_text)
         if not src_made or not dst_made:
-            raise seam.LandError("generated map needs repo relative src and dst with no dot parts")
+            raise seam.LandError("generated map needs src and dst with no empty or dot parts")
         src_pat = _split_pattern(src_made)
         dst_pat = _split_pattern(dst_made)
         if src_pat is None or dst_pat is None:
@@ -100,12 +100,12 @@ def parse_map(passed, roots):
         src_text = src_text.strip()
         dst_text = dst_text.strip()
         if not src_text or not dst_text:
-            raise seam.LandError("generated map needs repo relative src and dst with no dot parts")
+            raise seam.LandError("generated map needs src and dst with no empty or dot parts")
         kind = "copy"
         if dst_text.endswith("!"):
             kind = "index"
             dst_text = dst_text[:-1].strip()
             if not dst_text:
-                raise seam.LandError("generated map needs repo relative src and dst with no dot parts")
+                raise seam.LandError("generated map needs src and dst with no empty or dot parts")
         pairs.append((src_text, dst_text, kind))
     return map_rows(pairs, roots)
