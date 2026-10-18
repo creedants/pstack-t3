@@ -1,0 +1,2 @@
+- kind polish
+- `t3/added/landing/scripts/landing_lib/__init__.py` drops `advance_drain`, `absent_seen`, and `remember_absent` from the `merge` tuple in `AREAS` and lists `ABSENT_CHECKS_GRACE`, `absent_since`, and `absence_waits` there instead
