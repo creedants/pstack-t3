@@ -1,0 +1,3 @@
+- kind polish
+- Split scripts/check.py into a thin facade plus scripts/_check/.
+- Copy scripts/_check/ in checker and size tests.

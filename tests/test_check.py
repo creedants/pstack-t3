@@ -153,19 +153,20 @@ def badge_line(url, alt):
 
 
 def checker_checkout(root, readme):
-    scripts = root / "scripts"
-    scripts.mkdir(parents=True)
-    shutil.copy(ROOT / "scripts/check.py", scripts / "check.py")
-    roles = root / "t3/scripts"
-    roles.mkdir(parents=True)
-    shutil.copy(ROOT / "t3/scripts/roles.py", roles / "roles.py")
-    skill = root / "skills/demo"
-    skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")
+    s=root/"scripts"
+    s.mkdir(parents=True)
+    shutil.copy(ROOT/"scripts/check.py",s/"check.py")
+    shutil.copytree(ROOT/"scripts/_check",s/"_check")
+    r=root/"t3/scripts"
+    r.mkdir(parents=True)
+    shutil.copy(ROOT/"t3/scripts/roles.py",r/"roles.py")
+    k=root/"skills/demo"
+    k.mkdir(parents=True)
+    (k/"SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")
     tests_tree(root, {})
-    (root / "upstream.json").write_text(json.dumps({"version": "1.1.0"}) + "\n")
+    (root/"upstream.json").write_text(json.dumps({"version": "1.1.0"})+"\n")
     if readme is not None:
-        (root / "README.md").write_text(readme)
+        (root/"README.md").write_text(readme)
 
 
 def run_check(root):
