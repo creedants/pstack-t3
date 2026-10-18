@@ -8,7 +8,8 @@ except "review backups", which resolves to "unset".
 
 Two optional keys tune the file. "exclude" is a list of rules that refuse a seat
 by model-id glob, by declared option, by the provider instance id, by the role
-name, or by a combination of them. "backups" maps a role to the seats roles.py
+name, or by a combination of them. The merged list is the union of the user and
+project lists. User rules come first. "backups" maps a role to the seats roles.py
 backup tries, in order, after a usage limit.
 """
 
@@ -736,10 +737,11 @@ def merged_config(cwd, user_path=None, project_path=None):
         mode = DEFAULT_MODE
     escalate = list(project["escalate"]) if "escalate" in project else None
     budget = project["budget"] if "budget" in project else user.get("budget", "default")
-    if "exclude" in project:
-        exclude = project["exclude"]
-    else:
-        exclude = user.get("exclude", ())
+    exclude = list(user.get("exclude", ()))
+    for rule in project.get("exclude", ()):
+        if rule not in exclude:
+            exclude.append(rule)
+    exclude = tuple(exclude)
     backups = dict(user.get("backups", {}))
     backups.update(project.get("backups", {}))
     return {

@@ -1,0 +1,2 @@
+- kind fix
+- the merged exclude list is the union of the user and project lists, with user rules first and duplicates dropped
