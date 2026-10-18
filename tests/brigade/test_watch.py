@@ -684,3 +684,86 @@ class WatchTest(BrigadeTest, _WakeRace):
         self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/old", out)
         reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
         self.assertEqual(reds[-1]["state"], "red")
+
+    def test_truncated_failure_streak_reports_before_oldest_fetched(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        from pathlib import Path as _Path
+        head = "1bd3ecf6510a180e34f1391d0910a869aae30f8a"
+        base = datetime(2026, 10, 17, tzinfo=timezone.utc)
+        rows = []
+        for i in range(101):
+            stamp = (base - timedelta(hours=i)).isoformat()
+            rows.append({"status": "completed", "conclusion": "failure", "headSha": head,
+                         "createdAt": stamp, "url": f"https://example.com/run/{i}", "workflowName": "CI"})
+        rows.append({"status": "completed", "conclusion": "success", "headSha": "ccc999",
+                     "createdAt": (base - timedelta(hours=101)).isoformat(),
+                     "url": "https://example.com/run/101", "workflowName": "CI"})
+        args_file = _Path(self.temporary.name) / "gh-args-cutoff-streak.txt"
+        bindir = self._gh_dir_recording(json.dumps(rows), args_file)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        oldest = (base - timedelta(hours=99)).isoformat()
+        self.assertIn(f"trunk CI failing since before {oldest}: CI https://example.com/run/0", out)
+        reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(reds[-1]["state"], "red")
+        data = json.loads(reds[-1]["note"])
+        self.assertEqual(data["since"], f"before {oldest}")
+        self.assertEqual(data["sha"], head)
+        sheet = self.brigade("next", "liveness")
+        self.assertIn("Read the failing jobs", sheet)
+        self.assertTrue(sheet.splitlines()[-1].startswith("reply: yes"))
+
+    def test_hidden_completed_failure_reports_no_completed_run_in_window(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        from pathlib import Path as _Path
+        head = "1bd3ecf6510a180e34f1391d0910a869aae30f8a"
+        base = datetime(2026, 10, 17, tzinfo=timezone.utc)
+        rows = []
+        for i in range(100):
+            stamp = (base - timedelta(hours=i)).isoformat()
+            rows.append({"status": "in_progress", "conclusion": "", "headSha": f"zzz{i:03d}",
+                         "createdAt": stamp, "url": f"https://example.com/run/w{i}", "workflowName": "CI"})
+        rows.append({"status": "completed", "conclusion": "failure", "headSha": head,
+                     "createdAt": (base - timedelta(hours=100)).isoformat(),
+                     "url": "https://example.com/run/100", "workflowName": "CI"})
+        args_file = _Path(self.temporary.name) / "gh-args-cutoff-hidden.txt"
+        bindir = self._gh_dir_recording(json.dumps(rows), args_file)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("cannot see trunk CI: no completed run in the last 100 runs", out)
+        unseen = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(unseen[-1]["state"], "unseen")
+        self.assertIn("no completed run in the last 100 runs", unseen[-1]["note"])
+        self._assert_no_red_cues()
+
+    def test_stored_red_owes_next_liveness_and_merge(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        bindir = self._gh_dir(payload=self._valid_red_payload())
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since", out)
+        for wake in (("liveness",), ("merge", "D1")):
+            sheet = self.brigade("next", *wake)
+            self.assertIn("Read the failing jobs", sheet)
+            self.assertIn("urgent fix", sheet)
+            self.assertIn("Tell the owner", sheet)
+            self.assertTrue(sheet.splitlines()[-1].startswith("reply: yes"))
+
+    def test_stored_green_owes_no_next_red_step(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([{"status": "completed", "conclusion": "success", "headSha": "ddd444",
+                               "createdAt": "2026-10-02T00:00:00Z", "url": "https://example.com/run/3",
+                               "workflowName": "CI"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertNotIn("trunk CI", out)
+        self._assert_no_red_cues()

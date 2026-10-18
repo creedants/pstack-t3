@@ -257,7 +257,7 @@ def _owner_repo(repo, remote):
         return None, "no remote %s" % remote
     owner_repo = _github_owner_repo(text)
     if owner_repo is None:
-        return None, "unsupported host %s" % text
+        return None, "unsupported remote URL"
     return owner_repo, ""
 
 
@@ -267,7 +267,7 @@ def _gh_runs(repo, trunk, owner_repo):
         return None, "repo not found"
     try:
         result = subprocess.run(
-            ["gh", "run", "list", "--repo", owner_repo, "--branch", trunk, "--limit", "100",
+            ["gh", "run", "list", "--repo", "github.com/" + owner_repo, "--branch", trunk, "--limit", "100",
              "--json", "conclusion,status,headSha,createdAt,url,workflowName"],
             cwd=str(repo), capture_output=True, text=True, timeout=20)
     except FileNotFoundError:
@@ -351,6 +351,8 @@ def _latest_trunk(rows):
     return None
 
 
+# TrunkObservation is id plus red with sha workflow url since, green with sha, or unseen with reason.
+# A GhRun row carries status conclusion headSha createdAt url workflowName.
 def _observe_trunk(project_root, latest):
     """The trunk watch line and the log row to write or Nones."""
     contract = _contract_trunk(project_root)
@@ -389,7 +391,7 @@ def _observe_trunk(project_root, latest):
             completed = run
             break
     if completed is None:
-        reason = "no completed runs"
+        reason = "no completed run in the last 100 runs"
         line = "cannot see trunk CI: %s" % reason
         if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
             return line, None
@@ -407,6 +409,11 @@ def _observe_trunk(project_root, latest):
                 break
             if run.get("createdAt"):
                 since = run.get("createdAt")
+        else:
+            if len(runs) >= 100:
+                oldest = runs[-1].get("createdAt") or ""
+                if oldest:
+                    since = "before %s" % oldest
         line = "trunk CI failing since %s: %s %s" % (since, newest_workflow, newest_url)
         note = json.dumps({"sha": sha, "workflow": newest_workflow, "url": newest_url, "since": since})
         if latest == {"id": trunk, "state": "red", "sha": sha,
