@@ -841,12 +841,15 @@ def _build_command(meta):
 
 
 def _settings(root, meta, store=None):
-    """The layout, build command, check command, and change-note directory root's stores recorded.
+    """Layout and commands from matching stores.
 
-    meta names the store the caller already holds. Otherwise every store under store, the store root the
-    caller resolved, whose projectRoot resolves to root is read. A present and malformed affectedTests is
-    refused, and one recorded differently by two stores is refused because neither can be trusted. The same
-    holds for changeNoteDir. An unset key reads as no change-note directory.
+    When meta is given that store alone supplies all four values.
+    Otherwise matching stores are every readable restaurant.json under store root in sorted path order whose projectRoot resolves to root.
+    Unreadable or non JSON stores are skipped.
+    Build and check take the first string that is non-empty after stripping and is not "none".
+    Later different values are ignored without warning.
+    ChangeNoteDir compares every matched store with unset as empty and refuses on difference.
+    AffectedTests compares only stores that record it by raw value and refuses on difference.
     """
     if meta is not None:
         return layout(meta), _build_command(meta), _check_command(meta), change_note_dir(meta)

@@ -378,7 +378,7 @@ record one thread an item used, for a role no other command writes
 ## brigade.py dish
 
 ```text
-brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--worker-ended WORKER_ENDED] [--lease LEASE] [--paths PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] id
+brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--worker-ended WORKER_ENDED] [--lease LEASE] [--paths PATHS] [--add-paths ADD_PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] id
 ```
 
 update a dish
@@ -397,6 +397,7 @@ update a dish
 | `--worker-ended WORKER_ENDED` |  |  |  | record that this attempt's worker ended or failed and wrote no report |
 | `--lease LEASE` |  |  |  | record a lease id claimed again; given once |
 | `--paths PATHS` |  |  |  | record the paths that lease covers; given once |
+| `--add-paths ADD_PATHS` |  |  |  | widen the lease to cover these comma-separated paths; given once |
 | `--stopped STOPPED` |  |  |  | with --state dropped: the run id t3_thread_wait reported terminal, or idle |
 | `--mode MODE` |  |  |  | full, to move open work to full mode once; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish moves to full mode |
