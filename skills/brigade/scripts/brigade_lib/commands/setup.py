@@ -32,6 +32,44 @@ from brigade_lib.tickets import cap_pairs, intake_list, review_pairs, set_intake
 COMMANDS = ("open", "set")
 
 
+def _json_setting(args, name, flag):
+    text = getattr(args, name)
+    if text == "-":
+        if sys.stdin.isatty():
+            raise BrigadeError(f"{flag} - reads JSON from stdin")
+        raw = sys.stdin.read()
+        setattr(args, name, raw)
+        text = raw
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            raise BrigadeError(f"{flag} {error}") from error
+    stripped = text.strip()
+    if stripped[:1] in ("{", "["):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            raise BrigadeError(f"{flag} {error}") from error
+    try:
+        raw = Path(stripped).read_text(encoding="utf-8")
+    except OSError as error:
+        raise BrigadeError(f"{flag} {error}") from error
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise BrigadeError(f"{flag} {error}") from error
+
+
+def parse_doc_timebox(text):
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise BrigadeError(f"--doc-timebox takes a whole number of 1 or more, got '{text}'") from None
+    if value < 1:
+        raise BrigadeError(f"--doc-timebox takes a whole number of 1 or more, got '{text}'")
+    return value
+
+
 def register_open(sub):
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
     p.add_argument("--project-root", required=True)
@@ -88,6 +126,12 @@ def register_set(sub):
     p.add_argument("--change-note-dir", metavar="DIR",
                    help="the repository-relative directory holding one change-note fragment per branch, such as changes; "
                         "\"\" clears it, and an unset key leases no fragment")
+    p.add_argument("--affected-tests", metavar="JSON",
+                   help="JSON object or JSON file for the affectedTests layout; \"\" clears it; - reads stdin")
+    p.add_argument("--shared-docs", metavar="JSON",
+                   help="JSON list or JSON file for the sharedDocs catalog; \"\" clears it; - reads stdin")
+    p.add_argument("--doc-timebox", metavar="N",
+                   help="the shared-document timebox in minutes, a whole number of 1 or more; \"\" clears it to 90")
     p.add_argument("--context-cap", default=None,
                    help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
@@ -269,6 +313,21 @@ def setting_changes(restaurant, args):
             drop.append(CHANGE_NOTE_KEY)
         else:
             changes[CHANGE_NOTE_KEY] = parse_change_note_dir(args.change_note_dir)
+    if args.affected_tests is not None:
+        if args.affected_tests == "":
+            drop.append("affectedTests")
+        else:
+            changes["affectedTests"] = _json_setting(args, "affected_tests", "--affected-tests")
+    if args.shared_docs is not None:
+        if args.shared_docs == "":
+            drop.append("sharedDocs")
+        else:
+            changes["sharedDocs"] = _json_setting(args, "shared_docs", "--shared-docs")
+    if args.doc_timebox is not None:
+        if args.doc_timebox == "":
+            drop.append("docTimebox")
+        else:
+            changes["docTimebox"] = parse_doc_timebox(args.doc_timebox)
     if args.context_cap is not None:
         if args.context_cap == "":
             drop.append("contextCap")
