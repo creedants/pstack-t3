@@ -125,7 +125,8 @@ def parser():
                    help="comma-separated repository-relative paths the queue treats as generated output, such as skills,docs/cli. "
                         "An empty value clears the stored list. Omitted, a rerun keeps the stored list and a first init stores none")
     p.add_argument("--generated-map", metavar="MAP", default=None,
-                   help="comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages. "
+                   help="comma-separated src equals dst rules the fire expansion uses, with a trailing ! for index pages "
+                        "and a trailing ^ to skip doc items, such as src=dst!^ for a catalog page. "
                         "An empty value clears the stored map. Omitted, a rerun keeps the stored map and a first init stores none")
     p.add_argument("--rebuild", metavar="COMMAND", default=None,
                    help="command that regenerates the generated paths while landing, such as \"python3 scripts/build.py\". "
