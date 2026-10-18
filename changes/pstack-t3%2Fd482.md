@@ -1,0 +1,5 @@
+- kind polish
+- break `governor`, `merge`, `policy`, `queue`, and `land` into private packages with thin facades under 5000 tokens
+- split `tests/landing` merge, queue, leases, identity, and in-process suites into behavior-grouped packages with `base` mixins
+- update `landing_lib` areas to match facades and fix drift for exclusive max, ruleset pages, heartbeat, size helpers, and tail
+- update hard-coded queue test id to new dotted path and keep discovery top as tests
