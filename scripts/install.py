@@ -84,7 +84,8 @@ finally:
 del _bw, _drop_cached_install, _pkg, _alias, _libdir, _types, _uuid, _prior_install
 
 _OWNERS = {}
-for _mod in (_layout, _records, _plans, _moves, _restore, _strays, _run, _doctor):
+_modules = (_layout, _records, _plans, _moves, _restore, _strays, _run, _doctor)
+for _mod in _modules:
     for _name in dir(_mod):
         if _name.startswith("_"):
             continue
@@ -92,7 +93,10 @@ for _mod in (_layout, _records, _plans, _moves, _restore, _strays, _run, _doctor
             continue
         if _name in globals():
             continue
-        globals()[_name] = getattr(_mod, _name)
+        _value = getattr(_mod, _name)
+        if _value in _modules:
+            continue
+        globals()[_name] = _value
         _OWNERS[_name] = _mod
 _OWNERS["config_home"] = _layout
 _OWNERS["new_file"] = _records
