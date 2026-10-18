@@ -458,10 +458,12 @@ class BriefsTest(BrigadeTest):
 
     def test_the_runtime_still_states_the_bounded_wait(self):
         runtime = (ROOT / "t3/runtime.md").read_text()
-        self.assertIn("does not end its turn while a child is open", runtime)
+        waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
+        self.assertIn("does not end its turn while a child is open", waiting)
         self.assertIn("Decide completion by `workState` alone", runtime)
         self.assertIn("Its finished turn does not wake the launcher.", runtime)
         self.assertIn("interrupt with `t3_thread_interrupt`", runtime)
+        self.assertIn("[waiting.md](waiting.md)", runtime)
 
     def test_wait_rule_waits_out_an_ended_run(self):
         rule = runpy.run_path(str(SCRIPT))["WAIT_RULE"]

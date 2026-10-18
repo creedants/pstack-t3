@@ -1,0 +1,8 @@
+- kind polish
+- `t3/runtime.md` moves Delegation step 5 wait mechanics into `t3/added/pstack-runtime/waiting.md` and leaves a pointer at step 5
+- host adds Pre-0.1.0 nightlies under Older hosts listing the gates, and runtime and waiting point to Older hosts for the moved gates and keep their inline version lines for the wait mechanics.
+- `t3/runtime.md` collapses repeated on-demand read directives into one `## On-demand files` table
+- `t3/added/landing/SKILL.md` moves the pull request lifecycle and queue pause catalog into `t3/added/landing/pauses.md` and leaves a pointer
+- `t3/added/landing/SKILL.md` states a writer needs no lease on generated paths and `submit` leaves them out of the fingerprint and the lease check
+- `tests/brigade/test_briefs.py` checks the stay-open phrase in `t3/added/pstack-runtime/waiting.md` and keeps the other three phrases in `t3/runtime.md` with a link check
+- `t3/added/brigade/SKILL.md` states the in-review gate skips when lease, contract, or trunk ref is missing and refuses review on fetch, merge-base, or diff failure
