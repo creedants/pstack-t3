@@ -176,6 +176,6 @@ To close a restaurant, follow [Close a restaurant](opening.md#close-a-restaurant
 
 ## Reporting to an executive admin
 
-While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you act on an admin request or send that thread anything. Also read it when `$B inbox take` prints an admin request. Work a `from-user` request asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id.
+While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you act on an admin request or send that thread anything. Also read it when `$B inbox take` prints an admin request. An executive admin following a link here reads [admin-reporting.md](admin-reporting.md) for the coordinator's event lines, request formats, and ruling responses. Work a `from-user` request asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id.
 
 Admin work is in the [brigade-admin skill](../brigade-admin/SKILL.md): [Admin service](../brigade-admin/SKILL.md#admin-service), [Admin messages](../brigade-admin/SKILL.md#admin-messages), [Rulings](../brigade-admin/SKILL.md#rulings), and [What the admin never does](../brigade-admin/SKILL.md#what-the-admin-never-does).
