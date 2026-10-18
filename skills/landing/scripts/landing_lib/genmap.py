@@ -53,7 +53,16 @@ def map_rows(pairs, roots):
         made = _norm_item(root)
         if made:
             cleaned_roots.append(made)
-    for src_text, dst_text, kind in pairs:
+    for entry in pairs:
+        if len(entry) == 3:
+            src_text, dst_text, kind = entry
+            skip = False
+        elif len(entry) == 4:
+            src_text, dst_text, kind, skip = entry
+            if not isinstance(skip, bool):
+                raise seam.LandError("generated map kind must be copy or index")
+        else:
+            raise seam.LandError("generated map kind must be copy or index")
         src_made = _norm_item(src_text)
         dst_made = _norm_item(dst_text)
         if not src_made or not dst_made:
@@ -78,7 +87,7 @@ def map_rows(pairs, roots):
                 raise seam.LandError("generated map target sits outside the generated roots")
         elif not _inside_roots(dst_made, cleaned_roots):
             raise seam.LandError("generated map target sits outside the generated roots")
-        rows.append([src_made, dst_made, kind])
+        rows.append([src_made, dst_made, kind, bool(skip)])
     return rows
 
 
@@ -102,10 +111,26 @@ def parse_map(passed, roots):
         if not src_text or not dst_text:
             raise seam.LandError("generated map needs src and dst with no empty or dot parts")
         kind = "copy"
-        if dst_text.endswith("!"):
-            kind = "index"
-            dst_text = dst_text[:-1].strip()
-            if not dst_text:
-                raise seam.LandError("generated map needs src and dst with no empty or dot parts")
-        pairs.append((src_text, dst_text, kind))
+        skip = False
+        seen_bang = False
+        seen_caret = False
+        while True:
+            if dst_text.endswith("!") and not seen_bang:
+                kind = "index"
+                seen_bang = True
+                dst_text = dst_text[:-1].strip()
+                if not dst_text:
+                    raise seam.LandError("generated map needs src and dst with no empty or dot parts")
+                continue
+            if dst_text.endswith("^") and not seen_caret:
+                skip = True
+                seen_caret = True
+                dst_text = dst_text[:-1].strip()
+                if not dst_text:
+                    raise seam.LandError("generated map needs src and dst with no empty or dot parts")
+                continue
+            break
+        if dst_text.endswith("!") or dst_text.endswith("^"):
+            raise seam.LandError("generated map holds no duplicate marker")
+        pairs.append((src_text, dst_text, kind, skip))
     return map_rows(pairs, roots)

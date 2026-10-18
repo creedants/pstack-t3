@@ -284,6 +284,8 @@ def claim_paths(meta, paths, branch, doc_item=False):
         gen_map = generated.read(project_root)
     except KeyboardInterrupt:
         raise
+    except BrigadeError:
+        raise
     except Exception:
         gen_map = generated.EMPTY
     if not gen_map.rules:
