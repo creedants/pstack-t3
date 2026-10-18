@@ -12,7 +12,7 @@
 - status and status json output matches the prior shape while the limit is off
 - while the size limit is on and the trunk tip holds a baseline, the queue refuses a candidate baseline with a maximum or files map that cannot be read
 - while the size limit is on, the queue bounces a candidate baseline that does not parse with size baseline cannot be read
-- when HEAD holds a baseline, the staged check refuses an index baseline that does not parse with size baseline cannot be read
+- when HEAD holds a readable baseline, the staged check refuses an index baseline that does not parse with size baseline cannot be read
 - while the size limit is on and the trunk tip holds a baseline, the queue refuses a candidate file allowance below zero with size baseline cannot be read
 - the trusted policy records whether the committed baseline enabled it
 - while the contract sets a maximum the queue and staged and bridge comparisons keep the committed enabled marker when it is true
