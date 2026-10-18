@@ -33,6 +33,9 @@ COMMANDS = ("open", "set")
 
 
 def _json_setting(args, name, flag):
+    cached = f"_json_cache_{name}"
+    if hasattr(args, cached):
+        return getattr(args, cached)
     text = getattr(args, name)
     if text == "-":
         if sys.stdin.isatty():
@@ -41,23 +44,29 @@ def _json_setting(args, name, flag):
         setattr(args, name, raw)
         text = raw
         try:
-            return json.loads(text)
+            value = json.loads(text)
         except json.JSONDecodeError as error:
             raise BrigadeError(f"{flag} {error}") from error
+        setattr(args, cached, value)
+        return value
     stripped = text.strip()
     if stripped[:1] in ("{", "["):
         try:
-            return json.loads(text)
+            value = json.loads(text)
         except json.JSONDecodeError as error:
             raise BrigadeError(f"{flag} {error}") from error
+        setattr(args, cached, value)
+        return value
     try:
         raw = Path(stripped).read_text(encoding="utf-8")
     except OSError as error:
         raise BrigadeError(f"{flag} {error}") from error
     try:
-        return json.loads(raw)
+        value = json.loads(raw)
     except json.JSONDecodeError as error:
         raise BrigadeError(f"{flag} {error}") from error
+    setattr(args, cached, value)
+    return value
 
 
 def parse_doc_timebox(text):
