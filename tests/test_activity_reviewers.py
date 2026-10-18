@@ -64,7 +64,7 @@ class ReviewerGroupingTest(unittest.TestCase):
         fixture = self.fixture
         fixture.coordinator()
         fixture.unit("D7")
-        fixture.units[-1]["branch"] = "pstack-t3/d7"
+        fixture.units[-1]["branch"] = "pstack-t3/other"
         request = "brigade-kit-d7-verify-0a1b2c3"
         review = delegated(COORDINATOR, request)
         fixture.thread(review, parent=COORDINATOR, turns=(("completed", 40, 35),))

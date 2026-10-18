@@ -1234,7 +1234,7 @@ def unit_named(part, units):
 
 
 def assign(store, t3):
-    """One unit when its id or branch tail fills a hyphen or slash part, else none. RECORD wins."""
+    """One coordinator child unit when its id part or branch tail run matches one unit, else none. RECORD wins."""
     coordinators = frozenset(store.coordinators)
     units = {unit.id.lower(): unit.id for unit in store.units}
     tails = {}
@@ -1453,7 +1453,7 @@ def format_attempt(attempts, ranks, counts):
 
 
 def brief_attempt(ranks, counts):
-    """One bounded summary line for folded earlier attempts."""
+    """One summary line for folded earlier attempts."""
     tail = attempt_tail(counts)
     if not ranks:
         return tail
