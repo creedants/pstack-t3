@@ -511,6 +511,15 @@ def _head_sizes(repo, skip=()):
     return _commit_sizes(repo, "HEAD", names, skip)
 
 
+def _compare_base(trusted, base_raw, base_missing):
+    """Policy a candidate baseline is compared against. Callers pass the trunk base or HEAD. trusted is enabled with no error."""
+    maximum = trusted.limit.max_tokens if base_missing else base_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
+    base = {"maxFileTokens": maximum, "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+    if trusted.committed_enabled:
+        base["enabled"] = True
+    return base
+
+
 def size_report(path, staged, all_files, shrink, baseline):
     """Judge repo files and raise LandError for size violations."""
     repo = str(repo_root(path))
@@ -566,22 +575,7 @@ def size_report(path, staged, all_files, shrink, baseline):
                 if not head_missing:
                     raise seam.LandError("size baseline removes enabled policy; a person merges that raise outside the queue")
             else:
-                contract_on = isinstance(contract_max, int) and not isinstance(contract_max, bool) and contract_max >= 1
-                if contract_on:
-                    if not head_missing and isinstance(head_raw, dict):
-                        raw_max = head_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
-                        if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
-                            raw_max = trusted.limit.max_tokens
-                    else:
-                        raw_max = trusted.limit.max_tokens
-                    base_for_compare = {"maxFileTokens": raw_max,
-                                        "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
-                    if trusted.committed_enabled:
-                        base_for_compare["enabled"] = True
-                else:
-                    base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
-                                        "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
-                problem = seam.refused_policy_change(base_for_compare, index_raw, trusted.limit.max_tokens)
+                problem = seam.refused_policy_change(_compare_base(trusted, head_raw, head_missing), index_raw, trusted.limit.max_tokens)
                 if problem:
                     raise seam.LandError(problem)
             skip = tuple(seam.DEFAULT_SKIP) + tuple(trusted.limit.skip) + tuple(generated) + (baseline_rel,)
@@ -657,29 +651,13 @@ def check_candidate_size(store, base, candidate):
         return trusted.error
     if not trusted.enabled:
         return None
-    effective = trusted.limit.max_tokens
-    contract_on = isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 1
-    if contract_on:
-        if not base_missing and isinstance(base_raw, dict):
-            raw_max = base_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
-            if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
-                raw_max = effective
-        else:
-            raw_max = effective
-        base_for_compare = {"maxFileTokens": raw_max,
-                            "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
-        if trusted.committed_enabled:
-            base_for_compare["enabled"] = True
-    else:
-        base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
-                            "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
     cand_shown = seam.git("show", f"{candidate}:{baseline_rel}", cwd=repo, check=False)
     if cand_shown.returncode == 0:
         try:
             cand_obj = json.loads(cand_shown.stdout)
         except json.JSONDecodeError:
             return "size baseline cannot be read"
-        problem = seam.refused_policy_change(base_for_compare, cand_obj, effective)
+        problem = seam.refused_policy_change(_compare_base(trusted, base_raw, base_missing), cand_obj, trusted.limit.max_tokens)
         if problem:
             return problem
     elif not base_missing:

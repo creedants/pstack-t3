@@ -1,0 +1,5 @@
+- kind polish
+- `t3/added/landing/scripts/landing_lib/policy.py` builds the comparison base in one `_compare_base` helper shared by the staged path and the queue gate.
+- `scripts/size_limit.py` drops the unreachable raw maximum validity fallback and builds the compare base in one path with no behavior change.
+- `tests/test_check_size.py` pins the missing trunk report through the check CLI with a committed enabled baseline.
+- `tests/landing/test_size_staged.py` pins the staged deletion and staged disable refusals through a real process for exit status.
