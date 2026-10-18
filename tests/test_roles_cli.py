@@ -5282,3 +5282,29 @@ class ExcludeRefusalOwnerCliTest(unittest.TestCase):
             f"and {roles.EXCLUDE_RULE}, so inherit needs the catalog: "
             "call orchestrator_capabilities and rerun roles.py show --catalog",
         )
+
+
+class ExcludeUnionCliTest(unittest.TestCase):
+    """T967. The merged exclude list is the union of the user and project lists."""
+
+    def test_user_exclude_stays_excluded_when_project_has_own_exclude_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, fixture_catalog())
+            repo.put(repo.user, {
+                "version": 1,
+                "roles": {"bug-fix": [{"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5"}]},
+                "exclude": [{"model": "claude-opus-5-5"}],
+            })
+            repo.put(repo.project, {"exclude": [{"model": "grok-4.7"}]})
+            config = roles.merged_config(str(repo.directory), user_path=repo.user, project_path=repo.project)
+            completed = repo.run("validate", "--catalog", str(path), "--parent", "claudeAgent/claude-opus-5-5")
+        self.assertEqual(config["exclude"], ({"model": "claude-opus-5-5"}, {"model": "grok-4.7"}))
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        self.assertEqual(
+            completed.stdout,
+            "bug-fix: claudeAgent/claude-opus-5-5: "
+            f"claude-opus-5-5 matches exclude entry 1 (claude-opus-5-5), and {roles.EXCLUDE_RULE}\n",
+        )
