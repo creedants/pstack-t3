@@ -1994,6 +1994,18 @@ class SizeLimitBridgeTest(unittest.TestCase):
         candidate = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": ["fresh.py"]}
         self.assertEqual(sizes.refused_policy_change(base, candidate), "size baseline cannot be read")
 
+    def test_a_new_allowance_above_the_effective_ceiling_is_refused(self):
+        sizes = size_limit.load_sizes()
+        base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}
+        above = {"enabled": True, "maxFileTokens": 5000, "skip": [],
+                 "files": {"fresh.py": 4500}}
+        self.assertEqual(
+            sizes.refused_policy_change(base, above, 4000),
+            "size baseline adds a grandfathered file fresh.py; a person merges that raise outside the queue")
+        at_ceiling = {"enabled": True, "maxFileTokens": 5000, "skip": [],
+                      "files": {"fresh.py": 4000}}
+        self.assertIsNone(sizes.refused_policy_change(base, at_ceiling, 4000))
+
     def _git_repo(self, baseline, files=()):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root)

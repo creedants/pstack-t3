@@ -234,6 +234,25 @@ class LandingTest(LandingTestBase):
                   "--lease", "L1", "--reviewer", REVIEWER)
         self.assertEqual(self.land("land"), "landed E1 (r/D1)")
 
+    def test_a_new_allowance_above_the_effective_ceiling_bounces(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit(maximum=4000)
+        base_raw = json.loads((self.work / "size-baseline.json").read_text())
+        widened = dict(base_raw)
+        widened_files = dict(base_raw.get("files", {}))
+        widened_files["fresh.py"] = 4500
+        widened["files"] = widened_files
+        sha = self.worker("w1", {"size-baseline.json": json.dumps(widened, indent=2, sort_keys=True) + "\n"})
+        self.land("lease", "claim", "--holder", "r/D1", "--paths", "size-baseline.json")
+        self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha,
+                  "--lease", "L1", "--reviewer", REVIEWER)
+        reported = self.land("land")
+        self.assertIn("bounced E1 (r/D1)", reported)
+        self.assertIn("adds a grandfathered file fresh.py", reported)
+
     def test_a_nested_generated_root_lands_over_the_limit(self):
         self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh",
                   "--generated", "build/output", "--max-file-tokens", "5000")
