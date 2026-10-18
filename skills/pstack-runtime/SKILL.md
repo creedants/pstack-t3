@@ -13,10 +13,10 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 
 | File | Read when |
 | --- | --- |
-| [roles.md](roles.md) | before resolving seats or validating roles files |
+| [roles.md](roles.md) | before resolving seats, weighing seat agreement, writing or validating a roles file, or when `roles.py` prints a note the section does not explain |
 | [waiting.md](waiting.md) | before waiting on children |
-| [host.md](host.md) | when thread settles or snoozes or needs older host or history notes |
-| [threads.md](threads.md) | before `t3_thread_configure` and related calls |
+| [host.md](host.md) | when a thread settles, snoozes, or runs on an older host, before you install or locate skills, or for history notes |
+| [threads.md](threads.md) | before `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_fork`, `t3_thread_merge_back`, `run_scheduled_task_now`, or pausing a finite program's schedule |
 | [light.md](light.md) | before every spawn in light mode |
 | [gate-review.md](gate-review.md) | before reusing a gate verdict |
 | [failures.md](failures.md) | on usage limit or after restart |
@@ -282,7 +282,7 @@ Before you end a worktree turn that can settle, read [Settle on turn end](host.m
 Before you delegate a child that needs a chosen branch or a different base, read [Older hosts](host.md#older-hosts).
 
 - Read-only children share the current checkout.
-- On older hosts, see [Older hosts](host.md#older-hosts). A writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
+- On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating. On older hosts, see [Older hosts](host.md#older-hosts).
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
 - T3 storage cleanup can remove that worktree after the thread ends. See [Local state](#local-state).
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
@@ -375,7 +375,7 @@ Before you read Claude conversation history, read [History notes](host.md#histor
 
 - Find prior work: `t3_thread_search` with a topic, branch, or PR number. It covers the current project.
 - Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
-- Page long stored items with `itemId` and `textOffset`. On older hosts, see [Older hosts](host.md#older-hosts). Paging cannot recover the discarded suffix. Read `git diff <base>...<head>` in the worker's checkout for the whole change.
+- Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text, and paging cannot recover the discarded suffix. On older hosts, see [Older hosts](host.md#older-hosts). Read `git diff <base>...<head>` in the worker's checkout for the whole change.
 - A thread the user attached as context is readable even outside this project.
 - Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
 - `t3_thread_read` returns the thread's `worktreePath` and `branch`. `t3_thread_list` does not, so finding the threads bound to a worktree takes one read per thread. Threads from other projects are not visible.
@@ -413,7 +413,7 @@ pstack's `scripts/watch-pr` poll, a foreground `--watch`, and an interval tick t
 
 A child or launched thread can stall on a question for the user. `t3_pending_request_list` shows those and `t3_pending_request_read` shows one. Pass the child's `childThreadId`, or the launched thread's `threadId`, as `threadId` on `t3_pending_request_list`, `t3_pending_request_read`, and `t3_pending_request_respond`. Without `threadId` each tool acts on this thread. Answer with `t3_pending_request_respond` only from the brief and the facts and decisions the user already gave. Otherwise ask the user with the host's question tool, then answer. A playbook that parks decisions parks the question instead.
 
-On older hosts, see [Older hosts](host.md#older-hosts). The wake is a message that names the child's thread and the request ID. A question that blocks the child also ends a `mode: "wait"` call, per [Delegation](#delegation) step 5. A Codex child can ask without stopping, and its wake says it is still working. When the question no longer shows in `t3_pending_request_list`, someone answered or dismissed it, so send nothing. A task in `result_available` that completed or failed keeps its child's open questions. Do not answer one. Answering such a question sends a message to the child's thread and does not reopen the task. Give the answer to a fresh child per [Fresh children by default](#fresh-children-by-default).
+On older hosts, see [Older hosts](host.md#older-hosts). On T3 Code 0.0.46-nightly.20261015.3145 or later, the wake is a message that names the child's thread and the request ID. On T3 Code 0.0.46-nightly.20261015.3145 or later, a question that blocks the child also ends a `mode: "wait"` call, per [Older hosts](host.md#older-hosts). A Codex child can ask without stopping, and its wake says it is still working. When the question no longer shows in `t3_pending_request_list`, someone answered or dismissed it, so send nothing. A task in `result_available` that completed or failed keeps its child's open questions. Do not answer one. Answering such a question sends a message to the child's thread and does not reopen the task. Give the answer to a fresh child per [Fresh children by default](#fresh-children-by-default).
 
 Approval (permission) requests are not listed and cannot be answered by these tools. A child stalled on one looks idle in `task_status`. Avoid the stall: children inherit this thread's runtime mode, so a child that must run commands or edit needs a parent in a mode that allows it. If a child stalls anyway, tell the user which thread is waiting for approval. Never raise a child's `runtimeMode` to get around it.
 
