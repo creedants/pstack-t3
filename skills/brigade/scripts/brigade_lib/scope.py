@@ -201,7 +201,7 @@ def read_lease_list(project_root):
 
 
 def widen(restaurant, ident, add_text):
-    """Widen one dish lease in place. Claim new then record then release old."""
+    """Widen one dish lease. Claim new then record then release old."""
     wanted_raw = split_add(add_text)
     if not wanted_raw:
         raise BrigadeError("--add-paths takes comma-separated paths")
@@ -267,7 +267,7 @@ def widen(restaurant, ident, add_text):
 
 
 def gate_outside(restaurant, ident, sha):
-    """Coverage gate outside the lock. Return snapshot or None when no check applies."""
+    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract or trunk ref is missing or git step fails."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
     with restaurant.checked():
