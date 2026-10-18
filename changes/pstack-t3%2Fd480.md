@@ -1,0 +1,2 @@
+- kind polish
+- Every file under t3/added/brigade/scripts/brigade_lib/ and tests/brigade/ is under 5000 tokens (tokens = bytes // 4).
