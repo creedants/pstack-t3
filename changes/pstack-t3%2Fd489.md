@@ -1,0 +1,2 @@
+- kind polish
+- `activity.py` loads an `activity_lib` package with the same names and output
