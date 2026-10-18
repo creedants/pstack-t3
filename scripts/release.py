@@ -242,7 +242,8 @@ def refuse_unfinished_release():
     dirty = git("status", "--porcelain", "--untracked-files=all", "--", "CHANGELOG.md", "changes/", ARCHIVE)
     if dirty:
         undo = ARCHIVE_UNDO if ARCHIVE in dirty else UNDO
-        sys.exit("CHANGELOG.md or changes/ has uncommitted changes; commit them, "
+        scope = "CHANGELOG.md, changes/, or docs/changelog/" if ARCHIVE in dirty else "CHANGELOG.md or changes/"
+        sys.exit(f"{scope} has uncommitted changes; commit them, "
                  f"or run {undo} to undo an unfinished release:\n{dirty.rstrip()}")
 def take_kind(name, lines):
     if not lines or not lines[0].startswith("- "):
