@@ -43,7 +43,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -70,6 +70,9 @@ record the head chef thread, a schedule id, or the reporting level
 | `--round-budget N` |  |  |  | the send-backs that owe a round decision. Higher waits for more send-backs. "" clears it to 3 |
 | `--liveness-ms N` |  |  |  | the interval a new liveness schedule uses, a whole number of at least 60000; "" removes the setting |
 | `--change-note-dir DIR` |  |  |  | the repository-relative directory holding one change-note fragment per branch, such as changes; "" clears it, and an unset key leases no fragment |
+| `--affected-tests JSON` |  |  |  | JSON object or JSON file for the affectedTests layout; "" clears it; - reads stdin |
+| `--shared-docs JSON` |  |  |  | JSON list or JSON file for the sharedDocs catalog; "" clears it; - reads stdin |
+| `--doc-timebox N` |  |  |  | the shared-document timebox in minutes, a whole number of 1 or more; "" clears it to 90 |
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 
