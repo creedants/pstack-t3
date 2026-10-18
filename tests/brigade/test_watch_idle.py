@@ -200,3 +200,19 @@ class WatchIdleTest(BrigadeTest):
         out = self._watch_with_home(home)
         self.assertIn(f"D1: idle since {_local_of(completed)} with no report (thread thread-9)", out)
         self.assertNotIn("over its", out)
+
+    def test_missing_updated_at_prints_cannot_see_and_keeps_running(self):
+        self.open()
+        self.fire_one(timebox="60")
+        home = self._t3home()
+        path = _make_db(home, [("thread-9", "waiting", _stamp(70), None, _stamp(65))])
+        con = sqlite3.connect(str(path))
+        try:
+            con.execute("ALTER TABLE orchestration_v2_projection_threads DROP COLUMN updated_at")
+            con.commit()
+        finally:
+            con.close()
+        out = self._watch_with_home(home)
+        self.assertIn("cannot see worker runs:", out)
+        self.assertIn("D1: running 0m of 60m (thread thread-9)", out)
+        self.assertNotIn("idle since", out)
