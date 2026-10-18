@@ -512,7 +512,7 @@ def _head_sizes(repo, skip=()):
 
 
 def _compare_base(trusted, base_raw, base_missing):
-    """Trunk policy a candidate baseline is compared against. trusted is enabled with no error."""
+    """Policy a candidate baseline is compared against. Callers pass the trunk base or HEAD. trusted is enabled with no error."""
     maximum = trusted.limit.max_tokens if base_missing else base_raw.get("maxFileTokens", seam.DEFAULT_MAX_TOKENS)
     base = {"maxFileTokens": maximum, "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
     if trusted.committed_enabled:
