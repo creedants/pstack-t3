@@ -63,7 +63,7 @@
     "tests/landing/test_slot.py": 28013,
     "tests/test_activity.py": 89601,
     "tests/test_activity_render.py": 9466,
-    "tests/test_check.py": 24429,
+    "tests/test_check.py": 24633,
     "tests/test_install.py": 82156,
     "tests/test_ops.py": 14272,
     "tests/test_pstack_t3.py": 31508,

@@ -176,7 +176,7 @@ def refused_policy_change(base_raw, cand_raw):
     base_max = base_raw.get("maxFileTokens", DEFAULT_MAX_TOKENS)
     cand_max = cand_raw.get("maxFileTokens", DEFAULT_MAX_TOKENS)
     if isinstance(cand_max, bool) or not isinstance(cand_max, int) or cand_max < 1:
-        return None
+        return "size baseline cannot be read"
     if isinstance(base_max, int) and not isinstance(base_max, bool) and base_max >= 1:
         if cand_max > base_max:
             return "size baseline raises the maximum; a person merges that raise outside the queue"
@@ -185,7 +185,7 @@ def refused_policy_change(base_raw, cand_raw):
     if not isinstance(base_files, dict):
         base_files = {}
     if not isinstance(cand_files, dict):
-        return None
+        return "size baseline cannot be read"
     if isinstance(base_max, int) and not isinstance(base_max, bool) and base_max >= 1:
         base_ceiling = base_max
     else:

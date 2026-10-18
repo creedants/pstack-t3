@@ -1981,6 +1981,19 @@ class SizeLimitBridgeTest(unittest.TestCase):
                           [("build/output/big.py", 400)])
         self.assertEqual(size_limit.findings(root), [])
 
+    def test_a_candidate_maximum_that_cannot_be_parsed_is_refused(self):
+        sizes = size_limit.load_sizes()
+        base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}
+        candidate = {"enabled": True, "maxFileTokens": "lots", "skip": [],
+                     "files": {"fresh.py": 6000}}
+        self.assertEqual(sizes.refused_policy_change(base, candidate), "size baseline cannot be read")
+
+    def test_a_candidate_files_map_that_is_not_a_dict_is_refused(self):
+        sizes = size_limit.load_sizes()
+        base = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": {}}
+        candidate = {"enabled": True, "maxFileTokens": 5000, "skip": [], "files": ["fresh.py"]}
+        self.assertEqual(sizes.refused_policy_change(base, candidate), "size baseline cannot be read")
+
     def _git_repo(self, baseline, files=()):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root)
