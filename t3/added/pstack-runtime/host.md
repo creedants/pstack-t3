@@ -12,6 +12,17 @@ If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (n
 
 - An older host, or a child that needs a chosen branch or a different base, uses a worktree the parent creates before delegating with `git worktree add <path> -b <branch> <base>`. Omit `isolation`. The child's default working directory stays in the parent's checkout. The brief says "Work only in `<absolute worktree path>`. Use absolute paths under it for every read and edit, and prefix every command with `cd <absolute worktree path> &&`. Report the branch and head SHA." Check that the diff landed there and remove that worktree after integrating. A long-lived independent owner uses `t3_thread_launch` with a worktree strategy only where [Top-level threads](SKILL.md#top-level-threads) allows it.
 
+### Pre-0.1.0 nightlies
+
+- On T3 Code 0.0.46-nightly.20261015.3145 or later, a child's question for the user does wake this thread, per [Pending requests](SKILL.md#pending-requests).
+- On T3 Code 0.0.46-nightly.20261015.3145 or later it is `true` while a question blocks the child.
+- On T3 Code 0.0.46-nightly.20261015.3145 or later, a question that blocks the child also ends the wait, with `hasPendingQuestion: true` and `waitTimedOut: false`.
+- On T3 Code 0.0.46-nightly.20261008.2813 or later, a turn held in a stopped queue does not count, and startup recovery on that host repairs a task an older build left `working` behind a held queue.
+- On T3 Code 0.0.46-nightly.20261015.3145 or later, `task_status` also shows `hasPendingQuestion: true` while a question blocks the child.
+- On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
+- On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text.
+- On T3 Code 0.0.46-nightly.20261015.3145 or later, a delegated child's question wakes this thread.
+
 ## History notes
 
 - On T3 Code nightlies 20261012.3010 through 20261013.3042, Claude 5.1 or later can have pre-tool thinking stored as an assistant message, so the messages view can contain working notes as well as replies. On T3 Code nightlies 20261013.3053 through 20261014.3118, new native Claude thinking stays a reasoning item and is absent from the messages view. On T3 Code 0.0.46-nightly.20261014.3132 or later, a progress update that Claude 5.1 or later writes between tool calls is an assistant message. A lone thinking block before a tool call stays a reasoning item. Older threads can still contain assistant messages promoted before the upgrade.

@@ -9,6 +9,19 @@ pstack-t3 runs inside T3 Code. Every provider T3 drives (Claude, Codex, Grok, Cu
 
 Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or `mcp__t3_code__delegate_task`. The semantics are the same. If a T3 tool this skill names is not in your tool list, find it with the host's tool search when the host has one, and call it by the name the search returns. When the host has no tool search, call the tool directly. Start with `orchestrator_capabilities`, and do not conclude the tools are missing until a search or a direct call has failed. ACP agents that cannot see the tools use the terminal bridge in [ACP fallback](#acp-fallback).
 
+## On-demand files
+
+| File | Read when |
+| --- | --- |
+| [roles.md](roles.md) | before resolving seats or validating roles files |
+| [waiting.md](waiting.md) | before waiting on children |
+| [host.md](host.md) | when thread settles or snoozes or needs older host or history notes |
+| [threads.md](threads.md) | before `t3_thread_configure` and related calls |
+| [light.md](light.md) | before every spawn in light mode |
+| [gate-review.md](gate-review.md) | before reusing a gate verdict |
+| [failures.md](failures.md) | on usage limit or after restart |
+| [verification.md](verification.md) | before UI or device or CLI verification |
+
 ## Vocabulary
 
 | pstack says | In T3 |
@@ -16,7 +29,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | subagent, worker, delegate, reviewer, runner, judge | A child task created with `delegate_task`, owned by this thread. |
 | cloud worker | A child task. T3 children run on this machine, so they can reach local files, browsers, and auth. |
 | background, `run_in_background` | `delegate_task` with `mode: "async"`. |
-| wait for a worker | A thread with a schedule of its own ends the turn, and its completions wake it. Any other thread keeps a bounded wait with `t3_thread_wait`. Call `task_status` for a result mid-turn. See [Delegation](#delegation) step 5. |
+| wait for a worker | A thread with a schedule of its own ends the turn, and its completions wake it. Any other thread keeps a bounded wait with `t3_thread_wait`. Call `task_status` for a result mid-turn. See [waiting.md](waiting.md). |
 | cancel a worker | `task_cancel`. |
 | model slug, role model | A target `{providerInstanceId, model, options}` from `orchestrator_capabilities`, resolved through roles. See [Roles](#roles). |
 | `inherit-parent`, `auto` | `"inherit"`. Omit `target` so the child inherits this thread's provider, model, and options. |
@@ -59,17 +72,11 @@ A deadline or timebox sets the order of work. It never waives a step. This holds
 
      > Nobody resumes you after your turn ends, so a command left running in the background is lost. Run every long command in the foreground with a long enough timeout, for example a bash timeout of 600000 ms. If your shell moves a command to the background anyway, keep checking its output, with `sleep 60` between checks, until it finishes. Do not end your turn until your report is written.
 
-     When an OpenCode child's task is terminal and the report file its brief named is missing, the task is not finished. Read its activity with `t3_thread_read`. While a later turn on its thread still runs, wait on it per step 5. Otherwise handle it per [Failure handling](#failure-handling).
+     When an OpenCode child's task is terminal and the report file its brief named is missing, the task is not finished. Read its activity with `t3_thread_read`. While a later turn on its thread still runs, wait on it per [waiting.md](waiting.md). Otherwise handle it per [Failure handling](#failure-handling).
    - Use a stable `clientRequestId` so a retried call does not spawn a duplicate.
    - Retain every returned `taskId` in your todo list or work log.
 4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. When the role entry `roles.py show` printed for the child's seat has `haikuBrief`, paste its paragraphs unchanged, in order, at the end of the brief, per [Claude Haiku 5.5](#claude-haiku-55). A code-writing child inside a poteto-mode playbook opens with the poteto-agent persona body. Below it, paste unchanged the lines `python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" --playbook <name> --attempt <kind> [--brief-mode <value> | --session-mode light]` prints, per [Modes](#modes). They start with the `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`, and carry the required `Mode:` line. Write no `Playbook:` line of your own, because a second one fails the check. See [Resolve and carry the mode](#resolve-and-carry-the-mode) for the `Attempt:` and `Waived by mode:` lines. Copy the printed `Mode:` value into `--brief-mode` on the `roles.py show` call that seats the delegate, and pass no other mode flag. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged. A seat that matches this thread's model, or an edit that looks small, is not a `skip:` reason for the code delegate.
-5. Collect results.
-   - If nothing else in this turn depends on the results, and this thread has a schedule of its own that wakes it, end the turn. Each completion wakes this thread.
-   - A completion arrives only when the child's run ends. A child stalled on an approval request, or a run that stays open after its final message, never ends, so no wake comes. On T3 Code 0.0.46-nightly.20261015.3145 or later, a child's question for the user does wake this thread, per [Pending requests](#pending-requests). That wake queues behind this thread's active turn. Check for the question per [Failure handling](#failure-handling) while this turn stays open. A question that blocks the child also ends a `mode: "wait"` call, per the bullet below. That question sends no wake while the call blocks. An approval request still sends no wake. A thread with no schedule of its own, such as a worker running a brief, does not end its turn while a child is open. This holds even though the `delegate_task` tool text says to end the turn. A coordinator's liveness check is not this thread's schedule. Call `t3_thread_wait` on the child's `childThreadId` with `timeoutMs: 300000`. When it returns a terminal status, call `task_status` to read and acknowledge the result, because `t3_thread_wait` does not acknowledge it. When it returns `timedOut: true`, read the child with `t3_thread_read`, `view: "activity"`, and `afterPosition`. A child with no new item for 10 minutes is stalled. A child with a question that blocks it is not stalled, per [Failure handling](#failure-handling). Handle a stalled child per [Failure handling](#failure-handling), then wait on the next open child.
-   - A child with a final assistant message that holds the result the brief asked for, no pending tool or child run, and no new activity for two minutes is stalled. A message that says more work follows does not hold the result. A last message that says the child waits on a background command does not hold the result either, so this two-minute rule does not apply to it. After you see that message while the child's run is still open, call `t3_thread_wait` on the child's `childThreadId` with `timeoutMs: 120000`. Then read its activity again and call `task_status`. Handle it per [Failure handling](#failure-handling) only when the wait timed out, `workState` is still `working`, that message is still the last item, and no tool or child run is pending. Otherwise the 10-minute rule above decides that child.
-   - A child's run can end while its task stays open. A Claude child that leaves a background shell job running is one case. Then `t3_thread_wait` on its `childThreadId` returns at once, because an idle thread returns immediately, while `task_status` still reports `working` or `waiting_for_children`. Do not repeat that call. Wait with `t3_thread_wait` and `timeoutMs: 120000` on another open child whose run is still going. With none, wait on this thread's own run. Read the `activeRunId` of the `parentThreadId` from `orchestrator_capabilities` with `t3_thread_read`, and pass them as `threadId` and `runId`. Without `runId`, the call picks this thread's latest run, which can be a queued run already cancelled, and returns at once. This thread's run stays open during the call, so it returns `timedOut: true` after 120 seconds. Never wait with a shell `sleep`, which some harnesses refuse. After each wait, read the child with `t3_thread_read`, `view: "activity"`, and `afterPosition`, then call `task_status`. Count 10 minutes from the child's last activity item. A new item restarts the count, and a `task_status` check does not. A child with no new item for 10 minutes is stalled, even when its last message holds the result, because the two-minute rule above needs an open run. Handle it per [Failure handling](#failure-handling). When its run starts again, go back to the waits above.
-   - If you need a result now, call `task_status` with the `taskId`. Reading a terminal result this way acknowledges it, so no completion notification follows. Process that result immediately, as if the notification had arrived. `workState: "result_available"` means done, and `summary` holds the result. `working` and `waiting_for_children` mean not done. `hasPendingChildRuns` does not change that. `hasPendingQuestion` does not change it either. On T3 Code 0.0.46-nightly.20261015.3145 or later it is `true` while a question blocks the child. See [Pending requests](#pending-requests). See [Failure handling](#failure-handling). Do not busy-poll. Do other work between checks.
-   - `mode: "wait"` blocks for at most `timeoutMs`, ten minutes by default. Use it only for short children whose result gates the very next step. `waitTimedOut: true` does not cancel the child. Keep the `taskId`. On T3 Code 0.0.46-nightly.20261015.3145 or later, a question that blocks the child also ends the wait, with `hasPendingQuestion: true` and `waitTimedOut: false`. The task is still open. Answer the question per [Pending requests](#pending-requests). The task's completion still wakes this thread.
+5. Collect results. Read [waiting.md](waiting.md) before you wait on a child.
 6. You own every child's output. Read the diff or the evidence yourself before you report it. A child's "done" is a claim, not a verification.
 
 Same-provider native subagent tools (Claude's Agent tool, Codex's subagents) are fine for an `inherit` seat when they run the parent's model. Use `delegate_task` for every other seat, including same-provider seats on another model. Never substitute a top-level thread for a child task.
@@ -83,14 +90,14 @@ Children inherit this thread's runtime mode and interaction mode. Omit `runtimeM
 - A target is rejected: call `orchestrator_capabilities`, then fall back per [Roles](#roles), and say which seat changed and why.
 - A child fails or returns nothing usable: proceed with N-1 and record the dropout. Respawn once with a fresh child for a required slice. Never resume a failed child to fix its own work. When the failure carries a provider error, follow the next bullet before that respawn. A failure that reads `Killed: out of memory.` is an out-of-memory kill that T3 reports. Lower the load before you respawn that child. Run fewer children at once, or run builds through the slot in [Local command capacity](#local-command-capacity). Report a second kill as a blocker.
 - Check a usage limit only for a failed child that did not return the brief's result. When a failed child's error names a usage limit, follow [failures.md](failures.md#usage-limit) before you respawn it.
-- `hasPendingChildRuns` on `task_status` does not mean the child is still running. It reports later turns on the child's thread, even after the task ended, and it does not reopen the task, including a turn you start with `t3_thread_send`. Decide completion by `workState` alone. On T3 Code 0.0.46-nightly.20261008.2813 or later, a turn held in a stopped queue does not count, and startup recovery on that host repairs a task an older build left `working` behind a held queue.
-- A stalled child (see [Delegation](#delegation) step 5): first call `t3_pending_request_list` with the child's `childThreadId` as `threadId`. On T3 Code 0.0.46-nightly.20261015.3145 or later, `task_status` also shows `hasPendingQuestion: true` while a question blocks the child. A child with a question that blocks it waits on an answer and is not stalled. Answer it per [Pending requests](#pending-requests), and count its 10 minutes again from the answer. Otherwise read its last items. When its last assistant message holds the result the brief asked for, use that message as the result and call `task_cancel` on the task. When its last item is an approval request that is still waiting, call `task_cancel` and respawn once with no `runtimeMode`. Otherwise call `task_cancel` and respawn once for a required slice.
+- `hasPendingChildRuns` on `task_status` does not mean the child is still running. It reports later turns on the child's thread, even after the task ended, and it does not reopen the task, including a turn you start with `t3_thread_send`. Decide completion by `workState` alone. On older hosts, see [Older hosts](host.md#older-hosts).
+- A stalled child (see [Delegation](#delegation) step 5): first call `t3_pending_request_list` with the child's `childThreadId` as `threadId`. On older hosts, see [Older hosts](host.md#older-hosts). A child with a question that blocks it waits on an answer and is not stalled. Answer it per [Pending requests](#pending-requests), and count its 10 minutes again from the answer. Otherwise read its last items. When its last assistant message holds the result the brief asked for, use that message as the result and call `task_cancel` on the task. When its last item is an approval request that is still waiting, call `task_cancel` and respawn once with no `runtimeMode`. Otherwise call `task_cancel` and respawn once for a required slice.
 
 ### Fresh children by default
 
 Give new work to a fresh child with consolidated scope: the original brief, every later directive, and the prior child's report and branch. Message an existing child thread (`t3_thread_send`) only when the new work strictly needs state that lives with it, such as uncommitted changes in its worktree or a dev server it runs.
 
-A `t3_thread_send` to a child whose task has already published its result can start a separate task for that message. Read the send result for a `taskId`. When it carries one, retain it and collect that task per [Delegation](#delegation) step 5. Its `summary` holds the answer, and the original task's `summary` does not change. When the result carries no `taskId`, wait with `t3_thread_wait` on the `childThreadId` and read the answer with `t3_thread_read`.
+A `t3_thread_send` to a child whose task has already published its result can start a separate task for that message. Read the send result for a `taskId`. When it carries one, retain it and collect that task per [waiting.md](waiting.md). Its `summary` holds the answer, and the original task's `summary` does not change. When the result carries no `taskId`, wait with `t3_thread_wait` on the `childThreadId` and read the answer with `t3_thread_read`.
 
 ## Roles
 
@@ -149,17 +156,11 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 
 ### Built-in defaults
 
-Before you resolve a role's seats or weigh agreement between seats, read [roles.md](roles.md).
-
-Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
-
 There are no built-in model picks. A role set in no roles file resolves to `"inherit"`, with the note `unset in roles.json, so it inherits this thread's seat; run setup to choose a seat`. When the exclude list refuses the inherited parent, the role resolves to what [Excluded seats](roles.md#excluded-seats) gives instead, and it carries no unset note. The one exception is `review backups`, which stays `"unset"` with its own note. `roles.py show` owns this mapping. A skill must not rebuild it.
 
 A model family is the leading word of the model ID after the normalizer runs. `claude-opus-5-5` is `claude`, `gpt-6.1-sol` is `gpt`, and `grok-4.7` is `grok`. The normalizer in [roles.md](roles.md#claude-haiku-55) runs first, so `us.anthropic.claude-sonnet-5-5-v1:0` is `claude`. Diversity rules compare families, never providers, because one provider can serve another's models.
 
 ### Excluded seats
-
-Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
 The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with at least one of `model` (a glob), `options` (an object of option key to value), `provider` (a glob on the provider instance id), and `roles` (a list of role names the rule applies to; an absent `roles` applies to every role). The merged exclude list is the union of the user and project lists. User rules come first, then project rules not already present. A string entry is refused. A rule holds when every part holds. A model glob matches the seat's bare id or its normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model. A seat the exclude list refuses is refused in each place a new seat is chosen. Those places are a configured role seat, a backup candidate, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses this seat for this role`.
 
@@ -169,13 +170,9 @@ The Cursor `skill tests` rule stays, for a technical cause: the cursor driver ca
 
 ### Budget
 
-Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
-
 The config may carry `"budget"`: `default`, `small`, `medium`, `large`, or `unlimited`. It caps the reasoning option of every seat that has one at `medium`, `high`, `xhigh`, or the highest level at or below `max`, or the closest lower value the model offers. `default` leaves options alone. `ultracode` and `ultrathink` are never chosen by a budget.
 
 ### Fallback
-
-Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
 There is no built-in order. A configured seat whose provider is not runnable, or whose model is not in the catalog, falls back on its own. A configured seat the exclude list refuses never takes this path. A `review backups` seat never takes it either. `show` drops a `review backups` seat with a note instead. [Excluded seats](#excluded-seats) says how each command handles it.
 
@@ -184,8 +181,6 @@ There is no built-in order. A configured seat whose provider is not runnable, or
 3. Say which seat changed and why. Never silently drop a seat, because the seat count is the panel size.
 
 ### Claude Haiku 5.5
-
-Read [roles.md](roles.md) before you write or validate a roles file, or when `roles.py` prints a note this section does not explain.
 
 No role uses Claude Haiku 5.5 by default. When a role's resolved seat runs Haiku 5.5 by normalized model id, `roles.py show` prints the Haiku 5.5 brief as `haikuBrief` on that role entry. An `inherit` seat on a Haiku 5.5 thread counts too. Paste it per [Delegation](#delegation) step 4.
 
@@ -228,8 +223,6 @@ Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` an
 ### Light behavior
 
 In light mode, run the row for the spawn you are about to make. A step its row does not change runs as the skill says. A smaller fan-out in a row is how that step runs, not a waiver. Waived steps come only from the brief's `Waived by mode:` line, which `roles.py mode` prints from `LIGHT_WAIVERS`. Never add a waiver of your own. No light fan-out wave has more than 3 children in flight. A wave with more slices batches them into 3 briefs and keeps every slice covered.
-
-In light mode, read [light.md](light.md) before every spawn and run the row for that spawn.
 
 A send-back in light mode is a fix attempt with a fresh worker. Its brief carries the findings, the old head, and the `Attempt: fix` lines `roles.py mode` prints.
 
@@ -284,14 +277,12 @@ When light mode applies, say so once, at the start, in two or three short senten
 
 Two writers never share a checkout (principle-separate-before-serializing-shared-state).
 
-Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
-
 Before you end a worktree turn that can settle, read [Settle on turn end](host.md#settle-on-turn-end).
 
 Before you delegate a child that needs a chosen branch or a different base, read [Older hosts](host.md#older-hosts).
 
 - Read-only children share the current checkout.
-- On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
+- On older hosts, see [Older hosts](host.md#older-hosts). A writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See below.
 - T3 storage cleanup can remove that worktree after the thread ends. See [Local state](#local-state).
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
@@ -306,8 +297,6 @@ Children, launched threads, and this thread run on this machine, so their builds
 ## Top-level threads
 
 Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade). Invoking those is that request. Everything else uses child tasks.
-
-Before you call `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_fork`, `t3_thread_merge_back`, or `run_scheduled_task_now`, or pause a finite program's schedule, read its section in [threads.md](threads.md).
 
 ```json
 {
@@ -333,15 +322,11 @@ Before you call `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_f
 
 ### Forks
 
-Before you call `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_fork`, `t3_thread_merge_back`, or `run_scheduled_task_now`, or pause a finite program's schedule, read its section in [threads.md](threads.md).
-
 `t3_thread_fork` starts a new top-level thread from another thread's context. `t3_thread_merge_back` moves context between related threads in one project. Use them only for the cases [Forks](threads.md#forks) allows. A fork never stands in for a child task, an Orchestrate sub-coordinator, or a fresh review round, and `task_status` does not apply to it. Read the fork with `t3_thread_read` for its `worktreePath`, `branch`, and `activeRunId` before you send anything. Treat a checkout it shares with another thread as read-only. Writers stay isolated per [Isolation](#isolation).
 
 ## Scheduling
 
 `schedule_task` creates recurring work in T3's scheduler. It runs even when no turn is active, so it replaces `/loop`, Cursor automations, and hourly ticks.
-
-Before you call `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_fork`, `t3_thread_merge_back`, or `run_scheduled_task_now`, or pause a finite program's schedule, read its section in [threads.md](threads.md).
 
 ```json
 {"title": "autopilot tick", "prompt": "<self-contained tick prompt>", "schedule": {"type": "interval", "everyMs": 3600000}, "clientRequestId": "<skill>-<slug>-tick"}
@@ -367,8 +352,6 @@ After a T3 restart, or when you resume work after one, follow [failures.md](fail
 
 ## Verification surfaces
 
-Before you verify a change in a UI, on a device, or in a CLI, read [verification.md](verification.md) and use the surface it names.
-
 A project `verify-*` skill beats all of these when one exists.
 
 ## Visual reports
@@ -386,15 +369,13 @@ A rendered page is a reply the user reads, even with no reply text. Render none 
 
 ## History
 
-Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
-
 Before you use a saved transcript file from another environment, read [History notes](host.md#history-notes).
 
 Before you read Claude conversation history, read [History notes](host.md#history-notes).
 
 - Find prior work: `t3_thread_search` with a topic, branch, or PR number. It covers the current project.
 - Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
-- Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text. Paging cannot recover the discarded suffix. Read `git diff <base>...<head>` in the worker's checkout for the whole change.
+- Page long stored items with `itemId` and `textOffset`. On older hosts, see [Older hosts](host.md#older-hosts). Paging cannot recover the discarded suffix. Read `git diff <base>...<head>` in the worker's checkout for the whole change.
 - A thread the user attached as context is readable even outside this project.
 - Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
 - `t3_thread_read` returns the thread's `worktreePath` and `branch`. `t3_thread_list` does not, so finding the threads bound to a worktree takes one read per thread. Threads from other projects are not visible.
@@ -422,7 +403,7 @@ Call `unwatch_pull_request` when this thread stops driving the PR and hands that
 
 A merge ends the watch and does not wake the thread. A close ends the watch and does wake the thread. Watching also ends when the thread settles or is archived, when the user stops the thread, or when you call `unwatch_pull_request`. It also ends when T3 fails to read the PR 8 times in a row. A host rate limit only delays the next read. A watch ends after 10 wakes in a row that bring only comments, and that end posts a wake. Call `watch_pull_request` again after that wake when the loop is still running.
 
-Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills. Never settle an owner whose PR watch or `schedule_task` loop is still needed, because settling ends the watch.
+Never settle an owner whose PR watch or `schedule_task` loop is still needed, because settling ends the watch.
 
 pstack's `scripts/watch-pr` poll, a foreground `--watch`, and an interval tick that waits for CI, a review, or a conflict all become this call. The forge commands that classify a verdict stay. Run them after a wake. They are not the wait.
 
@@ -432,7 +413,7 @@ pstack's `scripts/watch-pr` poll, a foreground `--watch`, and an interval tick t
 
 A child or launched thread can stall on a question for the user. `t3_pending_request_list` shows those and `t3_pending_request_read` shows one. Pass the child's `childThreadId`, or the launched thread's `threadId`, as `threadId` on `t3_pending_request_list`, `t3_pending_request_read`, and `t3_pending_request_respond`. Without `threadId` each tool acts on this thread. Answer with `t3_pending_request_respond` only from the brief and the facts and decisions the user already gave. Otherwise ask the user with the host's question tool, then answer. A playbook that parks decisions parks the question instead.
 
-On T3 Code 0.0.46-nightly.20261015.3145 or later, a delegated child's question wakes this thread. The wake is a message that names the child's thread and the request ID. A question that blocks the child also ends a `mode: "wait"` call, per [Delegation](#delegation) step 5. A Codex child can ask without stopping, and its wake says it is still working. When the question no longer shows in `t3_pending_request_list`, someone answered or dismissed it, so send nothing. A task in `result_available` that completed or failed keeps its child's open questions. Do not answer one. Answering such a question sends a message to the child's thread and does not reopen the task. Give the answer to a fresh child per [Fresh children by default](#fresh-children-by-default).
+On older hosts, see [Older hosts](host.md#older-hosts). The wake is a message that names the child's thread and the request ID. A question that blocks the child also ends a `mode: "wait"` call, per [Delegation](#delegation) step 5. A Codex child can ask without stopping, and its wake says it is still working. When the question no longer shows in `t3_pending_request_list`, someone answered or dismissed it, so send nothing. A task in `result_available` that completed or failed keeps its child's open questions. Do not answer one. Answering such a question sends a message to the child's thread and does not reopen the task. Give the answer to a fresh child per [Fresh children by default](#fresh-children-by-default).
 
 Approval (permission) requests are not listed and cannot be answered by these tools. A child stalled on one looks idle in `task_status`. Avoid the stall: children inherit this thread's runtime mode, so a child that must run commands or edit needs a parent in a mode that allows it. If a child stalls anyway, tell the user which thread is waiting for approval. Never raise a child's `runtimeMode` to get around it.
 
@@ -452,8 +433,6 @@ This is the supported transport, not a shell substitute for delegation.
 If neither the tools nor the ACP bridge exist, you are not running in T3. Use the host's native subagents on inherited models, run panels sequentially if needed, and state that model diversity and scheduling were unavailable.
 
 ## Skill locations
-
-Read [host.md](host.md) when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
 
 Before you write a child brief that needs a specific MCP server, read [Skill locations](host.md#skill-locations).
 
