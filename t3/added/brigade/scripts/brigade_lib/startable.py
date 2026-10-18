@@ -114,8 +114,8 @@ def plan(tickets, refill, running, cap, level, refusals, now, low_reserve, expan
 def lease_refusals(meta, tickets):
     """The block on a waiting ticket's paths, or nothing when the landing queue would admit them.
 
-    The claim carries the ticket's saved paths and, when the contract lists generated paths, the generated copies the
-    map gives for them. That is the claim `fire` builds for the same paths, minus the change note. The note is
+    The claim carries the ticket's saved paths and, when the contract lists generated paths and a map, the generated
+    copies the map gives for them. That is the claim `fire` builds for the same paths, minus the change note. The note is
     named for the branch a `fire` runs on, which the preview does not know, so the preview passes no branch and
     claims no fragment. A guessed note would block a ticket whose paths are free.
     """
