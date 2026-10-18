@@ -255,8 +255,7 @@ def widen(restaurant, ident, add_text):
                 made = raw.strip().replace("\\", "/").lstrip("/")
             if made not in new_canonical:
                 new_canonical.append(made)
-        if new_canonical and all(covered(path, old_canonical) for path in new_canonical):
-            return f"{ident}: {old_lease} already covers {','.join(wanted_raw)}"
+        already = bool(new_canonical and all(covered(path, old_canonical) for path in new_canonical))
         union = old_paths + "," + ",".join(wanted_raw) if old_paths else ",".join(wanted_raw)
         claim = claim_paths(meta, union, branch, doc_item)
         plan = WidenPlan(old_lease, old_paths, claim.text)
@@ -266,6 +265,8 @@ def widen(restaurant, ident, add_text):
             f"{ident}: {plan.old_lease} is submitted, so it cannot take {','.join(wanted_raw)}; "
             "the submitted commit lands as it is"
         )
+    if already and states.get(plan.old_lease) == "active":
+        return f"{ident}: {plan.old_lease} already covers {','.join(wanted_raw)}"
     if not plan.claim:
         raise BrigadeError(f"{ident}: widen claims nothing")
     try:
