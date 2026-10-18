@@ -161,9 +161,11 @@ def refused_heartbeat(flag, value, floor):
 
 
 def heartbeat_note(contract):
-    """The heartbeat intervals for repo status. Always present."""
+    """The heartbeat intervals for repo status. Empty when both intervals hold their defaults."""
     every = contract.get("heartbeatMs", HEARTBEAT_MS)
     merge = contract.get("mergeHeartbeatMs", MERGE_HEARTBEAT_MS)
+    if every == HEARTBEAT_MS and merge == MERGE_HEARTBEAT_MS:
+        return ""
     return f"heartbeat everyMs {every} merge wait {merge}"
 
 

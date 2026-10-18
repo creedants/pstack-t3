@@ -459,7 +459,7 @@ class LandingTest(LandingTestBase):
         self.land("lease", "claim", "--holder", "r/D1", "--paths", "a.txt")
         with mock.patch.dict(os.environ, {"PATH": f"{wrapper}:{os.environ['PATH']}"}):
             self.land("submit", "--holder", "r/D1", "--branch", "w1", "--sha", sha, "--lease", "L1", "--reviewer", REVIEWER, ok=False)
-        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1. author policy: any heartbeat everyMs 3600000 merge wait 900000")
+        self.assertEqual(self.land("status"), "push mode onto refs/remotes/origin/main. leases held: 1. author policy: any")
 
     def test_a_policy_rejection_pauses_the_queue_after_one_check_run(self):
         self.land("init", "--trunk", "main", "--mode", "auto", "--check", f"echo run >> {self.base}/runs")
@@ -675,11 +675,11 @@ class LandingTest(LandingTestBase):
             db.commit()
         self.assertNotIn("pr item line", self.land("status"))
 
-    def test_a_first_init_stores_the_heartbeat_defaults_and_status_prints_them(self):
+    def test_a_first_init_stores_the_heartbeat_defaults_and_status_omits_the_heartbeat(self):
         self.init(mode="push")
         self.assertEqual(self.stored_heartbeat_ms(), "3600000")
         self.assertEqual(self.stored_merge_heartbeat_ms(), "900000")
-        self.assertIn("heartbeat everyMs 3600000 merge wait 900000", self.land("status"))
+        self.assertNotIn("heartbeat", self.land("status"))
 
     def test_a_rerun_without_the_heartbeat_flags_keeps_the_stored_intervals(self):
         self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
@@ -720,13 +720,18 @@ class LandingTest(LandingTestBase):
                               **{flag: True})
         self.assertEqual(list((self.base / "state").glob("pstack-t3/landing/*/land.db")), [])
 
-    def test_deleted_heartbeat_keys_read_as_the_defaults_in_status(self):
+    def test_deleted_heartbeat_keys_leave_status_without_a_heartbeat(self):
         self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
                   "--heartbeat-ms", "7200000", "--merge-heartbeat-ms", "1800000")
         with self.raw_db() as db:
             db.execute("DELETE FROM contract WHERE key IN ('heartbeatMs', 'mergeHeartbeatMs')")
             db.commit()
-        self.assertIn("heartbeat everyMs 3600000 merge wait 900000", self.land("status"))
+        self.assertNotIn("heartbeat", self.land("status"))
+
+    def test_setting_only_the_fallback_still_names_both_intervals(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                  "--heartbeat-ms", "7200000")
+        self.assertIn("heartbeat everyMs 7200000 merge wait 900000", self.land("status"))
 
     def test_a_sole_store_without_a_matching_record_leaves_the_submitted_body_alone(self):
         """Pin review finding D255-review-1 R1. A sole foreign store must not lend its kind and goal."""

@@ -297,7 +297,7 @@ class LandingTest(LandingTestBase):
     def test_status_shows_the_identity_pause_after_the_counts(self):
         reason = self.land_one_then_pause_as_audit()
         self.assertEqual(self.land("status"),
-                         f"push mode onto refs/remotes/origin/main. landed: 1, queued: 1, leases held: 1. Paused: {reason} author policy: credited heartbeat everyMs 3600000 merge wait 900000")
+                         f"push mode onto refs/remotes/origin/main. landed: 1, queued: 1, leases held: 1. Paused: {reason} author policy: credited")
 
     def test_resume_after_an_identity_pause_lets_land_run_and_store_the_new_pair_and_a_change_back_pauses_against_the_new_pair(self):
         self.land_one_then_pause_as_audit()
@@ -441,7 +441,7 @@ class LandingTest(LandingTestBase):
         for value in (str(self.work), ".."):
             with self.subTest(value=value):
                 sh("git", "config", "core.worktree", value, cwd=self.work)
-                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any heartbeat everyMs 3600000 merge wait 900000\n", ""))
+                self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_a_relative_core_worktree_that_names_a_missing_directory_stops_status(self):
         self.init()
@@ -455,14 +455,14 @@ class LandingTest(LandingTestBase):
         sh("git", "config", "core.worktree", "../gone", cwd=self.work)
         command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
         subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any heartbeat everyMs 3600000 merge wait 900000\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_the_last_core_worktree_value_decides(self):
         self.init(author_policy=None)
         gone = self.base / "gone"
         sh("git", "config", "--add", "core.worktree", str(gone), cwd=self.work)
         sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(self.work), cwd=self.base)
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any heartbeat everyMs 3600000 merge wait 900000\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
         sh("git", "config", "--file", str(self.work / ".git" / "config"), "--add", "core.worktree", str(gone), cwd=self.base)
         self.assertEqual(self.run_land(self.work, "status"), (1, "", self.stray_worktree_line(gone)))
 
@@ -482,7 +482,7 @@ class LandingTest(LandingTestBase):
         sh("git", "config", "core.worktree", str(self.work) + "\n", cwd=self.work)
         command = self.run_land(self.work, "status")[2].rstrip("\n").split("remove it with ", 1)[1]
         subprocess.run(command, shell=True, cwd=self.work, check=True, env=os.environ.copy())
-        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any heartbeat everyMs 3600000 merge wait 900000\n", ""))
+        self.assertEqual(self.run_land(self.work, "status"), (0, "push mode onto refs/remotes/origin/main. empty. author policy: any\n", ""))
 
     def test_a_core_worktree_with_a_carriage_return_is_not_judged_as_the_directory_with_a_newline_there(self):
         self.init()
