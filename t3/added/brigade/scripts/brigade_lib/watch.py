@@ -10,6 +10,7 @@ import posixpath
 import re
 import runpy
 import shlex
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -150,6 +151,187 @@ def handoff_size_line(directory):
     return f"handoff.md is {size} bytes. Rewrite its current-state section in place and move the old text to an archive file."
 
 
+def _store_name(common):
+    """The landing directory name for one git common directory."""
+    base = common.parent.name if common.name == ".git" else common.name.removesuffix(".git")
+    safe = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
+    return safe + "-" + hashlib.sha1(str(common).encode()).hexdigest()[:8]
+
+
+def _contract_trunk(project_root):
+    """The trunk branch and the landing mode for one project root or None."""
+    root = str(project_root or "")
+    if not root:
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=root, capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            raise OSError(proc.stderr.strip())
+        common = Path(proc.stdout.strip())
+        base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")
+        db_path = Path(base) / "pstack-t3" / "landing" / _store_name(common) / "land.db"
+        con = sqlite3.connect(str(db_path), timeout=5)
+        try:
+            rows = dict(con.execute("SELECT key, value FROM contract").fetchall())
+        finally:
+            con.close()
+        trunk = json.loads(rows["trunk"]) if "trunk" in rows else None
+        mode = json.loads(rows["mode"]) if "mode" in rows else None
+        if mode == "auto":
+            mode = "push"
+        if not trunk or not mode:
+            raise ValueError("missing trunk")
+        return (trunk, mode)
+    except Exception:
+        pass
+    try:
+        result = seam.land_result(root, "status")
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    text = (result.stdout or "").strip()
+    match = re.search(r"^(\S+) mode onto (\S+)", text)
+    if not match:
+        return None
+    mode, ref = match.group(1), match.group(2).rstrip(".")
+    if mode == "auto":
+        mode = "push"
+    trunk = ref.rsplit("/", 1)[-1] if "/" in ref else ref
+    if not trunk or not mode:
+        return None
+    return (trunk, mode)
+
+
+def _gh_runs(project_root, trunk):
+    """The gh run list for one trunk or an error reason."""
+    try:
+        result = subprocess.run(
+            ["gh", "run", "list", "--branch", trunk, "--limit", "5",
+             "--json", "conclusion,status,headSha,createdAt,url,workflowName"],
+            cwd=str(project_root), capture_output=True, text=True, timeout=20)
+    except FileNotFoundError:
+        return None, "gh not found"
+    except subprocess.TimeoutExpired:
+        return None, "gh timed out"
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip().splitlines()
+        reason = err[-1] if err else "exit %d" % result.returncode
+        return None, reason
+    try:
+        runs = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as error:
+        return None, "bad JSON %s" % error.msg
+    if not isinstance(runs, list):
+        return None, "bad JSON not a list"
+    return runs, ""
+
+
+def _is_completed(run):
+    """True when one gh run row counts as completed."""
+    if run.get("status") == "completed":
+        return True
+    conclusion = run.get("conclusion")
+    return conclusion is not None and conclusion != ""
+
+
+def _latest_trunk(rows):
+    """The latest trunk log row as a small dict or None."""
+    found = None
+    for row in rows:
+        if row.get("kind") == "trunk":
+            found = row
+    if found is None:
+        return None
+    state = found.get("state")
+    ident = found.get("id")
+    note = found.get("note") or ""
+    if state == "red":
+        try:
+            data = json.loads(note)
+            if isinstance(data, dict):
+                return {"id": ident, "state": "red", "sha": data.get("sha", ""),
+                        "workflow": data.get("workflow", ""), "url": data.get("url", ""),
+                        "since": data.get("since", "")}
+        except Exception:
+            pass
+        return {"id": ident, "state": "red", "sha": "", "workflow": "", "url": note, "since": ""}
+    if state == "green":
+        try:
+            data = json.loads(note)
+            if isinstance(data, dict) and "sha" in data:
+                return {"id": ident, "state": "green", "sha": data.get("sha", "")}
+        except Exception:
+            pass
+        return {"id": ident, "state": "green", "sha": note}
+    if state == "unseen":
+        try:
+            data = json.loads(note)
+            if isinstance(data, dict) and "reason" in data:
+                return {"id": ident, "state": "unseen", "reason": data.get("reason", "")}
+        except Exception:
+            pass
+        return {"id": ident, "state": "unseen", "reason": note}
+    return None
+
+
+def _observe_trunk(project_root, latest):
+    """The trunk watch line and the log row to write or Nones."""
+    contract = _contract_trunk(project_root)
+    if contract is None:
+        return None, None
+    trunk, mode = contract
+    if mode == "local":
+        return None, None
+    runs, error = _gh_runs(project_root, trunk)
+    if runs is None:
+        reason = error or "gh failed"
+        line = "cannot see trunk CI: %s" % reason
+        if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
+            return line, None
+        return line, (trunk, "unseen", reason)
+    completed = None
+    for run in runs:
+        if _is_completed(run):
+            completed = run
+            break
+    if completed is None:
+        reason = "no completed runs"
+        line = "cannot see trunk CI: %s" % reason
+        if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
+            return line, None
+        return line, (trunk, "unseen", reason)
+    conclusion = completed.get("conclusion") or ""
+    sha = completed.get("headSha") or ""
+    if conclusion == "failure":
+        newest_workflow = completed.get("workflowName") or ""
+        newest_url = completed.get("url") or ""
+        since = completed.get("createdAt") or ""
+        for run in runs:
+            if not _is_completed(run):
+                continue
+            if (run.get("conclusion") or "") != "failure":
+                break
+            if run.get("createdAt"):
+                since = run.get("createdAt")
+        line = "trunk CI failing since %s: %s %s" % (since, newest_workflow, newest_url)
+        note = json.dumps({"sha": sha, "workflow": newest_workflow, "url": newest_url, "since": since})
+        if latest and latest.get("id") == trunk and latest.get("state") == "red" and latest.get("sha") == sha:
+            return line, None
+        return line, (trunk, "red", note)
+    if conclusion == "success":
+        if latest and latest.get("id") == trunk and latest.get("state") == "green" and latest.get("sha") == sha:
+            return None, None
+        return None, (trunk, "green", sha)
+    reason = "conclusion %s" % conclusion if conclusion else "no conclusion"
+    line = "cannot see trunk CI: %s" % reason
+    if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
+        return line, None
+    return line, (trunk, "unseen", reason)
+
+
 def watch(restaurant):
     rails = sibling_rails(restaurant)
     with restaurant.checked():
@@ -185,6 +367,8 @@ def watch(restaurant):
         workers = workers_line(restaurant.meta, inputs[1])
         # A skipped seat is a restaurant-wide fact, not a dish line, so it sits between the two.
         skipped = skip_lines(restaurant)
+        project_root = restaurant.meta.get("projectRoot", "")
+        latest = _latest_trunk(restaurant.rows("log.tsv"))
     # land.py waits on the landing database, so every call runs outside the store lock.
     item_lines, answered = [], True
     for dish in dishes:
@@ -209,6 +393,14 @@ def watch(restaurant):
             item_lines += found or [f"{dish['id']}: {OPEN_LINES[dish['state']]}"]
     for ident, note, held in recheck_blocks(restaurant, inputs):
         lines.append(f"{ident}: {held[1]}" if held else f"{ident}: unblocked; run {fire_command(ident, note)}")
+    try:
+        trunk_line, trunk_row = _observe_trunk(project_root, latest)
+    except Exception:
+        trunk_line, trunk_row = None, None
+    if trunk_row is not None:
+        restaurant.log("trunk", trunk_row[0], trunk_row[1], trunk_row[2])
+    if trunk_line:
+        lines.append(trunk_line)
     if answered:
         # walk --stale-hours then measures whether this coordinator still keeps its leases alive.
         restaurant.change_meta(lastActivityAt=seam.now())

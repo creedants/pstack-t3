@@ -1,0 +1,2 @@
+- `watch` prints `trunk CI failing since <streak start>: <workflow> <url>` while trunk stays red and `cannot see trunk CI: <reason>` while trunk stays unseen. It writes one `trunk` log row only on change.
+- `next liveness` and `next merge` owe red trunk See cues and reply yes at every level while the stored trunk stays red.
