@@ -1,4 +1,5 @@
 from .support import (
+    setUpModule,
     BrigadeTest,
     HELD_LINE,
     Path,
