@@ -204,7 +204,7 @@ def _join(pattern):
 
 
 def expand(gen_map, norm, doc_item=False):
-    """Forward paths from one norm. Rules that skip doc items are skipped for doc items."""
+    """Forward paths from one norm. Rules that skip doc items are skipped for doc items. A literal index rule also fires for any ancestor directory of its source. A literal copy rule also fires for its source parent directory. Wildcard rules fire for no ancestor."""
     try:
         if gen_map is None or not gen_map.rules:
             return ()

@@ -129,3 +129,36 @@ class GeneratedMapTest(BrigadeTest):
                 self.assertTrue((ROOT / target).is_file(), target)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
+
+    def test_vendor_ancestor_index_expansion_ignores_wildcard_ancestors(self):
+        import importlib
+        import sys
+        scripts = str(ROOT / "t3/added/brigade/scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+            self.addCleanup(sys.path.remove, scripts)
+        for name in [n for n in list(sys.modules) if n == "brigade_lib" or n.startswith("brigade_lib.")]:
+            del sys.modules[name]
+        generated = importlib.import_module("brigade_lib.generated")
+        full = generated.parse([
+            ["vendor/pstack", "docs/skills.md", "index", True],
+            ["vendor/pstack/skills", "docs/skills.md", "index", True],
+            ["vendor/pstack/skills/*/SKILL.md", "docs/skills.md", "index", True],
+        ])
+        wild_only = generated.parse([
+            ["vendor/pstack/skills/*/SKILL.md", "docs/skills.md", "index", True],
+        ])
+        catalog = ("docs/skills.md",)
+        cases = [
+            ("vendor", False, full, catalog),
+            ("vendor/pstack", False, full, catalog),
+            ("vendor/pstack/skills", False, full, catalog),
+            ("vendor/pstack/skills/teach/SKILL.md", False, full, catalog),
+            ("vendo", False, full, ()),
+            ("vendor/pstack/README.md", False, full, ()),
+            ("vendor", True, full, ()),
+            ("vendor", False, wild_only, ()),
+        ]
+        for norm, doc_item, gen_map, expected in cases:
+            with self.subTest(norm=norm, doc_item=doc_item, rules=len(gen_map.rules)):
+                self.assertEqual(generated.expand(gen_map, norm, doc_item), expected)
