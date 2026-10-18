@@ -9,10 +9,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from brigade_lib import seam
+from brigade_lib import generated, seam
 from brigade_lib.compact import refuse_setting
 from brigade_lib.edits import NO_COMMAND
-from brigade_lib.layout import _layout, _twins
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import CHANGE_NOTE_KEY, HELD_LOCKS, change_note_dir, store_root
 
@@ -422,7 +421,7 @@ def _resolve_import(edge, loader_path, root, roots):
     return _found_files(root, cands)
 
 
-def _one_hop(norm, base, lay, roots):
+def _one_hop(norm, base, gen_map, roots):
     if not norm or not norm.endswith(".py"):
         return ()
     full = base / norm
@@ -439,7 +438,7 @@ def _one_hop(norm, base, lay, roots):
     found = set()
     for target in _import_targets(lmod):
         for got in _resolve_import(target, norm, base, roots):
-            for canon in _canonicals(_norm(got), lay):
+            for canon in _canonicals(_norm(got), gen_map):
                 found.add(canon)
     return tuple(sorted(found))
 
@@ -452,9 +451,9 @@ def _loads_of(mod, singles):
     return found
 
 
-def _canonicals(norm, lay):
+def _canonicals(norm, gen_map):
     try:
-        twins = _twins(norm, lay)
+        twins = generated.twins(gen_map, norm)
     except Exception:
         return [norm]
     sources = sorted(t for t in twins if t.startswith("t3/"))
@@ -556,12 +555,15 @@ def _close(table, edges):
     return closed
 
 
-def _index(root, layout):
+def _index(root, layout, gen_map=None):
     base = Path(str(root))
-    try:
-        spec = _layout(base)
-    except Exception:
-        spec = None
+    if gen_map is None:
+        try:
+            gen_map = generated.read(base)
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            gen_map = generated.EMPTY
     files = _test_files(base)
     helper_entries = _helper_entries(base, layout)
     loads = {}
@@ -619,17 +621,17 @@ def _index(root, layout):
         for ref in refs:
             norm = _norm(ref)
             if norm and _looks_repo(norm):
-                for canon in _canonicals(norm, spec):
+                for canon in _canonicals(norm, gen_map):
                     table.setdefault(canon, set()).add(name)
             if not norm or not norm.endswith(".py"):
                 continue
             if norm not in hops:
-                hops[norm] = _one_hop(norm, base, spec, layout.import_roots)
+                hops[norm] = _one_hop(norm, base, gen_map, layout.import_roots)
             for canon in hops[norm]:
                 table.setdefault(canon, set()).add(name)
     for name, refs in direct.items():
         for ref in refs:
-            for canon in _canonicals(_norm(ref), spec):
+            for canon in _canonicals(_norm(ref), gen_map):
                 table.setdefault(canon, set()).add(name)
     if pins:
         outside = []
@@ -665,7 +667,7 @@ def _index(root, layout):
                 continue
             classes = set()
             for rel in holders:
-                twins = _twins(_norm(rel), spec)
+                twins = generated.twins(gen_map, _norm(rel))
                 t3s = tuple(sorted(t for t in twins if t.startswith("t3/")))
                 key = t3s if t3s else (rel,)
                 classes.add(key)
@@ -700,10 +702,12 @@ def _select(root, paths, layout, change_dir=""):
         return _Modules((layout.always,))
     tracked = _tracked(base)
     try:
-        spec = _layout(base)
+        gen_map = generated.read(base)
+    except KeyboardInterrupt:
+        raise
     except Exception:
-        spec = None
-    index = _index(base, layout)
+        gen_map = generated.EMPTY
+    index = _index(base, layout, gen_map)
     if isinstance(index, _Open):
         return _Full((index.reason,))
     expanded = []
@@ -731,13 +735,13 @@ def _select(root, paths, layout, change_dir=""):
             stem = norm[:-3]
             if "/test_" in "/" + stem or PurePosixPath(norm).name.startswith("test_"):
                 modules.add(stem.replace("/", "."))
-                for canon in _canonicals(norm, spec):
+                for canon in _canonicals(norm, gen_map):
                     hit = index.table.get(canon)
                     if hit:
                         modules.update(hit)
                 continue
         found = None
-        for canon in _canonicals(norm, spec):
+        for canon in _canonicals(norm, gen_map):
             hit = index.table.get(canon)
             if hit:
                 found = hit

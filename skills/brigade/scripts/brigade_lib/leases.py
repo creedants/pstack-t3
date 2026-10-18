@@ -20,9 +20,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from brigade_lib import seam
+from brigade_lib import generated, seam
 from brigade_lib.compact import refuse_setting
-from brigade_lib.layout import _layout, _one
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import COUNTED_STATES, KINDS, MODES, change_note_dir, holder_prefix, is_admin
 from brigade_lib.tickets import tracked_paths
@@ -282,12 +281,12 @@ def claim_paths(meta, paths, branch, doc_item=False):
     if not raw_list:
         return Claim("", ())
     try:
-        lay = _layout(project_root)
+        gen_map = generated.read(project_root)
     except KeyboardInterrupt:
         raise
     except Exception:
-        lay = None
-    if lay is None:
+        gen_map = generated.EMPTY
+    if not gen_map.rules:
         return Claim(with_fragment(paths, fragment), ())
     seen = set()
     for raw in raw_list:
@@ -300,7 +299,7 @@ def claim_paths(meta, paths, branch, doc_item=False):
         if not made:
             continue
         try:
-            found = _one(made, lay, doc_item)
+            found = generated.expand(gen_map, made, doc_item)
         except KeyboardInterrupt:
             raise
         except Exception:
