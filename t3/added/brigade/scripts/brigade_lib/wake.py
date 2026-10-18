@@ -1,3 +1,4 @@
+"""Re-exports names from _wake. Patch a name in the _wake module that reads it; patching it here does not reach callers in _wake."""
 from brigade_lib._wake.cues import admin_sends, compile_sheet, cue_line, format_sheet, holder_of, housekeeping, inbox_cues, land_follow, merge_why, older_than_hour, pass_words, pause_if, prefix_cues, tail_cues
 from brigade_lib._wake.hangs import hang_attempt, record_hang, ticket_lines
 from brigade_lib._wake.occasions import CLOSE_OCCASIONS, DRAIN_LABELS, OCCASION_ORDER, ROUTINE_DETAILS, YES_OCCASIONS, blocked_needs_user, budget_reached, decision_detail, decision_holds, fresh_decision_ids, from_user_request, held_occasions, is_drained, merge_accepted, note_unsent, occasion_yes, reply_for, request_text, routine_detail, wake_label

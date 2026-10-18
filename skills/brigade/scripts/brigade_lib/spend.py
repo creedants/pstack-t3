@@ -1,3 +1,4 @@
+"""Re-exports names from _spend. Patch a name in the _spend module that reads it; patching it here does not reach callers in _spend."""
 import json
 from brigade_lib._spend.claude import _call_from, _claude_base, _claude_totals, _contained, _dedupe, _read_log, _thinking_tokens, _usage_count
 from brigade_lib._spend.items import _dish_number, _items, _one_seat, _question, _rows, _seat_text, _stamp, _threads, _threads_by_item, _wall, _warn_shares, _worker_key, _reviewer_key

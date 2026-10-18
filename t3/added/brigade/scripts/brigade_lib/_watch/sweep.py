@@ -29,7 +29,7 @@ from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import LEASED_STATES, OPEN_LINES, OPEN_RUN_MINUTES
 from brigade_lib.tickets import handed_count, handoff_id, inbox_file, sibling_rails, taken_row
 from brigade_lib._watch.progress import dish_progress, open_item_decisions
-from brigade_lib._watch.runs import _idle_completed, _idle_line, _read_worker_runs
+from brigade_lib._watch.runs import _idle_completed, _idle_line, _read_worker_runs, _worker_skip
 from brigade_lib._watch.seats import skip_lines
 from brigade_lib._watch.trunk import _contract_trunk, _latest_trunk, _observe_trunk
 
