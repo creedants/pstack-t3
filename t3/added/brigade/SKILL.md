@@ -104,46 +104,13 @@ Read [script.md](script.md) when a `$B` command refuses, prints a line this skil
 
 Run affected to print the verify paragraph for a path change. It scans the tree and names the modules or the full suite. Use the picked modules for worker verification. Leave the full suite to CI and the merge queue unless affected reports an unmapped path.
 
-`affected` reads the layout from the store's `restaurant.json`, which may hold one optional `affectedTests` object. Its seven keys are `always`, the required dotted module every modules result includes; `workflowModule`, an optional dotted module a `.github/workflows/` path maps to; `entryPoints`, the required list of repository paths that the helper modules load or run; `helpers`, an optional list of repository paths; `suite`, the optional whole-suite command; `python`, the optional absolute path of the second interpreter; and importRoots, the optional list of repo paths tried as prefixes for absolute imports in candidate order after the loader directory and the root with every match kept; relative imports never search them, and an absent importRoots means the directories of entryPoints and helpers. Without the key the picker is off, and a brief with an empty `--verify` runs the store's `checkCommand` instead, or says no verify command is set. This template preserves this repository's picker paragraph after replacing `<path to a Python 3.10 interpreter>` with the existing interpreter path:
+`affectedTests` sets the picker layout `affected` reads. Set it with `set --affected-tests`. Keys and an example are in [store-config.md](store-config.md).
 
-```json
-"affectedTests": {
-  "always": "tests.test_pstack_t3",
-  "workflowModule": "tests.test_run_tests",
-  "entryPoints": ["t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py"],
-  "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
-  "suite": "python3 scripts/run_tests.py -j 8",
-  "python": "<path to a Python 3.10 interpreter>",
-  "importRoots": ["scripts", "t3/scripts"]
-}
-```
+`sharedDocs` plus `docTimebox` set the shared-document catalog and timebox `fire` reads. Set them with `set --shared-docs` and `set --doc-timebox`. Rules and an example are in [store-config.md](store-config.md). Without `sharedDocs`, `fire` refuses nothing for shared documents.
 
-The second interpreter is an absolute path whose file name is `python<major>` or `python<major>.<minor>`, and the paragraph names it by that version. A layout that sets `python` also needs a `suite` that starts with `python3`, because that interpreter replaces the leading `python3`. A store whose `checkCommand` is `none` records no check command.
+`changeNoteDir` sets the fragment directory `fire` leases. Set it with `set --change-note-dir`. Rules and an example are in [store-config.md](store-config.md).
 
-`fire` reads the store's shared-document catalog and timebox from `restaurant.json`. `sharedDocs` is an optional list of `{"path": <repository path>, "kind": "file"|"skill"}`, and it defaults to an empty list. A `file` entry names one document, and a `file` entry whose path ends with `/` names a directory prefix, so files under it are documents. A `skill` entry names a directory, with or without its trailing slash, and its `SKILL.md` files are documents. `docTimebox` is an optional count of minutes, and it defaults to 90. `fire` refuses a lease holding a shared document when `--timebox` is over `docTimebox` or `--tickets` names more than one ticket, unless `--doc-item`. Without `sharedDocs`, `fire` refuses nothing for shared documents, and a successful `fire --doc-item` records the shared-document note `doc-item`. A present value that does not parse is refused, with nothing written and no lease claimed. This template reproduces this repository's catalog and threshold:
-
-```json
-{
-  "sharedDocs": [
-    {"path": "README.md", "kind": "file"},
-    {"path": "docs/guide.md", "kind": "file"},
-    {"path": "t3/runtime.md", "kind": "file"},
-    {"path": "t3/setup.md", "kind": "file"},
-    {"path": "t3/added/", "kind": "skill"},
-    {"path": "t3/overrides/", "kind": "skill"},
-    {"path": "skills/", "kind": "skill"}
-  ],
-  "docTimebox": 90
-}
-```
-
-`fire` reads the store's change-note directory from `restaurant.json`. `changeNoteDir` is an optional repository-relative directory path, and it defaults to unset. Set it with `brigade.py set --change-note-dir <dir>` and clear it with an empty value. When it is set, `fire` leases `<dir>/<branch>.md` for the branch that attempt will use, with `%` written as `%25` and `/` written as `%2F`. When it is unset, `fire` leases no fragment. A present value that does not parse is refused when `fire` leases paths, with nothing written and no lease claimed. `fire` with no paths leases nothing and reads nothing. This template records this repository's directory:
-
-```json
-{
-  "changeNoteDir": "changes"
-}
-```
+A present value that does not parse is refused, with nothing written and no lease claimed.
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](script.md#brief-fields).
 
@@ -153,7 +120,7 @@ The cap counts dishes in progress or in review. `fire` refuses before it claims 
 
 `dish --add-paths` widens the lease in one step. It claims a new lease covering old paths plus new paths plus any generated copies and change-note fragment that `fire` would add. It records the new lease after checking that the dish still records the old lease and paths. It then releases the old lease. An overlap refusal leaves the dish row and landing lease rows unchanged and names the other holder. Landing may still arm a waiting reservation. A rerun with covered paths is a no-op. It refuses a merged or dropped dish. It refuses a submitted lease when new paths are requested.
 
-`dish --state in-review --sha` checks lease coverage before review. It skips the check when the dish has no lease, the queue has no contract, or the trunk ref is missing. A fetch, merge-base, or diff failure refuses review. Otherwise it compares changed source paths from base to sha against lease paths and refuses uncovered paths by name. Base is merge-base of trunk ref to sha. Trunk ref and generated list come from land.py status. It fetches in remote modes the way submit does. A directory path covers its files. Generated paths are dropped before the check. The gate runs out of lock then rechecks under lock. It refuses when lease id or paths changed between reads.
+`dish --state in-review` checks lease coverage before review. It skips the check when the dish holds no lease. It also skips the check when `land.py status` fails with exactly `land: <root> has no landing contract; run land.py init in it` and prints nothing to stdout. It refuses when the repository identity cannot be read. It refuses when any other status read fails or prints empty output. It refuses when a leased dish under a contract names no SHA. It skips when the status names no trunk ref. The lease must read as active. In remote mode it fetches the trunk first. A fetch, merge-base, or diff failure refuses. It compares source paths changed from merge-base of trunk ref to sha against lease paths. A directory path covers its files. Generated paths are dropped before the check. Uncovered paths refuse by name with the `--add-paths` command. The check runs outside the lock then rechecks under the lock. It refuses when lease id or paths changed between reads.
 
 Every ticket has a priority. `urgent` is work that is broken, unsafe, or blocking, such as data loss, a broken install, a red trunk, a privacy or security hole, or an upstream sync. `normal` is wrong or missing behavior, a false statement in docs people follow, or a feature the user asked for. `low` is polish, a refactor, or an optional pointer. Set it at triage with `ticket add --priority`. Change it with `ticket set T<n> --priority` when the user says so or the facts change.
 
