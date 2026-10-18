@@ -86,7 +86,7 @@ def _read_worker_runs(threads):
         return {}, None
     try:
         loaded = runpy.run_path(str(Path(__file__).resolve().parent.parent / "activity.py"))
-    except OSError as error:
+    except Exception as error:
         return {}, _worker_skip(error)
     try:
         database = loaded["t3_database"](None, os.environ, Path.home())

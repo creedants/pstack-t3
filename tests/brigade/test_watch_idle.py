@@ -140,7 +140,7 @@ class WatchIdleTest(BrigadeTest):
         self.assertNotIn("idle since", out)
         self.assertLessEqual(len(out.splitlines()), 3)
 
-    def test_locked_wal_leaves_dish_lines_plus_at_most_one_line(self):
+    def test_wal_without_index_leaves_dish_lines_plus_at_most_one_line(self):
         self.open()
         self.fire_one(timebox="60")
         home = self._t3home()
