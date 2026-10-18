@@ -32,6 +32,8 @@ DEFAULT_SKIP = (
     "docs/cli/*",
     "docs/skills.md",
     "vendor/*",
+    "__pycache__/*",
+    "*.pyc",
     "*.png",
     "*.jpg",
     "*.jpeg",
