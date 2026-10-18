@@ -851,9 +851,17 @@ class BrigadeTest(unittest.TestCase):
         self.project.mkdir()
         self.at = self.store / "bridge-kit" / "perf"
         self.isolate_roles_config()
+        self.isolate_t3_home()
 
     def isolate_roles_config(self):
         patcher = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(self.temporary.name) / "config")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def isolate_t3_home(self):
+        t3home = Path(self.temporary.name) / "t3home-empty"
+        t3home.mkdir(exist_ok=True)
+        patcher = mock.patch.dict(os.environ, {"T3CODE_HOME": str(t3home)})
         patcher.start()
         self.addCleanup(patcher.stop)
 

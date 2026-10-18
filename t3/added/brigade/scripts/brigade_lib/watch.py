@@ -115,7 +115,24 @@ def _read_worker_runs(threads):
             loaded["parse_status"](status_text, completed_ts is not None)
             prev = runs.get(thread)
             if prev is None or requested_ts > prev["requested"]:
-                runs[thread] = {"status": status_text, "requested": requested_ts, "completed": completed_ts}
+                runs[thread] = {"status": status_text, "requested": requested_ts, "completed": completed_ts,
+                                "updated": None}
+        threads_table = loaded["THREADS"]
+        try:
+            thread_rows = connection.execute(
+                f"SELECT thread_id, updated_at FROM {threads_table} WHERE thread_id IN ({marks})",
+                wanted,
+            ).fetchall()
+        except Exception:
+            thread_rows = []
+        for thread_id_raw, updated_raw in thread_rows:
+            thread = loaded["text_in"](thread_id_raw, threads_table, "thread_id")
+            if thread not in runs:
+                continue
+            if updated_raw is None:
+                runs[thread]["updated"] = None
+            else:
+                runs[thread]["updated"] = loaded["time_in"](updated_raw, threads_table, "updated_at")
     except Exception as error:
         try:
             connection.close()
@@ -130,23 +147,26 @@ def _read_worker_runs(threads):
 
 
 def _idle_completed(runs, thread, moment):
-    """The completed timestamp when this thread is idle, else None.
+    """The completed or quiet timestamp when this thread is idle, else None.
 
-    Idle means the latest run has a completed time at least
-    OPEN_RUN_MINUTES before moment.
+    Idle means the latest run ended, or its open run saw no thread
+    activity for at least OPEN_RUN_MINUTES.
     """
     entry = runs.get(thread) if runs else None
     if not entry:
         return None
     completed = entry.get("completed")
-    if completed is None:
+    if completed is not None:
+        return completed
+    updated = entry.get("updated")
+    if updated is None:
         return None
     try:
-        age = moment.timestamp() - completed
+        age = moment.timestamp() - updated
     except Exception:
         return None
     if age >= OPEN_RUN_MINUTES * 60:
-        return completed
+        return updated
     return None
 
 

@@ -32,17 +32,26 @@ def _make_db(base, runs):
     con = sqlite3.connect(str(path))
     try:
         con.execute("CREATE TABLE orchestration_v2_projection_metadata (projection_name TEXT, schema_version INTEGER)")
-        con.execute("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, default_provider TEXT, payload_json TEXT, project_id TEXT)")
+        con.execute("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, default_provider TEXT, payload_json TEXT, project_id TEXT, updated_at TEXT)")
         con.execute("CREATE TABLE orchestration_v2_projection_runs (thread_id TEXT, status TEXT, requested_at TEXT, completed_at TEXT)")
         con.execute("CREATE TABLE orchestration_v2_projection_subagents (subagent_id TEXT, thread_id TEXT, child_thread_id TEXT, status TEXT, started_at TEXT, completed_at TEXT)")
         con.execute(
             "INSERT INTO orchestration_v2_projection_metadata (projection_name, schema_version) VALUES (?, ?)",
             ("thread-projections", 2),
         )
-        for thread_id, status, requested, completed in runs:
+        for entry in runs:
+            if len(entry) == 5:
+                thread_id, status, requested, completed, updated = entry
+            else:
+                thread_id, status, requested, completed = entry
+                updated = requested
             con.execute(
                 "INSERT INTO orchestration_v2_projection_runs (thread_id, status, requested_at, completed_at) VALUES (?, ?, ?, ?)",
                 (thread_id, status, requested, completed),
+            )
+            con.execute(
+                "INSERT INTO orchestration_v2_projection_threads (thread_id, title, default_provider, payload_json, project_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (thread_id, "t", "codex", "{}", "p", updated),
             )
         con.commit()
     finally:
@@ -80,8 +89,8 @@ class WatchIdleTest(BrigadeTest):
         self.open()
         self.fire_one(timebox="60")
         home = self._t3home()
-        completed = _stamp(15)
-        _make_db(home, [("thread-9", "completed", _stamp(20), completed)])
+        completed = _stamp(1)
+        _make_db(home, [("thread-9", "completed", _stamp(5), completed)])
         out = self._watch_with_home(home)
         expected = f"D1: idle since {_local_of(completed)} with no report (thread thread-9)"
         self.assertIn(expected, out)
@@ -100,7 +109,26 @@ class WatchIdleTest(BrigadeTest):
         self.open()
         self.fire_one(timebox="60")
         home = self._t3home()
-        _make_db(home, [("thread-9", "completed", _stamp(6), _stamp(5))])
+        _make_db(home, [("thread-9", "running", _stamp(2), None, _stamp(2))])
+        out = self._watch_with_home(home)
+        self.assertNotIn("idle since", out)
+        self.assertIn("D1: running 0m of 60m (thread thread-9)", out)
+
+    def test_quiet_open_past_threshold_prints_idle(self):
+        self.open()
+        self.fire_one(timebox="60")
+        home = self._t3home()
+        updated = _stamp(65)
+        _make_db(home, [("thread-9", "waiting", _stamp(70), None, updated)])
+        out = self._watch_with_home(home)
+        expected = f"D1: idle since {_local_of(updated)} with no report (thread thread-9)"
+        self.assertIn(expected, out)
+
+    def test_long_open_with_recent_activity_prints_running(self):
+        self.open()
+        self.fire_one(timebox="60")
+        home = self._t3home()
+        _make_db(home, [("thread-9", "running", _stamp(65), None, _stamp(2))])
         out = self._watch_with_home(home)
         self.assertNotIn("idle since", out)
         self.assertIn("D1: running 0m of 60m (thread thread-9)", out)
@@ -109,7 +137,7 @@ class WatchIdleTest(BrigadeTest):
         self.open()
         self.fire_one(timebox="60")
         home = self._t3home()
-        _make_db(home, [("thread-9", "running", _stamp(2), None)])
+        _make_db(home, [("thread-9", "running", _stamp(2), None, _stamp(2))])
         out = self._watch_with_home(home)
         self.assertNotIn("idle since", out)
         self.assertIn("D1: running 0m of 60m (thread thread-9)", out)
