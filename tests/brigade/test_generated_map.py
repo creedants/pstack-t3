@@ -11,6 +11,7 @@ import json
 import posixpath
 import shutil
 import subprocess
+import tempfile
 
 
 GENERATED = "skills,docs/cli,docs/skills.md"
@@ -108,10 +109,7 @@ class GeneratedMapTest(BrigadeTest):
         self.assertEqual(self.dish_paths(), "t3/added/brigade/scripts/brigade.py,changes/perf%2Fd1.md")
 
     def test_build_output_matches_three_copy_pairs_and_three_repo_targets_exist(self):
-        parent = Path("/home/marcus/.cache/pstack-t3/scratch")
-        parent.mkdir(parents=True, exist_ok=True)
-        made = subprocess.run(["mktemp", "-d", "-p", str(parent)], capture_output=True, text=True, check=True)
-        scratch = Path(made.stdout.strip())
+        scratch = Path(tempfile.mkdtemp())
         try:
             built = subprocess.run(["python3", str(ROOT / "scripts/build.py"), "--out", str(scratch)],
                                    cwd=str(ROOT), capture_output=True, text=True)
