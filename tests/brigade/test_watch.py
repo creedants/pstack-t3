@@ -379,11 +379,31 @@ class WatchTest(BrigadeTest, _WakeRace):
         self.assertEqual([(row["id"], row["state"], row["note"]) for row in self.log_rows() if row["kind"] == "model"],
                          [(seat, "skipped", "rate-limit"), (seat, "cleared", "smoke test passed")])
 
+    def test_new_red_run_at_same_sha_refreshes_liveness_cues(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        for workflow in ("Build", "Tests"):
+            payload = json.dumps([{"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+                                   "createdAt": "2026-10-01T00:00:00Z", "workflowName": workflow,
+                                   "url": f"https://example.com/run/{workflow}"}])
+            bindir = self._gh_dir(payload=payload)
+            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+                self.brigade("watch")
+        sheet = self.brigade("next", "liveness")
+        self.assertIn("Tests https://example.com/run/Tests", sheet)
+        self.assertNotIn("Build https://example.com/run/Build", sheet)
+
     def _remote_trunk(self):
         from contextlib import closing
         with closing(self.landing_db()) as db, db:
             db.execute("UPDATE contract SET value = ? WHERE key = 'mode'", (json.dumps("merge"),))
             db.execute("UPDATE contract SET value = ? WHERE key = 'trunk'", (json.dumps("main"),))
+            db.execute("UPDATE contract SET value = ? WHERE key = 'remote'", (json.dumps("origin"),))
+        subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/repo.git"],
+                       cwd=self.project, capture_output=True)
+        subprocess.run(["git", "remote", "set-url", "origin", "https://github.com/example/repo.git"],
+                       cwd=self.project, capture_output=True)
 
     def _gh_dir(self, payload=None, fail=False, with_gh=True):
         from pathlib import Path as _Path
@@ -457,3 +477,210 @@ class WatchTest(BrigadeTest, _WakeRace):
         with mock.patch.dict(os.environ, {"PATH": str(bindir_fail) + os.pathsep + os.environ.get("PATH", "")}):
             failing = self.brigade("watch")
         self.assertIn("cannot see trunk CI:", failing)
+
+    def _gh_dir_recording(self, payload, args_file):
+        from pathlib import Path as _Path
+        import shutil as _shutil
+        bindir = _Path(self.temporary.name) / f"fakebin-{time.time_ns()}"
+        bindir.mkdir()
+        git = _shutil.which("git")
+        if git:
+            (bindir / "git").symlink_to(git)
+        script = bindir / "gh"
+        payload_path = bindir / "payload.json"
+        text = payload if isinstance(payload, str) else json.dumps(payload)
+        payload_path.write_text(text)
+        script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys, json\n"
+            "args = sys.argv[1:]\n"
+            f"open({str(args_file)!r}, 'w').write(' '.join(args))\n"
+            "limit = 100\n"
+            "if '--limit' in args:\n"
+            "    try:\n"
+            "        limit = int(args[args.index('--limit') + 1])\n"
+            "    except Exception:\n"
+            "        pass\n"
+            f"rows = json.loads(open({str(payload_path)!r}).read())\n"
+            "print(json.dumps(rows[:limit]))\n"
+        )
+        script.chmod(0o755)
+        return bindir
+
+    def _valid_red_payload(self, sha="aaa111", workflow="CI", url="https://example.com/run/2",
+                            since="2026-10-02T00:00:00Z"):
+        return json.dumps([{"status": "completed", "conclusion": "failure", "headSha": sha,
+                            "createdAt": since, "url": url, "workflowName": workflow}])
+
+    def _assert_no_red_cues(self):
+        liveness = self.brigade("next", "liveness")
+        self.assertNotIn("Read the failing jobs", liveness)
+        self.assertNotIn("urgent fix", liveness)
+        self.assertNotIn("red-trunk", liveness)
+        merge = self.brigade("next", "merge", "D1")
+        self.assertNotIn("Read the failing jobs", merge)
+        self.assertNotIn("urgent fix", merge)
+        self.assertNotIn("red-trunk", merge)
+
+    def test_malformed_non_dict_rows_clear_stored_red(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        bindir = self._gh_dir(payload=self._valid_red_payload())
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since", out)
+        for bad in ("[null]", "[42]", '["bad"]'):
+            bindir = self._gh_dir(payload=bad)
+            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+                seen = self.brigade("watch")
+            self.assertIn("cannot see trunk CI:", seen)
+            self.assertEqual(seen.count("cannot see trunk CI:"), 1)
+            rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
+            self.assertEqual(rows[-1]["state"], "unseen")
+            self._assert_no_red_cues()
+            bindir = self._gh_dir(payload=self._valid_red_payload())
+            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+                self.brigade("watch")
+
+    def test_malformed_missing_fields_clear_stored_red(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        bindir = self._gh_dir(payload=self._valid_red_payload())
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            self.brigade("watch")
+        base = {"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+                "createdAt": "2026-10-02T00:00:00Z", "url": "https://example.com/run/2",
+                "workflowName": "CI"}
+        for key in ("headSha", "createdAt", "url", "workflowName"):
+            bad = dict(base)
+            del bad[key]
+            bindir = self._gh_dir(payload=json.dumps([bad]))
+            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+                seen = self.brigade("watch")
+            self.assertIn("cannot see trunk CI:", seen)
+            self.assertEqual(seen.count("cannot see trunk CI:"), 1)
+            rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
+            self.assertEqual(rows[-1]["state"], "unseen")
+            self._assert_no_red_cues()
+            bindir = self._gh_dir(payload=self._valid_red_payload())
+            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+                self.brigade("watch")
+
+    def test_in_progress_failure_never_reports_red(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([{"status": "in_progress", "conclusion": "failure", "headSha": "aaa111",
+                               "createdAt": "2026-10-02T00:00:00Z", "url": "https://example.com/run/2",
+                               "workflowName": "CI"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            seen = self.brigade("watch")
+        self.assertIn("cannot see trunk CI:", seen)
+        self.assertNotIn("trunk CI failing since", seen)
+        rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(rows[-1]["state"], "unseen")
+
+    def test_non_default_remote_selects_explicit_repo(self):
+        self.started()
+        from contextlib import closing
+        from pathlib import Path as _Path
+        with closing(self.landing_db()) as db, db:
+            db.execute("UPDATE contract SET value = ? WHERE key = 'mode'", (json.dumps("merge"),))
+            db.execute("UPDATE contract SET value = ? WHERE key = 'trunk'", (json.dumps("release/stable"),))
+            db.execute("UPDATE contract SET value = ? WHERE key = 'remote'", (json.dumps("upstream"),))
+        subprocess.run(["git", "remote", "add", "upstream", "https://github.com/example/other.git"],
+                       cwd=self.project, capture_output=True)
+        subprocess.run(["git", "remote", "set-url", "upstream", "https://github.com/example/other.git"],
+                       cwd=self.project, capture_output=True)
+        payload = json.dumps([{"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+                               "createdAt": "2026-10-01T00:00:00Z", "url": "https://example.com/run/2",
+                               "workflowName": "CI"},
+                              {"status": "completed", "conclusion": "success", "headSha": "ccc333",
+                               "createdAt": "2026-09-30T00:00:00Z", "url": "https://example.com/run/0",
+                               "workflowName": "CI"}])
+        args_file = _Path(self.temporary.name) / "gh-args.txt"
+        bindir = self._gh_dir_recording(payload, args_file)
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/2", out)
+        recorded = args_file.read_text()
+        self.assertIn("--repo", recorded)
+        self.assertIn("example/other", recorded)
+        self.assertIn("--branch", recorded)
+        self.assertIn("release/stable", recorded)
+        reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual((reds[-1]["id"], reds[-1]["state"]), ("release/stable", "red"))
+
+    def test_unsupported_host_prints_cannot_see(self):
+        self.started()
+        self._remote_trunk()
+        subprocess.run(["git", "remote", "set-url", "origin", "https://example.com/repo.git"],
+                       cwd=self.project, capture_output=True)
+        payload = self._valid_red_payload()
+        bindir = self._gh_dir(payload=payload)
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            seen = self.brigade("watch")
+        self.assertIn("cannot see trunk CI:", seen)
+        rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(rows[-1]["state"], "unseen")
+
+    def test_missing_remote_prints_cannot_see(self):
+        self.started()
+        self._remote_trunk()
+        subprocess.run(["git", "remote", "remove", "origin"], cwd=self.project, capture_output=True)
+        payload = self._valid_red_payload()
+        bindir = self._gh_dir(payload=payload)
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            seen = self.brigade("watch")
+        self.assertIn("cannot see trunk CI:", seen)
+        rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(rows[-1]["state"], "unseen")
+
+    def test_long_failure_streak_reports_first_failure(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        from pathlib import Path as _Path
+        rows = []
+        for day in range(10, 0, -1):
+            rows.append({"status": "completed", "conclusion": "failure", "headSha": f"aaa{day:03d}",
+                         "createdAt": f"2026-10-{day:02d}T00:00:00Z",
+                         "url": f"https://example.com/run/{day}", "workflowName": "CI"})
+        rows.append({"status": "completed", "conclusion": "success", "headSha": "ccc999",
+                     "createdAt": "2026-09-30T00:00:00Z", "url": "https://example.com/run/0",
+                     "workflowName": "CI"})
+        args_file = _Path(self.temporary.name) / "gh-args-long.txt"
+        bindir = self._gh_dir_recording(json.dumps(rows), args_file)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/10", out)
+        reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        data = json.loads(reds[-1]["note"])
+        self.assertEqual(data["since"], "2026-10-01T00:00:00Z")
+
+    def test_in_progress_window_finds_newest_completed(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        from pathlib import Path as _Path
+        rows = []
+        for number in range(5):
+            rows.append({"status": "in_progress", "conclusion": "", "headSha": f"zzz{number:03d}",
+                         "createdAt": f"2026-10-0{6+number}T00:00:00Z",
+                         "url": f"https://example.com/run/w{number}", "workflowName": "CI"})
+        rows.append({"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+                     "createdAt": "2026-10-01T00:00:00Z", "url": "https://example.com/run/old",
+                     "workflowName": "CI"})
+        args_file = _Path(self.temporary.name) / "gh-args-window.txt"
+        bindir = self._gh_dir_recording(json.dumps(rows), args_file)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/old", out)
+        reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(reds[-1]["state"], "red")

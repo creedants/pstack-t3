@@ -158,8 +158,24 @@ def _store_name(common):
     return safe + "-" + hashlib.sha1(str(common).encode()).hexdigest()[:8]
 
 
+_GITHUB_OWNER_REPO = re.compile(
+    r"^(?:https://github\.com/|ssh://git@github\.com/|git://github\.com/|git@github\.com:)"
+    r"([^/]+)/([^/]+?)(?:\.git)?/?$")
+
+
+def _github_owner_repo(url):
+    """The owner/repo for one GitHub remote URL or None."""
+    match = _GITHUB_OWNER_REPO.match((url or "").strip())
+    if not match:
+        return None
+    owner, repo = match.group(1), match.group(2)
+    if not owner or not repo or owner in (".", "..") or repo in (".", ".."):
+        return None
+    return "%s/%s" % (owner, repo)
+
+
 def _contract_trunk(project_root):
-    """The trunk branch and the landing mode for one project root or None."""
+    """The trunk contract for one project root or None."""
     root = str(project_root or "")
     if not root:
         return None
@@ -179,11 +195,17 @@ def _contract_trunk(project_root):
             con.close()
         trunk = json.loads(rows["trunk"]) if "trunk" in rows else None
         mode = json.loads(rows["mode"]) if "mode" in rows else None
+        repo = json.loads(rows["repo"]) if "repo" in rows else root
+        remote = json.loads(rows["remote"]) if "remote" in rows else "origin"
         if mode == "auto":
             mode = "push"
         if not trunk or not mode:
             raise ValueError("missing trunk")
-        return (trunk, mode)
+        if not repo:
+            repo = root
+        if not remote:
+            remote = "origin"
+        return {"trunk": trunk, "mode": mode, "repo": str(repo), "remote": str(remote)}
     except Exception:
         pass
     try:
@@ -202,16 +224,46 @@ def _contract_trunk(project_root):
     trunk = ref.rsplit("/", 1)[-1] if "/" in ref else ref
     if not trunk or not mode:
         return None
-    return (trunk, mode)
+    parts = ref.split("/")
+    remote = parts[-2] if len(parts) >= 2 else "origin"
+    if not remote:
+        remote = "origin"
+    return {"trunk": trunk, "mode": mode, "repo": root, "remote": str(remote)}
 
 
-def _gh_runs(project_root, trunk):
+def _owner_repo(repo, remote):
+    """The owner/repo for one contract remote or an error reason."""
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", remote],
+            cwd=str(repo), capture_output=True, text=True, timeout=10)
+    except FileNotFoundError:
+        return None, "git not found"
+    except subprocess.TimeoutExpired:
+        return None, "git timed out"
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip().splitlines()
+        reason = err[-1] if err else "exit %d" % proc.returncode
+        if not reason or reason == "":
+            reason = "no remote %s" % remote
+        return None, reason
+    url = (proc.stdout or "").strip().splitlines()
+    text = url[0].strip() if url else ""
+    if not text:
+        return None, "no remote %s" % remote
+    owner_repo = _github_owner_repo(text)
+    if owner_repo is None:
+        return None, "unsupported host %s" % text
+    return owner_repo, ""
+
+
+def _gh_runs(repo, trunk, owner_repo):
     """The gh run list for one trunk or an error reason."""
     try:
         result = subprocess.run(
-            ["gh", "run", "list", "--branch", trunk, "--limit", "5",
+            ["gh", "run", "list", "--repo", owner_repo, "--branch", trunk, "--limit", "100",
              "--json", "conclusion,status,headSha,createdAt,url,workflowName"],
-            cwd=str(project_root), capture_output=True, text=True, timeout=20)
+            cwd=str(repo), capture_output=True, text=True, timeout=20)
     except FileNotFoundError:
         return None, "gh not found"
     except subprocess.TimeoutExpired:
@@ -231,10 +283,24 @@ def _gh_runs(project_root, trunk):
 
 def _is_completed(run):
     """True when one gh run row counts as completed."""
-    if run.get("status") == "completed":
-        return True
+    return isinstance(run, dict) and run.get("status") == "completed"
+
+
+def _is_valid_run(run):
+    """True when one gh run row carries usable fields."""
+    if not isinstance(run, dict):
+        return False
+    status = run.get("status")
+    if not isinstance(status, str) or not status:
+        return False
     conclusion = run.get("conclusion")
-    return conclusion is not None and conclusion != ""
+    if conclusion is not None and not isinstance(conclusion, str):
+        return False
+    for key in ("headSha", "createdAt", "url", "workflowName"):
+        value = run.get(key)
+        if not isinstance(value, str) or not value:
+            return False
+    return True
 
 
 def _latest_trunk(rows):
@@ -282,16 +348,33 @@ def _observe_trunk(project_root, latest):
     contract = _contract_trunk(project_root)
     if contract is None:
         return None, None
-    trunk, mode = contract
+    trunk = contract["trunk"]
+    mode = contract["mode"]
+    repo = contract.get("repo") or str(project_root)
+    remote = contract.get("remote") or "origin"
     if mode == "local":
         return None, None
-    runs, error = _gh_runs(project_root, trunk)
+    owner_repo, resolve_error = _owner_repo(repo, remote)
+    if owner_repo is None:
+        reason = resolve_error or "unsupported remote"
+        line = "cannot see trunk CI: %s" % reason
+        if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
+            return line, None
+        return line, (trunk, "unseen", reason)
+    runs, error = _gh_runs(repo, trunk, owner_repo)
     if runs is None:
         reason = error or "gh failed"
         line = "cannot see trunk CI: %s" % reason
         if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
             return line, None
         return line, (trunk, "unseen", reason)
+    for run in runs:
+        if not _is_valid_run(run):
+            reason = "malformed run row"
+            line = "cannot see trunk CI: %s" % reason
+            if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
+                return line, None
+            return line, (trunk, "unseen", reason)
     completed = None
     for run in runs:
         if _is_completed(run):
@@ -318,7 +401,8 @@ def _observe_trunk(project_root, latest):
                 since = run.get("createdAt")
         line = "trunk CI failing since %s: %s %s" % (since, newest_workflow, newest_url)
         note = json.dumps({"sha": sha, "workflow": newest_workflow, "url": newest_url, "since": since})
-        if latest and latest.get("id") == trunk and latest.get("state") == "red" and latest.get("sha") == sha:
+        if latest == {"id": trunk, "state": "red", "sha": sha,
+                      "workflow": newest_workflow, "url": newest_url, "since": since}:
             return line, None
         return line, (trunk, "red", note)
     if conclusion == "success":
@@ -395,8 +479,22 @@ def watch(restaurant):
         lines.append(f"{ident}: {held[1]}" if held else f"{ident}: unblocked; run {fire_command(ident, note)}")
     try:
         trunk_line, trunk_row = _observe_trunk(project_root, latest)
-    except Exception:
+    except Exception as error:
         trunk_line, trunk_row = None, None
+        try:
+            contract = _contract_trunk(project_root)
+            trunk = contract["trunk"] if contract else (latest.get("id") if latest else None)
+            mode = contract["mode"] if contract else None
+            if trunk and mode != "local":
+                text = str(error).strip().splitlines()
+                detail = text[-1] if text else ""
+                reason = detail or "observation failed"
+                trunk_line = "cannot see trunk CI: %s" % reason
+                if not (latest and latest.get("id") == trunk and latest.get("state") == "unseen"
+                        and latest.get("reason") == reason):
+                    trunk_row = (trunk, "unseen", reason)
+        except Exception:
+            pass
     if trunk_row is not None:
         restaurant.log("trunk", trunk_row[0], trunk_row[1], trunk_row[2])
     if trunk_line:
