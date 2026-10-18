@@ -43,7 +43,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--liveness-ms N] [--change-note-dir DIR] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 record the head chef thread, a schedule id, or the reporting level
@@ -67,6 +67,7 @@ record the head chef thread, a schedule id, or the reporting level
 | `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
 | `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside /tmp; "" clears the setting |
 | `--low-reserve N` |  |  |  | the most workers still idle when a low ticket is held back while an urgent or normal ticket can start; 0 holds no low ticket back; "" clears it to 1 |
+| `--round-budget N` |  |  |  | the send-backs that owe a round decision. Higher waits for more send-backs. "" clears it to 3 |
 | `--liveness-ms N` |  |  |  | the interval a new liveness schedule uses, a whole number of at least 60000; "" removes the setting |
 | `--change-note-dir DIR` |  |  |  | the repository-relative directory holding one change-note fragment per branch, such as changes; "" clears it, and an unset key leases no fragment |
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json; "" clears it to 300000 |

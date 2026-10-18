@@ -1457,3 +1457,58 @@ class ReviewsTest(BrigadeTest):
         before = {p.relative_to(self.at): (p.read_bytes(), p.stat().st_mtime_ns) for p in self.at.rglob("*") if p.is_file()}
         self.assertEqual(self.brigade("pass", "stats"), "no items with a verdict")
         self.assertEqual({p.relative_to(self.at): (p.read_bytes(), p.stat().st_mtime_ns) for p in self.at.rglob("*") if p.is_file()}, before)
+
+
+class RoundBudgetStoredTest(BrigadeTest):
+    def write_budget(self, value):
+        path = self.at / "restaurant.json"
+        meta = json.loads(path.read_text())
+        meta["roundBudget"] = value
+        path.write_text(json.dumps(meta))
+
+    def clear_budget(self):
+        path = self.at / "restaurant.json"
+        meta = json.loads(path.read_text())
+        meta.pop("roundBudget", None)
+        path.write_text(json.dumps(meta))
+
+    def test_default_budget_owes_at_three_in_reviews_and_watch(self):
+        self.fired_bug_fix()
+        self.assertNotIn("roundBudget", json.loads((self.at / "restaurant.json").read_text()))
+        self.assertEqual(self.sent_back(2), "D1 sent-back")
+        self.assertNotIn("decision pending", self.brigade("watch"))
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.send_back("a3"), "D1 sent-back; 3 send-backs, decision pending")
+        self.assertIn("3 send-backs, decision pending", self.brigade("watch"))
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--round-budget"), "Q1")
+
+    def test_stored_two_forces_the_decision_at_two(self):
+        self.fired_bug_fix()
+        self.brigade("set", "--round-budget", "2")
+        self.assertEqual(self.send_back("a1"), "D1 sent-back")
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        self.assertEqual(self.send_back("a2"), "D1 sent-back; 2 send-backs, decision pending")
+        self.assertIn("2 send-backs, decision pending", self.brigade("watch"))
+        self.assertEqual(self.brigade("86", "add", "--dish", "D1", "--round-budget"), "Q1")
+
+    def test_stored_five_holds_no_decision_at_three(self):
+        self.fired_bug_fix()
+        self.brigade("set", "--round-budget", "5")
+        self.assertEqual(self.sent_back(3), "D1 sent-back")
+        self.assertNotIn("decision pending", self.brigade("watch"))
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress"), "D1 in-progress")
+        error = self.brigade("86", "add", "--dish", "D1", "--round-budget", ok=False)
+        self.assertIn("opens at 5", error)
+
+    def test_malformed_stored_budgets_are_refused_by_watch_and_86_add(self):
+        self.fired_bug_fix()
+        for bad, shown in (("two", "'two'"), (0, "0"), (-1, "-1"), (True, "True")):
+            with self.subTest(bad=bad):
+                self.write_budget(bad)
+                before = self.store_files()
+                wanted = (f"restaurant.json roundBudget {shown} is invalid: "
+                          "it is not a whole number of 1 or more")
+                self.assertIn(wanted, self.brigade("watch", code=1))
+                self.assertIn(wanted, self.brigade("86", "add", "--dish", "D1", "--round-budget", code=1))
+                self.assertEqual(self.store_files(), before)
+                self.clear_budget()

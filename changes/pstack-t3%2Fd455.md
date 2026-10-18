@@ -1,0 +1,4 @@
+- kind feature
+- `roundBudget` in `restaurant.json` sets the round budget and `ROUND_BUDGET` in `store.py` stays its default of three
+- `set --round-budget N` writes the stored number and `set --round-budget` empty clears it
+- `reviews.py` and `wake.py` read the stored number for the cap, the refusal, the decision, and the snapshot cues

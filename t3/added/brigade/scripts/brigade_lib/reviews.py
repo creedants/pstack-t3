@@ -24,7 +24,7 @@ from brigade_lib import seam
 from brigade_lib.edits import HEADING, NEEDS_COMMANDS, commit_tree, replay, report_edits
 from brigade_lib.reports import NOT_A_REPORT, REVIEW_FILE, in_reports, report_stat
 from brigade_lib.shared import BrigadeError, clean, fence_close, one_of, stored, threads_fence_open
-from brigade_lib.store import CHILD_ROLES, EDITS_VERDICT, OWING_STATES, REASONS, REASON_VERDICTS, ROUND_BUDGET, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, THREADS_WRITERS, UNRECORDED_REASON, VERDICTS, WORKER_ROLES, roles_script
+from brigade_lib.store import CHILD_ROLES, EDITS_VERDICT, OWING_STATES, REASONS, REASON_VERDICTS, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, THREADS_WRITERS, UNRECORDED_REASON, VERDICTS, WORKER_ROLES, roles_script, round_budget_of
 
 CLAIMS_LINE = re.compile(r"^[ \t#>*+\-_`\d.)]*Claims check", re.M)
 CLAIMS_STATES = ("in-review", "passed")
@@ -93,7 +93,8 @@ def round_debt(restaurant, dish):
     if dish["state"] not in OWING_STATES:
         return 0
     count = round_count(restaurant, dish["id"])
-    return count if count >= ROUND_BUDGET else 0
+    budget = round_budget_of(restaurant.meta)
+    return count if count >= budget else 0
 
 
 def fix_round_refusal(restaurant, dish):
@@ -106,14 +107,15 @@ def fix_round_refusal(restaurant, dish):
 
 
 def round_decision(restaurant, dish_id):
-    """The question, options, and default of the decision an item owes at ROUND_BUDGET send-backs."""
+    """The question, options, and default of the decision an item owes at its round budget."""
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if dish["state"] not in OWING_STATES:
         raise BrigadeError(f"{dish_id} is {dish['state']}; it owes no round decision")
     count = round_count(restaurant, dish_id)
-    if count < ROUND_BUDGET:
+    budget = round_budget_of(restaurant.meta)
+    if count < budget:
         raise BrigadeError(f"{dish_id} has {count} send-back{'' if count == 1 else 's'} since its last pass or round decision; "
-                           f"the decision opens at {ROUND_BUDGET}")
+                           f"the decision opens at {budget}")
     question = (f"{dish_id} was sent back {count} times. Accept the remaining findings as known limits and land it, "
                 "send it through architect for a redesign, or drop it?")
     report = send_backs(restaurant.rows("pass.tsv"), dish_id)[-1]["report"]

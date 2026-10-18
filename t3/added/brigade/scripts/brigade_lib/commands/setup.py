@@ -26,7 +26,7 @@ from brigade_lib.compact import _load, drift_line, effective_cap, effective_prov
 from brigade_lib.items import doc_policy
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
-from brigade_lib.store import AUTOFIRE, CHANGE_NOTE_KEY, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, REPORTING, SCRATCH_KEY, change_note_dir, is_admin, liveness_of, low_reserve_of, open_restaurant, parse_change_note_dir, parse_liveness_ms, parse_low_reserve, sibling_lines, siblings, scratch_parent_text
+from brigade_lib.store import AUTOFIRE, CHANGE_NOTE_KEY, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, REPORTING, ROUND_BUDGET_KEY, SCRATCH_KEY, change_note_dir, is_admin, liveness_of, low_reserve_of, open_restaurant, parse_change_note_dir, parse_liveness_ms, parse_low_reserve, parse_round_budget, round_budget_of, sibling_lines, siblings, scratch_parent_text
 from brigade_lib.tickets import cap_pairs, intake_list, review_pairs, set_intake
 
 COMMANDS = ("open", "set")
@@ -80,6 +80,9 @@ def register_set(sub):
     p.add_argument("--low-reserve", metavar="N",
                    help="the most workers still idle when a low ticket is held back while an urgent or normal "
                         "ticket can start; 0 holds no low ticket back; \"\" clears it to 1")
+    p.add_argument("--round-budget", metavar="N",
+                   help="the send-backs that owe a round decision. Higher waits for more send-backs. "
+                        "\"\" clears it to 3")
     p.add_argument("--liveness-ms", metavar="N",
                    help="the interval a new liveness schedule uses, a whole number of at least 60000; \"\" removes the setting")
     p.add_argument("--change-note-dir", metavar="DIR",
@@ -99,7 +102,7 @@ def register(sub):
 def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
-    It checks contextCap, coordinatorProvider, caps, review, lowReserve, livenessMs, affectedTests, sharedDocs,
+    It checks contextCap, coordinatorProvider, caps, review, lowReserve, roundBudget, livenessMs, affectedTests, sharedDocs,
     docTimebox, and changeNoteDir, by calling each setting's reader predicate, so a value accepted here is a value that reader
     accepts. A missing key keeps its default.
     """
@@ -107,6 +110,7 @@ def validate_settings(meta):
     effective_provider(meta)
     kind_limits(meta)
     low_reserve_of(meta)
+    round_budget_of(meta)
     liveness_of(meta)
     layout(meta)
     doc_policy(meta)
@@ -250,6 +254,11 @@ def setting_changes(restaurant, args):
             drop.append(LOW_RESERVE_KEY)
         else:
             changes[LOW_RESERVE_KEY] = parse_low_reserve(args.low_reserve)
+    if args.round_budget is not None:
+        if args.round_budget == "":
+            drop.append(ROUND_BUDGET_KEY)
+        else:
+            changes[ROUND_BUDGET_KEY] = parse_round_budget(args.round_budget)
     if args.liveness_ms is not None:
         if args.liveness_ms == "":
             drop.append(LIVENESS_KEY)
