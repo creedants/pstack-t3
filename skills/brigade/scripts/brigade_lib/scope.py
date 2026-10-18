@@ -193,13 +193,13 @@ def git_run(repo, *args):
 
 
 def read_status(project_root):
-    """Status text from land.py. Return None when the queue has no contract or the project is not a git repository. Refuse when the read fails."""
+    """Status text from land.py. Return the text on success. Return None only when the failed read names has no landing contract; run land.py init in it. That phrase is printed via land.py:337 and implies repository identity was read. Refuse every other failed or empty read. A not a git repository diagnostic is not proof of no contract."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
     result = land_result(project_root, "status")
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
-        if "has no landing contract" in detail or "not a git repository" in detail:
+        if "has no landing contract; run land.py init in it" in detail:
             return None
         raise BrigadeError(f"could not read landing status: {detail or result.returncode}")
     if not result.stdout.strip():
@@ -285,7 +285,7 @@ def widen(restaurant, ident, add_text):
 
 
 def gate_outside(restaurant, ident, sha):
-    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease or queue has no contract. None when status names no trunk ref and a SHA is present. Refuse when the dish holds a lease under a contract but names no SHA. Refuse when the status read fails or when a fetch, merge-base, or diff step fails."""
+    """Coverage gate outside the lock. Return snapshot or None. None when dish holds no lease. None only for a clean missing-contract read on an identifiable repository. None when status names no trunk ref and a SHA is present. Refuse when the dish holds a lease under a contract but names no SHA. Refuse when the status read fails or when a fetch, merge-base, or diff step fails."""
     if HELD_LOCKS:
         raise BrigadeError(f"affected may run git; release {HELD_LOCKS[0]}'s store lock before scanning")
     with restaurant.checked():
