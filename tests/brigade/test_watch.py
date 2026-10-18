@@ -448,7 +448,7 @@ class WatchTest(BrigadeTest, _WakeRace):
         self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/2", again)
         self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "trunk"]), 1)
 
-    def test_trunk_green_prints_nothing_via_path_gh(self):
+    def test_trunk_green_adds_no_trunk_line(self):
         self.started()
         self._remote_trunk()
         payload = ('[{"conclusion":"success","status":"completed","headSha":"ddd444",'
