@@ -180,11 +180,22 @@ class AffectedTestsSetupTest(BrigadeTest):
         self.assertIn("--affected-tests", error)
         self.assertEqual(self.store_files(), before)
 
-    def test_set_refuses_a_nul_byte_in_the_affected_tests_path_and_writes_nothing(self):
+    def test_read_json_setting_refuses_a_nul_byte_in_the_affected_tests_path_and_writes_nothing(self):
         self.open()
         before = self.store_files()
-        error = self.brigade("set", "--affected-tests", "a\0b", code=1)
-        self.assertIn("--affected-tests", error)
+        import importlib
+        import sys
+        from types import SimpleNamespace
+        from .support import ROOT
+        scripts = str(ROOT / "t3/added/brigade/scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+            self.addCleanup(sys.path.remove, scripts)
+        setup_mod = importlib.import_module("brigade_lib.commands.setup")
+        shared_mod = importlib.import_module("brigade_lib.shared")
+        with self.assertRaises(shared_mod.BrigadeError) as ctx:
+            setup_mod._read_json_setting(SimpleNamespace(affected_tests="a\0b"), "affected_tests", "--affected-tests")
+        self.assertIn("--affected-tests", str(ctx.exception))
         self.assertEqual(self.store_files(), before)
 
     def test_set_clears_affected_tests_with_empty_string(self):
