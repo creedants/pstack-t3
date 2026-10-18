@@ -1,0 +1,4 @@
+- kind fix
+- `t3/added/brigade/scripts/brigade_lib/scope.py` returns None from `read_status` only when the status failure names no landing contract and refuses with the landing status detail otherwise, and `gate_outside` refuses a leased dish that names no SHA and wraps a status read failure with the dish id and a rerun repair instead of skipping either
+- `t3/added/brigade/scripts/brigade_lib/commands/items.py` always runs the in-review coverage gate with the flag SHA or the stored SHA or an empty string and drops the guard that skipped the gate when no SHA was in hand
+- `tests/brigade/test_review_sha.py` pins the empty-SHA refusal, the stored-SHA pass with no flag, and the status-failure refusal with the dish and store unchanged in each refusal
