@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from brigade_lib.layout import _layout, _one
+from brigade_lib import generated
 from brigade_lib.leases import STANDINGS, _claim_norm, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
 from brigade_lib.shared import age, clean, slug
 from brigade_lib.store import LOW_FLAG_DAYS, PRIORITIES_BY_RANK, low_reserve_of
@@ -114,8 +114,8 @@ def plan(tickets, refill, running, cap, level, refusals, now, low_reserve, expan
 def lease_refusals(meta, tickets):
     """The block on a waiting ticket's paths, or nothing when the landing queue would admit them.
 
-    The claim carries the ticket's saved paths and, when the project has a build layout, the generated copies the
-    layout maps from them. That is the claim `fire` builds for the same paths, minus the change note. The note is
+    The claim carries the ticket's saved paths and, when the contract holds a map, the generated copies the
+    map gives for them. That is the claim `fire` builds for the same paths, minus the change note. The note is
     named for the branch a `fire` runs on, which the preview does not know, so the preview passes no branch and
     claims no fragment. A guessed note would block a ticket whose paths are free.
     """
@@ -138,7 +138,7 @@ def scopes_overlap(first, second):
     return "" in first or "" in second or paths_overlap(first, second)
 
 
-def expanded_paths(tickets, lay):
+def expanded_paths(tickets, gen_map):
     found = {}
     for ticket in tickets:
         if not ticket.paths:
@@ -153,7 +153,7 @@ def expanded_paths(tickets, lay):
                 continue
             seen.add(made)
             norms.append(made)
-        if lay is None:
+        if gen_map is None or not gen_map.rules:
             found[ticket.id] = tuple(norms)
             continue
         extras = []
@@ -161,7 +161,7 @@ def expanded_paths(tickets, lay):
             if not made:
                 continue
             try:
-                got = _one(made, lay, ticket.doc_item)
+                got = generated.expand(gen_map, made, ticket.doc_item)
             except KeyboardInterrupt:
                 raise
             except Exception:
@@ -217,12 +217,12 @@ def startable(restaurant):
         running = running_workers(restaurant)
         refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
     try:
-        lay = _layout(meta["projectRoot"])
+        gen_map = generated.read(meta["projectRoot"])
     except KeyboardInterrupt:
         raise
     except Exception:
-        lay = None
-    expanded = expanded_paths(tickets, lay)
+        gen_map = generated.EMPTY
+    expanded = expanded_paths(tickets, gen_map)
     refusals = lease_refusals(meta, tickets)
     moment = datetime.now(timezone.utc)
     return startable_lines(plan(tickets, refill, running, worker_cap(meta), autofire_of(meta), refusals, moment, low_reserve,
