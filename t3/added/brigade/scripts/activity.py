@@ -231,6 +231,7 @@ class Unit:
     task: str
     kind: str = ""
     goal: str = ""
+    branch: str = ""
 
 
 @dataclass(frozen=True)
@@ -655,7 +656,7 @@ def read_store(directory):
         if row["kind"] == "worker" and row["state"] == "retired" and row["note"]:
             earlier.setdefault(row["id"], []).append(row["note"])
     by_id = {
-        row["id"]: Unit(row["id"], row["state"], row["summary"], row["pr"], row["thread"], tuple(earlier.get(row["id"], ())), row["task"], row["kind"], row["goal"])
+        row["id"]: Unit(row["id"], row["state"], row["summary"], row["pr"], row["thread"], tuple(earlier.get(row["id"], ())), row["task"], row["kind"], row["goal"], row["branch"])
         for row in units
     }
     name, root = record_text(meta, "restaurant"), record_text(meta, "projectRoot")
@@ -1233,8 +1234,14 @@ def unit_named(part, units):
 
 
 def assign(store, t3):
+    """One coordinator child unit when its id part or branch tail run matches one unit, else none. RECORD wins."""
     coordinators = frozenset(store.coordinators)
     units = {unit.id.lower(): unit.id for unit in store.units}
+    tails = {}
+    for unit in store.units:
+        tail = unit.branch.rsplit("/", 1)[-1].lower() if unit.branch else ""
+        if tail:
+            tails.setdefault(tail, []).append(unit.id)
     requested = {agent.request: thread for thread, agent in t3.agents.items() if agent.request and agent.parent in coordinators}
     recorded = {}
     for unit in store.units:
@@ -1249,8 +1256,17 @@ def assign(store, t3):
             if thread in recorded:
                 found[thread] = Assignment(recorded[thread], Evidence.RECORD)
             elif agent.parent in coordinators:
-                named = (unit_named(part, units) for part in (agent.request or "").split("-"))
-                unit = next((unit for unit in named if unit), None)
+                request = agent.request or ""
+                matched = set()
+                for part in request.replace("/", "-").split("-"):
+                    hit = unit_named(part, units)
+                    if hit:
+                        matched.add(hit)
+                padded = f"-{request.replace('/', '-').lower()}-"
+                for tail, ids in tails.items():
+                    if f"-{tail}-" in padded:
+                        matched.update(ids)
+                unit = next(iter(matched)) if len(matched) == 1 else None
                 found[thread] = Assignment(unit, Evidence.REQUEST if unit else Evidence.NONE)
             elif agent.parent in t3.agents and agent.parent not in below:
                 below.append(thread)
@@ -1419,7 +1435,7 @@ def attempt_tail(counts):
 
 
 def format_attempt(attempts, ranks, counts):
-    """One summary line for folded earlier attempts. Attempts holds clipped fielded cells in rank order. Ranks holds the rank of each. Counts holds RoleCounts in display order. With no attempts the summary is counts plus state, for a fold of lanes with no earlier ledger row."""
+    """One summary line for folded earlier attempts."""
     tail = attempt_tail(counts)
     if not attempts:
         return tail
@@ -1437,7 +1453,7 @@ def format_attempt(attempts, ranks, counts):
 
 
 def brief_attempt(ranks, counts):
-    """One bounded summary line for folded earlier attempts. Ranks holds the distinct ranks of the earlier ledger rows. Counts holds RoleCounts in display order. The head states the attempt count instead of enumerating attempts, so the line stays short when the ranks are not one contiguous range or when the enumeration is long. With no ranks the summary is counts plus state."""
+    """One summary line for folded earlier attempts."""
     tail = attempt_tail(counts)
     if not ranks:
         return tail
@@ -1446,10 +1462,7 @@ def brief_attempt(ranks, counts):
 
 
 def partition_attempts(dish_rows, rows, is_finished, privacy, threads=(), parents=()):
-    """Split one work item into current attempt lines and a fold of earlier attempts. Dish_rows holds raw threads.tsv rows for the dish. Rows holds timeline rows in tree preorder. Threads holds the agent thread of each row in the same order, and is empty when there is none to match. Parents holds the parent thread of each row in the same order, and is empty when there is none to match. Is_finished skips folding per finished(group). Returns current lines, the fold, and rows with earlier set.
-
-    A depth-0 row labelled `earlier worker` starts a family with the following depth greater than 0 rows until the next depth-0 row. A live row of a family and its ancestors by parent thread to the depth-0 root stay shown, and an earlier ledger row whose thread is one of those shown threads stays current. Every other family row is earlier. The fold counts each earlier ledger thread that an earlier-worker lane also holds once under its ledger role, and each other earlier ledger row once under its role, and each other earlier row once under its lane label, in `ROLES` order then unknown sorted. Attempts come from earlier ledger ranks only, so a fold of lanes alone states counts plus state. Matching is by raw thread values before privacy shapes them.
-    """
+    """Split one work item into current lines and a fold of earlier attempts."""
     if is_finished:
         current = tuple(
             LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
