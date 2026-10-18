@@ -1,0 +1,3 @@
+- kind fix
+- moved 3 next tests from tests/brigade/test_items.py to tests/brigade/test_items_next.py
+- lowered tests/brigade/test_items.py allowance to 27777 with no entry for tests/brigade/test_items_next.py
