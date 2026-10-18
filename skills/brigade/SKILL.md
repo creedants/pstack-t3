@@ -93,7 +93,7 @@ $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. -
 $B pass stats [--last N]   # first-pass rate overall and per author model over the last N items; default 20
 $B edits verify D2 --from <reviewed sha> --to <head>   # exits 1 when a compared path differs or the build or check command fails
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
-$B 86 add --dish D2 --round-budget           # the decision D2 owes at three send-backs. prints Q<n>
+$B 86 add --dish D2 --round-budget           # the decision D2 owes at its stored roundBudget send-backs. prints Q<n>
 $B 86 answer Q1 --answer "..." ; $B 86 list
 $B close [--dry-run | --to-file]             # report of what changed since the last one. --to-file prints only the written file's path
 python3 <skills>/brigade/scripts/brigade.py walk [--repo <project root>]

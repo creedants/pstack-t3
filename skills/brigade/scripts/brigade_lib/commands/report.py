@@ -27,7 +27,7 @@ from brigade_lib.reporting import REPAIR, log_rulings, report, reporting_of, sta
 from brigade_lib.reports import NOT_A_REPORT
 from brigade_lib.reviews import unrecorded_reviews
 from brigade_lib.shared import BrigadeError
-from brigade_lib.store import is_admin, liveness_of
+from brigade_lib.store import ROUND_BUDGET, is_admin, liveness_of, round_budget_of
 from brigade_lib.tickets import EVERY_ROW, count_labels, read_labels
 
 COMMANDS = ("status", "close", "walk")
@@ -100,6 +100,9 @@ def handle_locked(restaurant, args, view):
         if default_for:
             line += f" (default for {default_for})"
         lines.append(line)
+        budget = round_budget_of(meta)
+        if budget != ROUND_BUDGET:
+            lines.append(f"round budget: {budget} send-backs")
         labels = read_labels(restaurant, EVERY_ROW)
         lines += status_label_lines(labels, count_labels(restaurant, labels))
         if meta.get("reportsTo"):

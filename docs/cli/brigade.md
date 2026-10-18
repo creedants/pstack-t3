@@ -516,7 +516,7 @@ brigade.py [flags] 86 add [--question QUESTION] [--options OPTIONS] [--default D
 | `--options OPTIONS` |  |  |  |  |
 | `--default DEFAULT` |  |  |  |  |
 | `--dish DISH` |  |  |  |  |
-| `--round-budget` |  |  |  | with --dish: write the decision a dish owes at 3 send-backs; takes no question, options, or default |
+| `--round-budget` |  |  |  | with --dish: write the decision a dish owes at its stored roundBudget send-backs; takes no question, options, or default |
 
 ## brigade.py 86 answer
 
