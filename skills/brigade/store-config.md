@@ -20,9 +20,9 @@ The second interpreter file name is `python<major>` or `python<major>.<minor>`. 
 
 ## sharedDocs and docTimebox
 
-`sharedDocs` plus `docTimebox` set the shared-document catalog and timebox `fire` reads. Set them with `set --shared-docs` and `set --doc-timebox`. Each shared flag takes inline JSON, a JSON file, or `-` for stdin. For example `set --shared-docs config/shared.json` records the file contents and `set --doc-timebox 60` records 60 minutes.
+`sharedDocs` plus `docTimebox` set the shared-document catalog and timebox `fire` reads. Set them with `set --shared-docs` and `set --doc-timebox`. `--shared-docs` takes inline JSON, a JSON file, or `-` for stdin. `--doc-timebox` takes a whole number of minutes. For example `set --shared-docs config/shared.json` records the file contents and `set --doc-timebox 60` records 60 minutes.
 
-A `file` entry names one document. A `file` entry whose path ends with `/` names a directory prefix. Files under it are documents. A `skill` entry names a directory with or without its trailing slash. Its `SKILL.md` files are documents. `docTimebox` is a whole number of minutes above zero. It defaults to 90. `fire` refuses a lease holding a shared document when `--timebox` is over `docTimebox` or `--tickets` names more than one ticket, unless `--doc-item`. A successful `fire --doc-item` records the shared-document note `doc-item`.
+A `file` entry names one document. A `file` entry whose path ends with `/` names a directory prefix. Files under it are documents. A `skill` entry names a directory with or without its trailing slash. Its `SKILL.md` files are documents. `docTimebox` is a whole number of minutes above zero. It defaults to 90. `fire` refuses a lease holding a shared document when `--timebox` is over `docTimebox` or `--tickets` names more than one ticket, unless `--doc-item`. A successful `fire --doc-item` with no held shared document records the shared-document note `doc-item`. A successful `fire --doc-item` with held shared documents records `doc-item` followed by a colon and the sorted held documents.
 
 ## changeNoteDir
 
