@@ -22,7 +22,7 @@ python3 scripts/install.py
 python3 scripts/install.py doctor
 ```
 
-`doctor` should show `59/59 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back when it can do so without overwriting anything, as the [Uninstall](#uninstall) section describes.
+`doctor` should show `60/60 pstack-t3` for each provider you use. If it reports other copies of the same skills, you have an older pstack installed. Rerun with `python3 scripts/install.py --replace` to move it aside. `uninstall` puts it back when it can do so without overwriting anything, as the [Uninstall](#uninstall) section describes.
 
 `install` exits 3 when the run printed a line that begins `skipped`, as the **A skipped step exits 3.** bullet under [Uninstall](#uninstall) describes.
 
