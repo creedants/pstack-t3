@@ -144,41 +144,31 @@ def findings(root):
         if trusted_head.enabled:
             return [f"{baseline_rel}: size baseline at trunk tip cannot be read"]
         return []
+    base_raw, missing = _show_at(root, base, baseline_rel)
+    trusted = sizes.resolve_trusted(contract_max_raw, base_raw, missing, None)
+    if trusted.error:
+        return [f"{baseline_rel}: {trusted.error}"]
+    if not trusted.enabled:
+        return []
+    if not baseline_path.is_file():
+        if not missing:
+            return ["size limit: size baseline removes enabled policy; a person merges that raise outside the queue"]
     else:
-        base_raw, missing = _show_at(root, base, baseline_rel)
-        trusted = sizes.resolve_trusted(contract_max_raw, base_raw, missing, None)
-        if trusted.error:
-            return [f"{baseline_rel}: {trusted.error}"]
-        if not trusted.enabled:
-            return []
-        if not baseline_path.is_file():
-            if not missing:
-                return ["size limit: size baseline removes enabled policy; a person merges that raise outside the queue"]
-        else:
-            try:
-                work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                return [f"{baseline_rel}: size baseline cannot be read"]
-            if contract_on:
-                if not missing and isinstance(base_raw, dict):
-                    raw_max = base_raw.get("maxFileTokens", sizes.DEFAULT_MAX_TOKENS)
-                    if not isinstance(raw_max, int) or isinstance(raw_max, bool) or raw_max < 1:
-                        raw_max = trusted.limit.max_tokens
-                else:
-                    raw_max = trusted.limit.max_tokens
-                base_for_compare = {"maxFileTokens": raw_max,
-                                    "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
-                if trusted.committed_enabled:
-                    base_for_compare["enabled"] = True
-            else:
-                base_for_compare = {"enabled": True, "maxFileTokens": trusted.limit.max_tokens,
-                                    "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
-            problem = sizes.refused_policy_change(base_for_compare, work_raw, trusted.limit.max_tokens)
-            if problem:
-                if problem == "size baseline cannot be read":
-                    return [f"{baseline_rel}: {problem}"]
-                return [f"size limit: {problem}"]
-        limit = trusted.limit
+        try:
+            work_raw = json.loads(baseline_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return [f"{baseline_rel}: size baseline cannot be read"]
+        maximum = trusted.limit.max_tokens if missing else base_raw.get("maxFileTokens", sizes.DEFAULT_MAX_TOKENS)
+        base_for_compare = {"maxFileTokens": maximum,
+                            "skip": list(trusted.limit.skip), "files": dict(trusted.limit.files)}
+        if trusted.committed_enabled:
+            base_for_compare["enabled"] = True
+        problem = sizes.refused_policy_change(base_for_compare, work_raw, trusted.limit.max_tokens)
+        if problem:
+            if problem == "size baseline cannot be read":
+                return [f"{baseline_rel}: {problem}"]
+            return [f"size limit: {problem}"]
+    limit = trusted.limit
     skip = tuple(sizes.DEFAULT_SKIP) + tuple(limit.skip) + tuple(_generated_list(contract)) + (baseline_rel,)
     limit = sizes.Limit(limit.max_tokens, skip, limit.files)
     try:
