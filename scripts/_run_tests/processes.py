@@ -37,7 +37,7 @@ def children_by_parent() -> dict[int, list[int]]:
 
 
 class Watch:
-    """Notes SIGINT and SIGTERM, and holds the orphan handling the module docstring describes."""
+    """Notes SIGINT and SIGTERM, and holds the orphan handling described in scripts/run_tests.py."""
 
     def __init__(self) -> None:
         self.signals: list[int] = []
@@ -68,7 +68,7 @@ class Watch:
             os.waitpid(exited.si_pid, 0)
 
     def sweep(self, seconds: float = SWEEP_SECONDS) -> list[int]:
-        """Do what the module docstring says the runner does after its last child ends, for at most `seconds`. Return the pids still there."""
+        """Do what scripts/run_tests.py describes after the runner's last child ends, for at most `seconds`. Return the pids still there."""
         if not self.adopts:
             return []
         deadline = time.monotonic() + seconds
