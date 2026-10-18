@@ -14,8 +14,8 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | File | Read when |
 | --- | --- |
 | [roles.md](roles.md) | before resolving seats, weighing seat agreement, writing or validating a roles file, or when `roles.py` prints a note the section does not explain |
-| [waiting.md](waiting.md) | before waiting on children |
-| [host.md](host.md) | when a thread settles, snoozes, or runs on an older host, before you install or locate skills, or for history notes |
+| [waiting.md](waiting.md) | before collecting child results or waiting on children |
+| [host.md](host.md) | when a thread settles, snoozes, or runs on an older host, before you install or locate skills, before interpreting `hasPendingChildRuns`, `hasPendingQuestion`, or a `mode: "wait"` return, when a child's question wakes this thread, or for history notes |
 | [threads.md](threads.md) | before `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_fork`, `t3_thread_merge_back`, `run_scheduled_task_now`, or pausing a finite program's schedule |
 | [light.md](light.md) | before every spawn in light mode |
 | [gate-review.md](gate-review.md) | before reusing a gate verdict |
@@ -76,7 +76,7 @@ A deadline or timebox sets the order of work. It never waives a step. This holds
    - Use a stable `clientRequestId` so a retried call does not spawn a duplicate.
    - Retain every returned `taskId` in your todo list or work log.
 4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. When the role entry `roles.py show` printed for the child's seat has `haikuBrief`, paste its paragraphs unchanged, in order, at the end of the brief, per [Claude Haiku 5.5](#claude-haiku-55). A code-writing child inside a poteto-mode playbook opens with the poteto-agent persona body. Below it, paste unchanged the lines `python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" --playbook <name> --attempt <kind> [--brief-mode <value> | --session-mode light]` prints, per [Modes](#modes). They start with the `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`, and carry the required `Mode:` line. Write no `Playbook:` line of your own, because a second one fails the check. See [Resolve and carry the mode](#resolve-and-carry-the-mode) for the `Attempt:` and `Waived by mode:` lines. Copy the printed `Mode:` value into `--brief-mode` on the `roles.py show` call that seats the delegate, and pass no other mode flag. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged. A seat that matches this thread's model, or an edit that looks small, is not a `skip:` reason for the code delegate.
-5. Collect results. Read [waiting.md](waiting.md) before you wait on a child.
+5. Collect results. Read [waiting.md](waiting.md) before you collect child results or wait on a child.
 6. You own every child's output. Read the diff or the evidence yourself before you report it. A child's "done" is a claim, not a verification.
 
 Same-provider native subagent tools (Claude's Agent tool, Codex's subagents) are fine for an `inherit` seat when they run the parent's model. Use `delegate_task` for every other seat, including same-provider seats on another model. Never substitute a top-level thread for a child task.

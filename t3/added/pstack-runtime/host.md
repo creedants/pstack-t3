@@ -16,8 +16,8 @@ If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (n
 
 - On T3 Code 0.0.46-nightly.20261015.3145 or later, a child's question for the user does wake this thread, per [Pending requests](SKILL.md#pending-requests).
 - On T3 Code 0.0.46-nightly.20261015.3145 or later, `hasPendingQuestion` is `true` while a question blocks the child.
-- On T3 Code 0.0.46-nightly.20261015.3145 or later, a question that blocks the child also ends the wait, with `hasPendingQuestion: true` and `waitTimedOut: false`.
-- On T3 Code 0.0.46-nightly.20261008.2813 or later, a turn held in a stopped queue does not count, and startup recovery on that host repairs a task an older build left `working` behind a held queue.
+- On T3 Code 0.0.46-nightly.20261015.3145 or later, a question that blocks the child also ends the `mode: "wait"` call, with `hasPendingQuestion: true` and `waitTimedOut: false`.
+- On T3 Code 0.0.46-nightly.20261008.2813 or later, a turn held in a stopped queue does not count toward `hasPendingChildRuns` on `task_status`, and startup recovery on that host repairs a task an older build left `working` behind a held queue.
 - On T3 Code 0.0.46-nightly.20261015.3145 or later, `task_status` also shows `hasPendingQuestion: true` while a question blocks the child.
 - On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
 - On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text.
