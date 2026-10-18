@@ -428,6 +428,17 @@ class LandingTest(LandingTestBase):
         reported = self.land("size", "--staged", ok=False)
         self.assertIn("removes enabled policy", reported)
 
+    def test_a_staged_broken_index_baseline_reports_cannot_be_read_when_the_worktree_copy_is_broken(self):
+        (self.work / "data.txt").write_text("x" * 24000)
+        self.assertIn("size ok", self.land("size"))
+        self.commit("seed")
+        sh("git", "push", "-q", "origin", "main", cwd=self.work)
+        self.init_with_limit()
+        (self.work / "size-baseline.json").write_text("{broken worktree")
+        sh("git", "add", "size-baseline.json", cwd=self.work)
+        reported = self.land("size", "--staged", ok=False)
+        self.assertIn("size baseline cannot be read", reported)
+
     def test_seed_omits_a_skipped_over_limit_file(self):
         (self.work / "vendor").mkdir(exist_ok=True)
         (self.work / "vendor" / "big.py").write_text("x" * 20004)

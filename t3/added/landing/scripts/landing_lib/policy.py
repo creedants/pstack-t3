@@ -486,6 +486,21 @@ def _size_contract(path):
         return {}
 
 
+def _index_baseline_broken(repo, baseline_rel):
+    """True when the index holds a baseline file that does not parse."""
+    try:
+        shown = seam.git("show", f":0:{baseline_rel}", cwd=repo, check=False)
+    except seam.LandError:
+        return False
+    if shown is None or shown.returncode != 0:
+        return False
+    try:
+        json.loads(shown.stdout)
+    except json.JSONDecodeError:
+        return True
+    return False
+
+
 def _head_names(repo):
     out = seam.git("ls-tree", "-r", "--name-only", "-z", "HEAD", cwd=repo, check=False, exact=True).stdout
     return [path for path in out.split("\0") if path]
@@ -515,6 +530,11 @@ def size_report(path, staged, all_files, shrink, baseline):
     try:
         stored = seam.load_baseline_file(str(baseline_path))
     except ValueError as error:
+        # The staged path reports the index failure when both copies do not parse.
+        if staged:
+            _, head_missing = _show_baseline_raw(repo, "HEAD", baseline_rel)
+            if not head_missing and _index_baseline_broken(repo, baseline_rel):
+                raise seam.LandError("size baseline cannot be read") from error
         raise seam.LandError(str(error)) from error
     if shrink:
         maximum = contract.get("sizeMaxTokens") or stored.max_tokens
