@@ -95,7 +95,7 @@ class WatchIdleTest(BrigadeTest):
         expected = f"D1: idle since {_local_of(completed)} with no report (thread thread-9)"
         self.assertIn(expected, out)
 
-    def test_quiet_past_threshold_prints_idle(self):
+    def test_ended_old_prints_idle_at_once(self):
         self.open()
         self.fire_one(timebox="60")
         home = self._t3home()
