@@ -233,11 +233,15 @@ def _contract_trunk(project_root):
 
 def _owner_repo(repo, remote):
     """The owner/repo for one contract remote or an error reason."""
+    if not Path(str(repo)).is_dir():
+        return None, "repo not found"
     try:
         proc = subprocess.run(
             ["git", "remote", "get-url", remote],
             cwd=str(repo), capture_output=True, text=True, timeout=10)
     except FileNotFoundError:
+        if not Path(str(repo)).is_dir():
+            return None, "repo not found"
         return None, "git not found"
     except subprocess.TimeoutExpired:
         return None, "git timed out"
@@ -259,12 +263,16 @@ def _owner_repo(repo, remote):
 
 def _gh_runs(repo, trunk, owner_repo):
     """The gh run list for one trunk or an error reason."""
+    if not Path(str(repo)).is_dir():
+        return None, "repo not found"
     try:
         result = subprocess.run(
             ["gh", "run", "list", "--repo", owner_repo, "--branch", trunk, "--limit", "100",
              "--json", "conclusion,status,headSha,createdAt,url,workflowName"],
             cwd=str(repo), capture_output=True, text=True, timeout=20)
     except FileNotFoundError:
+        if not Path(str(repo)).is_dir():
+            return None, "repo not found"
         return None, "gh not found"
     except subprocess.TimeoutExpired:
         return None, "gh timed out"
