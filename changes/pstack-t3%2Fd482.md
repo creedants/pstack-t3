@@ -5,5 +5,5 @@
 - update hard-coded queue test id to new dotted path and keep discovery top as tests
 - `governor`, `merge`, `policy`, and `queue` facades re-export their private packages and patching a name here does not reach callers
 - restore the `/proc` skip guard on the descriptor cleanup test with no assertion change
-- keep the parser build inside the isolated entry load and read parser constants at call time with no `sys.path` change and no public cache entry
+- load the parser builder inside the isolated entry load and read entry parser constants at call time without changing `sys.path` or cached `landing_lib` modules
 - add in-process parser isolation tests for path and cache, unrelated cached package, and entry cap binding
