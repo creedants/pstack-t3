@@ -1,0 +1,6 @@
+- kind feature
+- Light is the default mode when no brief, session, coordinator, project, or user setting sets one.
+- `t3/scripts/roles.py` `DEFAULT_MODE` is light, and the user write path shares it through `DEFAULT_MODE.mode`.
+- Full stays an accepted value everywhere, and escalation to full is unchanged.
+- `t3/runtime.md`, `t3/setup.md`, `t3/added/brigade/opening.md`, `docs/light-mode.md`, and `docs/guide.md` name light as the default and full as the choice.
+- `tests/test_roles_mode.py` and `tests/test_roles_cli.py` pin the light default and the capped seats it implies.

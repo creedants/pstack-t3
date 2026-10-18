@@ -192,11 +192,11 @@ pstack-t3 runs each piece of work in `full` or `light` mode. Full mode runs ever
 
 ### Resolve and carry the mode
 
-`roles.py mode` and `roles.py show` resolve one effective mode. The highest level present wins. The order is the brief, then the session, then the coordinator, then the project file `.pstack/t3-roles.json`, then the user file `roles.json`, then `full`.
+`roles.py mode` and `roles.py show` resolve one effective mode. The highest level present wins. The order is the brief, then the session, then the coordinator, then the project file `.pstack/t3-roles.json`, then the user file `roles.json`, then `light`.
 
 - A brief's `Mode:` line is the frozen decision. A child copies that line's bare value into `--brief-mode` on every `roles.py mode` and `roles.py show` call it makes, and passes no other mode flag. It never resolves the mode again.
 - The user's words set the session. `$poteto-mode light`, "light mode", or "use light mode" in a request sets this thread to light. "full mode" sets it back. A light session passes `--session-mode light` on every `roles.py` call that has no brief value, except the explicit reflect below.
-- With neither, pass no mode flag. The roles files decide, and a missing key is `full`.
+- With neither, pass no mode flag. The roles files decide, and a missing key is `light`.
 - A user's explicit reflect passes `--session-mode full` on every `roles.py show` call it makes, whatever the session or the roles files say. A call with no mode flag would fall through to a roles file that stores light. The session stays light after it.
 
 Every brief whose child resolves seats or spawns carries the mode. Get the lines from `roles.py mode`, never from memory.
