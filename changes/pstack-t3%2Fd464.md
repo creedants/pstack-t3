@@ -1,0 +1,6 @@
+- kind fix
+- `t3/added/brigade/scripts/brigade_lib/scope.py` `gate_outside` returns None when the dish holds no lease or the queue has no contract or the trunk ref is missing and refuses review when a leased dish under a contract hits a git failure.
+- `t3/added/brigade/scripts/brigade_lib/scope.py` `gate_outside` refuses a failed fetch with a fetch repair and refuses a failed merge-base or diff with a SHA repair.
+- `t3/added/brigade/scripts/brigade_lib/scope.py` `gate_outside` keeps the no-lease skip and the no-contract skip.
+- `tests/brigade/test_watch.py`, `tests/brigade/test_wake.py`, and `tests/brigade/test_items.py` replace fake leased-dish SHAs with real covered commits on `perf/d1` changing `README.md`.
+- `tests/brigade/test_widen.py` pins the fetch refusal, the bad-SHA refusal, the no-lease skip, and the no-contract skip.

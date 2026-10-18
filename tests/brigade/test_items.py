@@ -380,7 +380,8 @@ class ItemsTest(BrigadeTest, _ItemsRace):
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", "--thread", "w9", ok=False), self.NO_FIX_ROUND)
         self.assertEqual(tuple((self.at / name).read_bytes() for name in ("dishes.tsv", "log.tsv", "86.tsv")), before)
         self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\n" + self.PENDING)
-        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", "a3"), "D1 in-review")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-progress", ok=False), self.NO_FIX_ROUND)
 
     def test_known_limits_closes_the_round_decision_and_lifts_the_refusal(self):
@@ -394,7 +395,8 @@ class ItemsTest(BrigadeTest, _ItemsRace):
 
     def test_late_send_backs_written_after_a_pass_count_once_the_item_is_back_in_progress(self):
         self.started()
-        self.passed("a1")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.passed(sha)
         for sha in ("m1", "m2", "m3"):
             self.assertEqual(self.send_back(sha, "--late"), "D1: late send-back on record; D1 stays passed")
         self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")

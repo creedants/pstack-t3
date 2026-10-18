@@ -111,7 +111,8 @@ class WatchTest(BrigadeTest, _WakeRace):
 
     def test_a_released_or_unreadable_lease_gets_its_own_line(self):
         self.started()
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", sha)
         self.land("lease", "release", "L1")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: lease L1 was released; claim again before submitting")
         before = (self.at / "restaurant.json").read_text()
@@ -122,8 +123,9 @@ class WatchTest(BrigadeTest, _WakeRace):
 
     def test_review_passed_parked_and_sent_back_items_each_get_a_watch_line_and_renew(self):
         self.started()
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
         verdict = ("pass", "record", "D1", "--sha", "abc1234", "--author", CODEX, "--verifier", CLAUDE, "--verdict")
-        steps = [(("dish", "D1", "--state", "in-review", "--sha", "abc1234"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review"),
+        steps = [(("dish", "D1", "--state", "in-review", "--sha", sha), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review"),
                  ((*verdict, "send-back"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back"),
                  ((*verdict, "blocked"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: parked"),
                  ((*verdict, "pass"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")]
@@ -137,7 +139,8 @@ class WatchTest(BrigadeTest, _WakeRace):
     def test_watch_names_the_pending_decision_in_review_and_parked(self):
         self.started()
         self.sent_back(3)
-        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review"), "D1 in-review")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + self.PENDING)
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a3", "--verdict", "blocked", "--author", CODEX,
                                       "--verifier", CLAUDE), "D1 blocked")
@@ -166,7 +169,8 @@ class WatchTest(BrigadeTest, _WakeRace):
     def test_an_open_item_decision_replaces_the_in_review_line(self):
         self.started()
         self.assertEqual(self.park_item(), "Q1")
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", sha)
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
 
     def test_an_expired_lease_under_a_held_item_follows_the_decision_line(self):
@@ -204,7 +208,8 @@ class WatchTest(BrigadeTest, _WakeRace):
     def test_answering_an_item_decision_restores_the_in_review_line(self):
         self.started()
         self.park_item()
-        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc1234")
+        sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", sha)
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\n" + HELD_LINE)
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "moved"), "Q1 answered")
         self.assertEqual(self.brigade("watch"), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review")
