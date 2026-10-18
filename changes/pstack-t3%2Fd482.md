@@ -3,3 +3,7 @@
 - split `tests/landing` merge, queue, leases, identity, and in-process suites into behavior-grouped packages with `base` mixins
 - update `landing_lib` areas to match facades and fix drift for exclusive max, ruleset pages, heartbeat, size helpers, and tail
 - update hard-coded queue test id to new dotted path and keep discovery top as tests
+- `governor`, `merge`, `policy`, and `queue` facades re-export their private packages and patching a name here does not reach callers
+- restore the `/proc` skip guard on the descriptor cleanup test with no assertion change
+- keep the parser build inside the isolated entry load and read parser constants at call time with no `sys.path` change and no public cache entry
+- add in-process parser isolation tests for path and cache, unrelated cached package, and entry cap binding

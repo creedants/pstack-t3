@@ -1,3 +1,4 @@
+"""Re-exports names from _merge. Patch a name in the _merge module that reads it. Patching it here does not reach callers."""
 from ._merge.rollup import (MERGE_REQUESTED, WAITING_FOR_CHECKS, BASE_MOVED_RETRIES, BASE_MOVED_WAIT, ABSENT_CHECKS_GRACE, RULESET_MAX_PAGES, BLOCKER_QUERY, classify_rollup, unposted_merge_refusal, base_moved_refusal, merge_requested, OBJECT_ID, PR_STATES, CheckRead, absent_since, absence_waits, tsv_field_text, merge_blocker)
 from ._merge.required import (_protection_contexts, _ruleset_contexts, read_required_contexts, missing_required, refusal_waits, request_merge)
 from ._merge.forge import (_CLIENT_ABSENT_REF, _GITHUB_OWNER_REPO, http_status, forge_branch_status, github_owner_repo, push_urls, forge_name_with_owner, forge_is_only_push_target, remote_branch_is_gone, forget_local_branch, opened_on_another_branch, delete_queue_branch)

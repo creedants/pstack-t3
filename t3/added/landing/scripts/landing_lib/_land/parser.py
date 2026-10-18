@@ -1,17 +1,21 @@
 import argparse
-from landing_lib.foundation import LEGACY_MODES, MERGE_METHODS, MODES
-from landing_lib.governor import EXCLUSIVE_CAP
-from landing_lib.store import AUTHOR_POLICIES
+from landing_lib.foundation import LEGACY_MODES as _DEFAULT_LEGACY_MODES
+from landing_lib.foundation import MERGE_METHODS as _DEFAULT_MERGE_METHODS
+from landing_lib.foundation import MODES as _DEFAULT_MODES
+from landing_lib.governor import EXCLUSIVE_CAP as _DEFAULT_EXCLUSIVE_CAP
+from landing_lib.store import AUTHOR_POLICIES as _DEFAULT_AUTHOR_POLICIES
 
 
-def build_parser(description):
+def build_parser(description, exclusive_cap=_DEFAULT_EXCLUSIVE_CAP, modes=_DEFAULT_MODES,
+                 legacy_modes=_DEFAULT_LEGACY_MODES, merge_methods=_DEFAULT_MERGE_METHODS,
+                 author_policies=_DEFAULT_AUTHOR_POLICIES):
     top = argparse.ArgumentParser(prog="land.py", description=description)
     top.add_argument("--repo", default=".", help="any checkout of the repository (default: current directory)")
     sub = top.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init", help="write the repository's landing contract")
     p.add_argument("--trunk", required=True, help="branch on the remote, or a lane name in local mode")
-    p.add_argument("--mode", choices=MODES + tuple(LEGACY_MODES), required=True,
+    p.add_argument("--mode", choices=modes + tuple(legacy_modes), required=True,
                    help="human: PRs you merge; merge: PRs the queue merges; push: no PRs, the queue pushes trunk; local: a lane ref")
     p.add_argument("--remote", default="origin")
     p.add_argument("--base", default="", help="local mode: the commit the lane starts from")
@@ -23,13 +27,13 @@ def build_parser(description):
                    help="entries checked together; a failed batch lands one at a time. Omitted, a rerun keeps the stored batch and a first init stores 1")
     p.add_argument("--timeout", type=int, default=None,
                    help="seconds before a check is killed. Omitted, a rerun keeps the stored timeout and a first init stores 1800")
-    p.add_argument("--merge-method", choices=MERGE_METHODS, default=None,
+    p.add_argument("--merge-method", choices=merge_methods, default=None,
                    help="merge mode: how the queue merges its PRs, checked against the repository when gh can report the "
                         "allowed methods, whenever it is set. "
                         "omitted in merge mode, a first init stores the only allowed method, or prefers merge then squash "
                         "when several are allowed, or merge when gh cannot say, and a rerun keeps the stored method while "
                         "the repository allows it")
-    p.add_argument("--author-policy", choices=AUTHOR_POLICIES, default=None,
+    p.add_argument("--author-policy", choices=author_policies, default=None,
                    help="how the queue judges a reviewed commit's author. any skips the check. configured and credited "
                         "check only when the repository has a configured identity: configured requires that author, and "
                         "credited also lands an entry whose commits by another author each carry a Co-authored-by trailer "
@@ -70,8 +74,8 @@ def build_parser(description):
 
     mode_help = "switch human, merge, or push when the queue is empty. --merge-method may change while entries are in flight"
     p = sub.add_parser("mode", help=mode_help, description=mode_help)
-    p.add_argument("mode", choices=MODES + tuple(LEGACY_MODES))
-    p.add_argument("--merge-method", choices=MERGE_METHODS)
+    p.add_argument("mode", choices=modes + tuple(legacy_modes))
+    p.add_argument("--merge-method", choices=merge_methods)
 
     times_help = ("report submit-to-landed minutes for the last N landed entries, one line per entry then a summary line. "
                   "A line holds the entry's id, holder, PR, and minutes to one decimal, and the PR prints - when the entry has none. "
@@ -172,7 +176,7 @@ def build_parser(description):
                    help="take N worker slots in one admission. The default is 1. "
                         "A value above the governor's worker slots is refused")
     p.add_argument("--for", dest="slot_for", metavar="SECONDS", default=None,
-                   help=f"cap this exclusive hold at SECONDS. The default is {EXCLUSIVE_CAP:g}. "
+                   help=f"cap this exclusive hold at SECONDS. The default is {exclusive_cap:g}. "
                         "The maximum is the governor exclusiveMax, 7200 by default. A value over the default needs --reason")
     p.add_argument("--reason", dest="slot_reason", metavar="TEXT", default=None,
                    help="why this exclusive hold may pass the default cap. Waiters see it")

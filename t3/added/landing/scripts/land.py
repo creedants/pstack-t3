@@ -67,25 +67,23 @@ try:
     import landing_lib.contests as _contests_mod
     import landing_lib.drain as _drain_mod
     import landing_lib.times as _times_mod
+    import landing_lib._land.parser as _parser_mod
     for _mod in (_governor_mod, _store_mod, _policy_mod, _sizes_mod, _genmap_mod, _leases_mod, _queue_mod,
                 _merge_mod, _contests_mod, _drain_mod, _times_mod):
         globals().update({k: v for k, v in vars(_mod).items() if not k.startswith("__") and k != "seam"})
+    _build_parser = _parser_mod.build_parser
 finally:
     _sys.dont_write_bytecode = _bw
     _drop_cached_landing("landing_lib", _pkg)
     _sys.modules.update(_prior_landing)
 del _bw, _drop_cached_landing, _pkg, _alias, _libdir, _types, _uuid, _prior_landing
 del _foundation_mod, _governor_mod, _store_mod, _policy_mod, _sizes_mod, _genmap_mod, _leases_mod, _queue_mod
-del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod
+del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod, _parser_mod
 
 def parser():
-    import sys
-    from pathlib import Path as _ParserPath
-    _scripts = str(_ParserPath(__file__).resolve().parent)
-    if _scripts not in sys.path:
-        sys.path.insert(0, _scripts)
-    from landing_lib._land.parser import build_parser
-    return build_parser(__doc__.splitlines()[0])
+    return _build_parser(__doc__.splitlines()[0], exclusive_cap=EXCLUSIVE_CAP, modes=MODES,
+                         legacy_modes=LEGACY_MODES, merge_methods=MERGE_METHODS,
+                         author_policies=AUTHOR_POLICIES)
 
 
 def run(argv):
