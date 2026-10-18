@@ -59,5 +59,5 @@ class PackageTest(unittest.TestCase):
         reference_function = check._module_function(ast.parse(reference_path.read_text(), str(reference_path)), check.FENCE_FUNCTION)
         reference = ast.dump(reference_function)
         copy = f"Copy {check.FENCE_FUNCTION} and {check.FENCE_SETUP} from tests/{check.FENCE_REFERENCE}"
-        findings = check._package_findings(tests_dir, "tests", reference, copy, "install", "support.py", "tests.install.support")
+        findings = check._package_findings(tests_dir, "tests", reference, copy, "install_tests", "support.py", "tests.install_tests.support")
         self.assertEqual(findings, [])

@@ -1,4 +1,4 @@
 - kind polish
 - entry is a thin facade over `scripts/_install/` with same commands and output
-- `tests/install/` replaces `tests/test_install.py` with behavior slices in `test_part_01.py` through `test_part_21.py` plus shared helpers
+- `tests/install_tests/` replaces `tests/test_install.py` with behavior slices in `test_part_01.py` through `test_part_21.py` plus shared helpers
 - test checkouts copy `scripts/_install/` beside the entry
