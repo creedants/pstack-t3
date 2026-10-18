@@ -35,6 +35,9 @@ BASE_MOVED_WAIT = 2
 ABSENT_CHECKS_GRACE = timedelta(minutes=5)
 
 
+RULESET_MAX_PAGES = 50
+
+
 BLOCKER_QUERY = (
     'def check_name: .name // .context; '
     '[.reviewDecision // "", '
@@ -301,59 +304,67 @@ def _protection_contexts(store):
 def _ruleset_contexts(store):
     """Contexts for the trunk from rulesets, or None.
 
-    The gh path is repos/{owner}/{repo}/rules/branches/<trunk>.
+    The gh path is repos/{owner}/{repo}/rules/branches/<trunk> with per_page 100.
     gh fills {owner} and {repo} from the checkout, as forge_branch_status already does.
-    Return a tuple of non-empty strings from rules carrying required status checks when gh exits 0 and the body is a JSON list of dicts or a JSON object holding a rules list of dicts. An endpoint with no required status check rule returns (). Return None on a non-zero gh exit, on stdout that is not valid JSON, on a body that is neither that list nor that object, on a rule that is not a dict, and on a context that is not a non-empty string.
+    Every page is read until a short page, up to 50 pages.
+    Return a tuple of non-empty strings from rules carrying required status checks when every page exits 0 and each body is a JSON list of dicts or a JSON object holding a rules list of dicts. An endpoint with no required status check rule returns (). Return None on a non-zero gh exit on any page, on stdout that is not valid JSON, on a body that is neither that list nor that object, on a rule that is not a dict, on a context that is not a non-empty string, and when 50 full pages arrive with no short page.
     """
-    result = seam.gh(
-        "api",
-        "repos/{owner}/{repo}/rules/branches/" + store.contract["trunk"],
-        cwd=store.repo,
-    )
-    if result.returncode != 0:
-        return None
-    try:
-        body = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(body, dict) and isinstance(body.get("rules"), list):
-        body = body["rules"]
-    if not isinstance(body, list):
-        return None
     found = []
-    for rule in body:
-        if not isinstance(rule, dict):
+    per_page = 100
+    base = "repos/{owner}/{repo}/rules/branches/" + store.contract["trunk"]
+    for page in range(1, RULESET_MAX_PAGES + 1):
+        result = seam.gh(
+            "api",
+            f"{base}?per_page={per_page}&page={page}",
+            cwd=store.repo,
+        )
+        if result.returncode != 0:
             return None
-        params = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
-        is_checks = rule.get("type") == "required_status_checks"
-        checks_value = None
-        if isinstance(params.get("required_status_checks"), list):
-            checks_value = params["required_status_checks"]
-            is_checks = True
-        elif isinstance(rule.get("required_status_checks"), list):
-            checks_value = rule["required_status_checks"]
-            is_checks = True
-        elif is_checks and isinstance(params.get("contexts"), list):
-            checks_value = params["contexts"]
-        if not is_checks:
-            continue
-        if checks_value is None:
-            continue
-        if not isinstance(checks_value, list):
+        try:
+            body = json.loads(result.stdout)
+        except json.JSONDecodeError:
             return None
-        for item in checks_value:
-            if isinstance(item, str):
-                if item == "":
-                    return None
-                found.append(item)
-            elif isinstance(item, dict):
-                context = item.get("context")
-                if not isinstance(context, str) or context == "":
-                    return None
-                found.append(context)
-            else:
+        if isinstance(body, dict) and isinstance(body.get("rules"), list):
+            rules = body["rules"]
+        elif isinstance(body, list):
+            rules = body
+        else:
+            return None
+        for rule in rules:
+            if not isinstance(rule, dict):
                 return None
-    return tuple(found)
+            params = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+            is_checks = rule.get("type") == "required_status_checks"
+            checks_value = None
+            if isinstance(params.get("required_status_checks"), list):
+                checks_value = params["required_status_checks"]
+                is_checks = True
+            elif isinstance(rule.get("required_status_checks"), list):
+                checks_value = rule["required_status_checks"]
+                is_checks = True
+            elif is_checks and isinstance(params.get("contexts"), list):
+                checks_value = params["contexts"]
+            if not is_checks:
+                continue
+            if checks_value is None:
+                continue
+            if not isinstance(checks_value, list):
+                return None
+            for item in checks_value:
+                if isinstance(item, str):
+                    if item == "":
+                        return None
+                    found.append(item)
+                elif isinstance(item, dict):
+                    context = item.get("context")
+                    if not isinstance(context, str) or context == "":
+                        return None
+                    found.append(context)
+                else:
+                    return None
+        if len(rules) < per_page:
+            return tuple(found)
+    return None
 
 
 def read_required_contexts(store):
