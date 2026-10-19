@@ -12,3 +12,4 @@
 - Restore the digest reason into the admin reporting level step
 - Remove the repeated Filing detail tails in reference/commands.md
 - Trim core repetition so both generated skills stay under 5000 tokens
+- Check and run brigade command lines from SKILL.md plus every reference file in sorted order
