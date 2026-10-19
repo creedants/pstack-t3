@@ -1,0 +1,2 @@
+- kind polish
+- `tests/release_tests/test_archive_utf8.py` holds the exit 1 refusal `docs/changelog/0.1.0.md is not UTF-8; fix it` for an archive file that is not UTF-8, and asserts `CHANGELOG.md`, `changes/`, and `docs/changelog/` are unchanged.
