@@ -172,7 +172,7 @@ class PinnedBrowserTest(unittest.TestCase):
         grp = replace(group(merged, current, first, second), collapsed=True)
         built = replace(page(grp, hidden=MOD["Hidden"]()), legend=(("model-a", 3),))
         document = MOD["render_html"](built, CLEAN)
-        self.assertIn("data-collapsed", MOD["COLLAPSE_SCRIPT"])
+        self.assertEqual(data_of(document)["C"], [True])
         probe = "".join((
             "<script>",
             "var head=document.querySelector('#o .tl .grp');",
@@ -186,6 +186,7 @@ class PinnedBrowserTest(unittest.TestCase):
             "var afterSummary=null,openAfterSummary=null;",
             "if(details){",
             "details.querySelector('summary').click();",
+            "details.dispatchEvent(new Event('toggle'));",
             "afterSummary=disp();",
             "openAfterSummary=details.open;",
             "}",
@@ -204,4 +205,4 @@ class PinnedBrowserTest(unittest.TestCase):
         self.assertEqual(seen["afterHead"][1:], ["none", "none"])
         self.assertTrue(seen["summaryOk"])
         self.assertTrue(seen["openAfterSummary"])
-        self.assertEqual(seen["afterSummary"][0], "grid")
+        self.assertEqual(seen["afterSummary"], ["grid", "grid", "grid"])

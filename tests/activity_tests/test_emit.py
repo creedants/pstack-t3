@@ -39,7 +39,7 @@ class EmitTest(OutputCase):
             yield build.__name__ + " capped", MOD["cap_everything"](unfolded)
             yield build.__name__ + " shortened", MOD["shortened"](unfolded)
 
-    def test_every_string_of_the_data_element_is_one_clean_returned_and_the_document_outside_it_and_the_checksum_is_the_same_for_every_page(self):
+    def test_html_data_strings_pass_through_clean_and_each_fixed_shell_excludes_private_words(self):
         shells = set()
         for name, drawn_page in self.pages():
             with self.subTest(name):

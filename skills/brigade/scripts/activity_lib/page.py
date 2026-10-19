@@ -482,7 +482,7 @@ def model_slot(name: str) -> int:
 
 
 def palette_of(legend) -> dict:
-    """Distinct color slots in sorted name order, with OTHER_MODEL sharing OTHER_SLOT. Stable for one model set."""
+    """Allocate in sorted name order. Reserve OTHER_SLOT for OTHER_MODEL. Wrap after eleven named models. Stable for one model set."""
     palette, used = {}, {MIXED_SLOT, OTHER_SLOT}
     available = [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]
     for name in sorted(name for name, _ in legend):
