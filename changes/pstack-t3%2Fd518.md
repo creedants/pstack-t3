@@ -4,5 +4,5 @@
 - a widen refuses a submitted or released lease and refuses a clash or reservation, and a refusal rolls back every row it would write
 - a widen folds another active unexpired lease of the same holder into the widened lease by adding its paths and releasing it in the same transaction, so the next `dish --add-paths` reconciles an interrupted claim-and-swap
 - an expired lease is widened by re-admitting it on the merged paths with a fresh ttl
-- `dish --add-paths` calls `land.py lease widen` and records the same lease id, so a live item never claims a second lease and swaps
+- `dish --add-paths` calls `land.py lease widen` and records the same lease id while the recorded lease is live or expired; a released or missing lease records the holder's newest live lease, or a fresh claim when it holds none
 - `watch` keeps renewing the recorded lease and does not fold another lease into it

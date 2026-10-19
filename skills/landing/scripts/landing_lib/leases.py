@@ -95,8 +95,9 @@ def admission(store, db, holder, wanted, renewing=None, excluding=()):
     """Arm what can arm, then test a lease on these paths for holder.
 
     Returns the other holders' overlapping leases, a refusal, and the standing reservations the lease takes from.
-    Run it inside the transaction that writes the lease, so two claims cannot both pass. A caller that writes a
-    lease still commits when refused, so arming is never lost to a refused claim. lease check runs it in
+    Run it inside the transaction that writes the lease, so two claims cannot both pass. `lease claim` and
+    `lease renew` commit when refused, so arming is never lost to them. `lease widen` raises inside its
+    transaction, which rolls arming back. lease check runs it in
     Store.trial, which rolls back, so a check arms no reservation and adds no log row. renewing is an expired
     lease id. A reservation that already lists it is taken again and left out of the count, so that renewal
     fits a full cap. excluding names lease ids left out of the cap and share count only. Arming and the clash
