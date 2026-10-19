@@ -1,2 +1,2 @@
 - kind polish
-- `CONTRIBUTING.md` lists the three stable check refusals in `scripts/release.py` that a real run makes
+- `CONTRIBUTING.md` lists the stable check refusals in `scripts/release.py` for a real run with no `--notes-file`, no passing record, or a failed record first
