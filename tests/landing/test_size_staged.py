@@ -11,11 +11,6 @@ from .support import sh
 class StagedSizePolicyTest(LandingTestBase):
     """Staged policy refusals run land.py size --staged in a real process for exit status."""
 
-    def init_with_limit(self, maximum=5000, extra=()):
-        args = ["init", "--trunk", "main", "--mode", "push", "--check", "./check.sh",
-                "--max-file-tokens", str(maximum), *extra]
-        return self.land(*args)
-
     def _seed_enabled(self):
         (self.work / "data.txt").write_text("x" * 24000)
         self.assertIn("size ok", self.land("size"))

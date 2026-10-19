@@ -25,7 +25,7 @@ from ..support import (
     unittest,
     weakref,
 )
-from .. import support
+from .._support import descriptors as _descriptors_module
 from .base import InProcessBase
 
 class LandingTest(InProcessBase, LandingTestBase):
@@ -120,7 +120,7 @@ class LandingTest(InProcessBase, LandingTestBase):
         try:
             # Linux fcntl has no F_GETPATH, so the seam names its own command.
             with mock.patch.multiple(fcntl, fcntl=get_path, F_GETPATH=9999, create=True), \
-                    mock.patch.object(support, "_open_fd_directory", labeled_directory):
+                    mock.patch.object(_descriptors_module, "_open_fd_directory", labeled_directory):
                 before = _descriptors()
                 read_second, write_second = os.pipe()
                 opened.extend((read_second, write_second))
