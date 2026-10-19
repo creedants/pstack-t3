@@ -1,4 +1,4 @@
-"""Facade over tests/check_tests/. Holds the fence and the two library-wording tests, whose argparse literals are exempt only in a file named test_check.py."""
+"""Facade over tests/check_tests/. Holds the fence and the two test_library_wording tests."""
 
 import os
 import tempfile
