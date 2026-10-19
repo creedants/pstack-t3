@@ -1,6 +1,6 @@
 """Each `$B ticket add` and `$B fire` command line in the brigade skill that contains `--`.
 
-The two live skill tests read the skill file. The three regression tests read only
+The two live tests read the skill files. The three regression tests read only
 the fixed fixture in this module. A valid edit to the live skill leaves them passing.
 
 Expansion. The filler recognizes three marks when a line has them. `a|b|c` is one token of
@@ -41,9 +41,7 @@ $B fire --tickets ... --station <playbook> --summary "<outcome>" --timebox <minu
 $B ticket add --from-report reports/D1.md
 ```"""
 
-# The fixture holds one kind line, two fire lines, and two report lines. The three
-# regression tests below read only this fixture. The two live skill tests
-# read only the skill file. A valid edit to the live skill leaves the fixture tests passing.
+# Fixture for the regression tests below.
 
 # Quoted "..." fills from "...quoted". A bare "..." fills from "...bare".
 FILL = {
@@ -73,46 +71,41 @@ _PLACEHOLDER = re.compile(r"<[^>]*>")
 _COMMAND = re.compile(r"^\$B (?:ticket add|fire)\b")
 
 
-def skill_text() -> str:
-    """The skill markdown. BRIGADE_SKILL_MD overrides the path. This is the only reader of that variable."""
+def skill_files() -> tuple[Path, ...]:
     override = os.environ.get("BRIGADE_SKILL_MD")
-    path = Path(override) if override else Path(__file__).resolve().parents[1] / "t3/added/brigade/SKILL.md"
-    return path.read_text()
+    if override:
+        return (Path(override),)
+    base = Path(__file__).resolve().parents[1] / "t3/added/brigade"
+    return (base / "SKILL.md", *sorted((base / "reference").glob("*.md")))
+
+
+def skill_text() -> str:
+    """The skill markdown."""
+    return skill_files()[0].read_text()
 
 
 @dataclass(frozen=True)
 class Span:
-    """One command line as the scanner left it.
-
-    `line` is the 1-based line in the skill file. `text` includes the `$B` prefix, excludes a
-    trailing fence comment, and excludes prose outside the code span.
-    """
+    """One command line as the scanner left it."""
 
     line: int
     text: str
+    source: str = "SKILL.md"
 
 
 @dataclass(frozen=True)
 class Step:
-    """One subprocess on a tape.
-
-    `argv` follows `brigade.py --store` and `--at`. `expect` is the stdout a step must print,
-    including its trailing newline. `open` passes None and must print `opened` plus the restaurant path.
-    A non-zero status fails the tape and names `line`.
-    """
+    """One subprocess on a tape."""
 
     line: int
     argv: tuple[str, ...]
     expect: str | None
+    source: str = "SKILL.md"
 
 
 @dataclass(frozen=True)
 class Tape:
-    """Ordered argv that one fresh store runs, from `open` through the skill commands.
-
-    `landing` is true when the skill step is `fire` with `--paths`. The runner calls `init_landing`
-    only then. It always points `XDG_STATE_HOME` at the tape's temp state directory.
-    """
+    """Ordered argv one fresh store runs."""
 
     landing: bool
     steps: tuple[Step, ...]
@@ -120,24 +113,14 @@ class Tape:
 
 @dataclass(frozen=True)
 class Token:
-    """One word after the scan, before placeholder fill.
-
-    `alternatives` is left to right. A word with no bar is a one-tuple. `quoted` is true when
-    double quotes grouped the word, which is how `...` chooses its fill.
-    """
+    """One word after the scan."""
 
     alternatives: tuple[str, ...]
     quoted: bool = False
 
 
-def command_spans(text: str) -> tuple[Span, ...]:
-    """Code spans that are `$B ticket add` or `$B fire` command lines, in file order.
-
-    A candidate is one inline code span, or one physical line of a fenced code block after
-    `strip_shell_comment`. It is a command line when the stripped text matches
-    `^$B (ticket add|fire)\\b` and contains `--`. A span that is only `$B ticket add` or
-    `$B fire` is a bare mention. Prose after the closing backtick is not appended.
-    """
+def command_spans(text: str, source: str = "SKILL.md") -> tuple[Span, ...]:
+    """Code spans that are `$B ticket add` or `$B fire` command lines, in file order."""
     found: list[Span] = []
     fence: str | None = None
     for number, line in enumerate(text.splitlines(), 1):
@@ -149,14 +132,21 @@ def command_spans(text: str) -> tuple[Span, ...]:
             for raw in _inline_codes(line):
                 candidate = raw.strip()
                 if _is_command(candidate):
-                    found.append(Span(number, candidate))
+                    found.append(Span(number, candidate, source))
             continue
         if mark is not None and len(mark) >= len(fence):
             fence = None
             continue
         candidate = strip_shell_comment(line).strip()
         if _is_command(candidate):
-            found.append(Span(number, candidate))
+            found.append(Span(number, candidate, source))
+    return tuple(found)
+
+
+def skill_spans() -> tuple[Span, ...]:
+    found: list[Span] = []
+    for path in skill_files():
+        found.extend(command_spans(path.read_text(), path.name))
     return tuple(found)
 
 
@@ -332,13 +322,13 @@ def _split_bar(token: str) -> tuple[str, ...]:
     return tuple(parts)
 
 
-def _fill(token: str, line: int, quoted: bool) -> str:
+def _fill(token: str, line: int, quoted: bool, source: str = "SKILL.md") -> str:
     if token == "...":
         return FILL["...quoted" if quoted else "...bare"]
     def replace(match: re.Match[str]) -> str:
         key = match.group(0)
         if key not in FILL:
-            raise AssertionError(f"SKILL.md line {line}: unknown placeholder {key}")
+            raise AssertionError(f"{source} line {line}: unknown placeholder {key}")
         return FILL[key]
     return _PLACEHOLDER.sub(replace, token)
 
@@ -347,23 +337,23 @@ def _filled_argvs(span: Span) -> tuple[tuple[str, ...], ...]:
     tokens = tokenize(span.text)
     kind_at = next((index for index, token in enumerate(tokens) if frozenset(token.alternatives) == KIND_CHOICE), None)
     if kind_at is None:
-        return (_fill_tokens(tokens, span.line, None),)
+        return (_fill_tokens(tokens, span.line, None, span.source),)
     argvs = []
     for number, kind in enumerate(tokens[kind_at].alternatives, 1):
-        argv = list(_fill_tokens(tokens, span.line, (kind_at, kind)))
+        argv = list(_fill_tokens(tokens, span.line, (kind_at, kind), span.source))
         _replace(argv, "--ref", f"{FILL['<ref>']}-{kind}", FILL["<ref>"])
         _replace(argv, "--request", f"A{number}", f"A{FILL['<n>']}")
         argvs.append(tuple(argv))
     return tuple(argvs)
 
 
-def _fill_tokens(tokens: tuple[Token, ...], line: int, kind: tuple[int, str] | None) -> tuple[str, ...]:
+def _fill_tokens(tokens: tuple[Token, ...], line: int, kind: tuple[int, str] | None, source: str = "SKILL.md") -> tuple[str, ...]:
     argv = []
     for index, token in enumerate(tokens):
         if kind is not None and index == kind[0]:
             argv.append(kind[1])
             continue
-        argv.append(_fill(token.alternatives[0], line, token.quoted))
+        argv.append(_fill(token.alternatives[0], line, token.quoted, source))
     return tuple(argv)
 
 
@@ -378,12 +368,12 @@ def _replace(argv: list[str], flag: str, value: str, expected: str) -> None:
     argv[at + 1] = value
 
 
-def _option(argv: tuple[str, ...], flag: str, line: int) -> str:
+def _option(argv: tuple[str, ...], flag: str, line: int, source: str = "SKILL.md") -> str:
     if flag not in argv:
-        raise AssertionError(f"SKILL.md line {line}: missing {flag} in {' '.join(argv)}")
+        raise AssertionError(f"{source} line {line}: missing {flag} in {' '.join(argv)}")
     at = argv.index(flag)
     if at + 1 >= len(argv):
-        raise AssertionError(f"SKILL.md line {line}: missing value after {flag} in {' '.join(argv)}")
+        raise AssertionError(f"{source} line {line}: missing value after {flag} in {' '.join(argv)}")
     return argv[at + 1]
 
 
@@ -391,68 +381,69 @@ def _is_from_report(argv: tuple[str, ...]) -> bool:
     return argv[:2] == ("ticket", "add") and "--from-report" in argv
 
 
-def _open_step(line: int, workers: int | None = None) -> Step:
+def _open_step(line: int, workers: int | None = None, source: str = "SKILL.md") -> Step:
     argv: tuple[str, ...] = ("open", "--project-root", "<project>", "--name", RESTAURANT)
     if workers is not None:
         argv = (*argv, "--workers", str(workers))
-    return Step(line, argv, None)
+    return Step(line, argv, None, source)
 
 
-def _goal_step(line: int) -> Step:
+def _goal_step(line: int, source: str = "SKILL.md") -> Step:
     return Step(
         line,
         ("goal", "add", "--name", "Skill line", "--purpose", "Hold the ticket", "--done", "The ticket is filed"),
         "G1\n",
+        source,
     )
 
 
 def _one_tape(span: Span, argvs: tuple[tuple[str, ...], ...]) -> Tape:
     if len(argvs) > 1:
-        return _kind_tape(span.line, argvs)
+        return _kind_tape(span.line, argvs, span.source)
     argv = argvs[0]
     if argv[0] == "fire":
-        return _fire_tape(span.line, argv)
+        return _fire_tape(span.line, argv, span.source)
     if argv[:2] == ("ticket", "add"):
-        return _plain_add_tape(span.line, argv)
-    raise AssertionError(f"SKILL.md line {span.line}: no tape for {' '.join(argv)}")
+        return _plain_add_tape(span.line, argv, span.source)
+    raise AssertionError(f"{span.source} line {span.line}: no tape for {' '.join(argv)}")
 
 
-def _kind_tape(line: int, argvs: tuple[tuple[str, ...], ...]) -> Tape:
+def _kind_tape(line: int, argvs: tuple[tuple[str, ...], ...], source: str = "SKILL.md") -> Tape:
     """The setup ticket prints T1. Each expanded command prints the next id."""
-    steps = [_open_step(line)]
+    steps = [_open_step(line, None, source)]
     if any("--goal" in argv for argv in argvs):
-        steps.append(_goal_step(line))
-    steps.append(Step(line, ("ticket", "add", "--summary", "Skill line request", "--kind", "fix"), "T1\n"))
+        steps.append(_goal_step(line, source))
+    steps.append(Step(line, ("ticket", "add", "--summary", "Skill line request", "--kind", "fix"), "T1\n", source))
     for index, argv in enumerate(argvs, 1):
-        steps.append(Step(line, argv, f"T{index + 1}\n"))
+        steps.append(Step(line, argv, f"T{index + 1}\n", source))
     return Tape(False, tuple(steps))
 
 
-def _fire_tape(line: int, argv: tuple[str, ...]) -> Tape:
+def _fire_tape(line: int, argv: tuple[str, ...], source: str = "SKILL.md") -> Tape:
     """Create every ticket id the line names, including a gap id next_id would otherwise skip.
 
     A missing or malformed `--tickets` fails with the line number.
     """
-    raw = _option(argv, "--tickets", line)
+    raw = _option(argv, "--tickets", line, source)
     named = raw.split(",")
     for ident in named:
         if not ident.startswith("T") or not ident[1:].isdigit():
-            raise AssertionError(f"SKILL.md line {line}: bad ticket id {ident} in {' '.join(argv)}")
+            raise AssertionError(f"{source} line {line}: bad ticket id {ident} in {' '.join(argv)}")
     if "--ride-along" in argv:
-        ride_raw = _option(argv, "--ride-along", line)
+        ride_raw = _option(argv, "--ride-along", line, source)
         ride = set(ride_raw.split(",")) if ride_raw else set()
         for ident in ride:
             if not ident.startswith("T") or not ident[1:].isdigit():
-                raise AssertionError(f"SKILL.md line {line}: bad ticket id {ident} in {' '.join(argv)}")
+                raise AssertionError(f"{source} line {line}: bad ticket id {ident} in {' '.join(argv)}")
     else:
         ride = set()
     if "--kind" in argv:
-        kind = _option(argv, "--kind", line)
+        kind = _option(argv, "--kind", line, source)
     else:
         kind = "fix"
     lead = named[0]
     highest = max(int(ident[1:]) for ident in named)
-    steps = [_open_step(line)]
+    steps = [_open_step(line, None, source)]
     unused = 0
     for number in range(1, highest + 1):
         ident = f"T{number}"
@@ -464,20 +455,20 @@ def _fire_tape(line: int, argv: tuple[str, ...]) -> Tape:
             unused += 1
             summary = "Unused id" if unused == 1 else f"Unused {ident}"
             ticket = ("ticket", "add", "--kind", "fix", "--summary", summary)
-        steps.append(Step(line, ticket, f"T{number}\n"))
+        steps.append(Step(line, ticket, f"T{number}\n", source))
     if "--paths" in argv:
         expect = f"D1 (lease L1 held by {SLUG}/D1)\n"
     else:
         expect = "D1\n"
-    steps.append(Step(line, argv, expect))
+    steps.append(Step(line, argv, expect, source))
     return Tape("--paths" in argv, tuple(steps))
 
 
-def _plain_add_tape(line: int, argv: tuple[str, ...]) -> Tape:
-    steps = [_open_step(line)]
+def _plain_add_tape(line: int, argv: tuple[str, ...], source: str = "SKILL.md") -> Tape:
+    steps = [_open_step(line, None, source)]
     if "--goal" in argv:
-        steps.append(_goal_step(line))
-    steps.append(Step(line, argv, "T1\n"))
+        steps.append(_goal_step(line, source))
+    steps.append(Step(line, argv, "T1\n", source))
     return Tape(False, tuple(steps))
 
 
@@ -490,33 +481,36 @@ def _report_tape(items: tuple[tuple[Span, tuple[tuple[str, ...], ...]], ...]) ->
     """
     parsed: list[tuple[Span, tuple[tuple[str, ...], ...], str, int]] = []
     for span, argvs in items:
-        raw = _option(argvs[0], "--from-report", span.line)
+        raw = _option(argvs[0], "--from-report", span.line, span.source)
         stem = Path(raw).stem
         if not stem.startswith("D") or not stem[1:].isdigit():
-            raise AssertionError(f"SKILL.md line {span.line}: bad report {raw} in {' '.join(argvs[0])}")
+            raise AssertionError(f"{span.source} line {span.line}: bad report {raw} in {' '.join(argvs[0])}")
         parsed.append((span, argvs, stem, int(stem[1:])))
     highest = max(number for _, _, _, number in parsed)
-    line = items[0][0].line
-    steps = [_open_step(line, highest)]
+    first = items[0][0]
+    line = first.line
+    source = first.source
+    steps = [_open_step(line, highest, source)]
     for number in range(1, highest + 1):
-        steps.append(Step(line, ("ticket", "add", "--kind", "fix", "--summary", f"Lead {number}"), f"T{number}\n"))
+        steps.append(Step(line, ("ticket", "add", "--kind", "fix", "--summary", f"Lead {number}"), f"T{number}\n", source))
         steps.append(Step(
             line,
             ("fire", "--tickets", f"T{number}", "--station", "bug-fix", "--summary", f"Dish {number}"),
             f"D{number}\n",
+            source,
         ))
     next_ticket = highest + 1
     item = _follow_up_item()
     for span, argvs, _, _ in parsed:
         argv = argvs[0]
-        name = Path(_option(argv, "--from-report", span.line)).name
+        name = Path(_option(argv, "--from-report", span.line, span.source)).name
         ref = f"{SLUG}/reports/{name}#1"
         if "--dry-run" in argv:
             expect = f"would add from {ref}: {item}\n"
         else:
             expect = f"T{next_ticket} added from {ref}: {item}\n"
             next_ticket += 1
-        steps.append(Step(span.line, argv, expect))
+        steps.append(Step(span.line, argv, expect, span.source))
     return Tape(False, tuple(steps))
 
 
@@ -551,16 +545,17 @@ def setUpModule():
 
 class SkillCommandTest(test_brigade.BrigadeTest):
     def test_the_skill_keeps_at_least_seven_command_lines(self):
-        spans = command_spans(skill_text())
+        spans = skill_spans()
         self.assertGreaterEqual(
             len(spans),
             COMMAND_LINE_FLOOR,
-            f"SKILL.md yielded {len(spans)} command lines; the floor is {COMMAND_LINE_FLOOR}",
+            f"skill yielded {len(spans)} command lines; the floor is {COMMAND_LINE_FLOOR}",
         )
 
     def test_each_filled_command_prints_its_recorded_line(self):
-        for tape in tapes(command_spans(skill_text())):
-            self.run_tape(tape)
+        for path in skill_files():
+            for tape in tapes(command_spans(path.read_text(), path.name)):
+                self.run_tape(tape)
 
     def test_kind_expansion_keeps_broken_ref_and_request_flags(self):
         """The fixture kind line keeps a broken ref or request flag for the parser."""
@@ -569,14 +564,14 @@ class SkillCommandTest(test_brigade.BrigadeTest):
         self.assertGreaterEqual(len(kind_spans), 1)
         span = kind_spans[0]
         for original, broken in (("<ref>", "--ref-BROKEN"), ("A<n>", "--request-BROKEN")):
-            mutated = Span(span.line, span.text.replace(original, broken, 1))
+            mutated = Span(span.line, span.text.replace(original, broken, 1), span.source)
             argvs = _filled_argvs(mutated)
             for argv in argvs:
                 self.assertIn(broken, argv)
             tape = _one_tape(mutated, argvs)
             with self.assertRaises(AssertionError) as caught:
                 self.run_tape(tape)
-            self.assertIn(f"SKILL.md line {mutated.line}", str(caught.exception))
+            self.assertIn(f"{mutated.source} line {mutated.line}", str(caught.exception))
 
     def test_fire_without_tickets_fails_with_its_line(self):
         """Each fixture fire line without its tickets flag fails with its line."""
@@ -584,11 +579,11 @@ class SkillCommandTest(test_brigade.BrigadeTest):
         fire_spans = [span for span in spans if span.text.startswith("$B fire")]
         self.assertGreaterEqual(len(fire_spans), 2)
         for span in fire_spans:
-            mutated = Span(span.line, span.text.replace("--tickets", "--tickets-BROKEN", 1))
+            mutated = Span(span.line, span.text.replace("--tickets", "--tickets-BROKEN", 1), span.source)
             argvs = _filled_argvs(mutated)
             with self.assertRaises(AssertionError) as caught:
                 _one_tape(mutated, argvs)
-            self.assertIn(f"SKILL.md line {span.line}", str(caught.exception))
+            self.assertIn(f"{mutated.source} line {span.line}", str(caught.exception))
 
     def test_renamed_from_report_fails_with_its_line(self):
         """The lone fixture report passes and the renamed fixture report fails with its line."""
@@ -602,12 +597,12 @@ class SkillCommandTest(test_brigade.BrigadeTest):
         lone_argvs = _filled_argvs(lone)
         lone_tape = _report_tape(((lone, lone_argvs),))
         self.run_tape(lone_tape)
-        mutated = Span(target.line, target.text.replace("--from-report", "--from-report-BROKEN", 1))
+        mutated = Span(target.line, target.text.replace("--from-report", "--from-report-BROKEN", 1), target.source)
         mutated_argvs = _filled_argvs(mutated)
         mutated_tape = _one_tape(mutated, mutated_argvs)
         with self.assertRaises(AssertionError) as caught:
             self.run_tape(mutated_tape)
-        self.assertIn(f"SKILL.md line {mutated.line}", str(caught.exception))
+        self.assertIn(f"{mutated.source} line {mutated.line}", str(caught.exception))
 
     def run_tape(self, tape: Tape) -> None:
         saved = (self.temporary, self.store, self.project, self.at)
@@ -631,7 +626,7 @@ class SkillCommandTest(test_brigade.BrigadeTest):
     def _run_step(self, step: Step) -> None:
         argv = tuple(str(self.project) if word == "<project>" else word for word in step.argv)
         if "--from-report" in argv:
-            self._write_report(argv, step.line)
+            self._write_report(argv, step.line, step.source)
         owner = test_brigade._owner_words(self.at)
         result = subprocess.run(
             [sys.executable, str(test_brigade.SCRIPT), "--store", str(self.store), "--at", str(self.at), *owner, *argv],
@@ -640,15 +635,15 @@ class SkillCommandTest(test_brigade.BrigadeTest):
         )
         shown = " ".join(argv)
         if result.returncode != 0:
-            self.fail(f"SKILL.md line {step.line}: {shown}\n{result.stderr}")
+            self.fail(f"{step.source} line {step.line}: {shown}\n{result.stderr}")
         if argv[0] == "open":
-            self.assertEqual(result.stdout, f"opened {self.at}\n", f"SKILL.md line {step.line}: {shown}")
+            self.assertEqual(result.stdout, f"opened {self.at}\n", f"{step.source} line {step.line}: {shown}")
             return
         if step.expect is not None:
-            self.assertEqual(result.stdout, step.expect, f"SKILL.md line {step.line}: {shown}\n{result.stderr}")
+            self.assertEqual(result.stdout, step.expect, f"{step.source} line {step.line}: {shown}\n{result.stderr}")
 
-    def _write_report(self, argv: tuple[str, ...], line: int) -> None:
-        name = Path(_option(argv, "--from-report", line)).name
+    def _write_report(self, argv: tuple[str, ...], line: int, source: str = "SKILL.md") -> None:
+        name = Path(_option(argv, "--from-report", line, source)).name
         directory = self.at / "reports"
         directory.mkdir(parents=True, exist_ok=True)
         (directory / name).write_text(FOLLOW_UP, encoding="utf-8")

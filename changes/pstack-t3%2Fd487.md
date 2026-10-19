@@ -1,0 +1,15 @@
+- kind polish
+- Split brigade SKILL.md into core plus reference/
+- Split brigade-admin SKILL.md into core plus reference/
+- Reduce the watch pointer copies from four to three
+- Restore the full 4.3 launch strategy into reference/service.md with a core read trigger before launching
+- Restore the full send-back bullet into reference/review.md with a core read trigger before acting
+- Restore the step 6 review preflight into reference/review.md with a core read trigger before examining the report
+- Restore the pass prefix with the dependency contest into reference/review.md before its submit flow
+- Restore the full step 5 nudge into reference/liveness.md with a core read trigger for the nudge
+- Restore the owner token lock diagnostic and landing floor into reference/store-rules.md
+- Restore the malformed table line trigger into reference/commands.md
+- Restore the digest reason into the admin reporting level step
+- Remove the repeated Filing detail tails in reference/commands.md
+- Trim core repetition so both generated skills stay under 5000 tokens
+- Check and run brigade command lines from SKILL.md plus every reference file in sorted order
