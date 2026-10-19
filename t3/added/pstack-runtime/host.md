@@ -44,3 +44,33 @@ T3's `$` picker lists each provider's native skills, except Muse's. Muse still l
 | Cursor | `~/.cursor/skills` | `.cursor/skills`, and it also reads `.agents/skills` and `.claude/skills` |
 
 Every child gets the `t3-code` server. Other MCP servers come from each provider's own configuration, so a child on another provider may lack one. A brief that needs a specific MCP server says so, and the child reports `MCP unavailable` instead of guessing.
+
+## Local state
+
+Private working state that must survive the session but never be committed lives under `${XDG_STATE_HOME:-~/.local/state}/pstack-t3/`. Orchestrate stores go in `orchestrate/<project-slug>/`, private plans in `docs/<project-slug>/`. Children, launched threads, and scheduled runs reach it by the same absolute path from any worktree. Pass that path explicitly in every brief and tick prompt.
+
+Resume notes from Pause safely go to `.pstack/resume/<slug>.md` in the repository, untracked (add `.pstack/` to `.git/info/exclude`), and are also posted as the thread's final message. Rely on the final message, because storage cleanup can delete the file with its worktree.
+
+After a T3 restart, or when you resume work after one, follow [failures.md](failures.md#after-a-restart) before you read a saved child's result, replace a child, or use a saved worktree path. Resume through the thread's binding with `t3_thread_read`, and check that `worktreePath` exists before you use a saved path.
+
+## History
+
+Before you use a saved transcript file from another environment, read [History notes](host.md#history-notes).
+
+Before you read Claude conversation history, read [History notes](host.md#history-notes).
+
+- Find prior work: `t3_thread_search` with a topic, branch, or PR number. It covers the current project.
+- Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
+- Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text, and paging cannot recover the discarded suffix. On older hosts, see [Older hosts](host.md#older-hosts). Read `git diff <base>...<head>` in the worker's checkout for the whole change.
+- A thread the user attached as context is readable even outside this project.
+- Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
+- `t3_thread_read` returns the thread's `worktreePath` and `branch`. `t3_thread_list` does not, so finding the threads bound to a worktree takes one read per thread. Threads from other projects are not visible.
+- Link a thread in a user-facing report as a Markdown link whose text is the thread's title and whose target is `t3-thread://v1/<threadId>`. Copy the `threadId` exactly as a tool returned it. Do not URL-encode it, decode its `%` escapes, or add an environment ID. T3 Code shows the thread's current title. List, read, and launch results carry no `link` field, so build the link from `threadId` or `childThreadId`.
+
+## Pending requests
+
+A child or launched thread can stall on a question for the user. `t3_pending_request_list` shows those and `t3_pending_request_read` shows one. Pass the child's `childThreadId`, or the launched thread's `threadId`, as `threadId` on `t3_pending_request_list`, `t3_pending_request_read`, and `t3_pending_request_respond`. Without `threadId` each tool acts on this thread. Answer with `t3_pending_request_respond` only from the brief and the facts and decisions the user already gave. Otherwise ask the user with the host's question tool, then answer. A playbook that parks decisions parks the question instead.
+
+On older hosts, see [Older hosts](host.md#older-hosts). On T3 Code 0.0.46-nightly.20261015.3145 or later, the wake is a message that names the child's thread and the request ID. On T3 Code 0.0.46-nightly.20261015.3145 or later, a question that blocks the child also ends a `mode: "wait"` call, per [Older hosts](host.md#older-hosts). A Codex child can ask without stopping, and its wake says it is still working. When the question no longer shows in `t3_pending_request_list`, someone answered or dismissed it, so send nothing. A task in `result_available` that completed or failed keeps its child's open questions. Do not answer one. Answering such a question sends a message to the child's thread and does not reopen the task. Give the answer to a fresh child per [Fresh children by default](SKILL.md#fresh-children-by-default).
+
+Approval (permission) requests are not listed and cannot be answered by these tools. A child stalled on one looks idle in `task_status`. Avoid the stall: children inherit this thread's runtime mode, so a child that must run commands or edit needs a parent in a mode that allows it. If a child stalls anyway, tell the user which thread is waiting for approval. Never raise a child's `runtimeMode` to get around it.

@@ -95,8 +95,8 @@ class RolesTest(unittest.TestCase):
                         })
 
     def test_runtime_role_table_lists_the_same_names_as_the_role_list(self):
-        text = (ROOT / "t3/runtime.md").read_text()
-        section = text.split("### Role names", 1)[1].split("### Built-in defaults", 1)[0]
+        text = (ROOT / "t3/added/pstack-runtime/roles.md").read_text()
+        section = text.split("## Role names", 1)[1]
         names = re.findall(r"\| `([^`]+)` \|", section)
         self.assertEqual(sorted(names), sorted(roles.ROLES))
         self.assertEqual(len(names), len(set(names)))
@@ -344,12 +344,12 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(json.dumps(cfg), before_cfg)
 
     def test_runtime_describes_the_unset_role_policy(self):
-        text = (ROOT / "t3/runtime.md").read_text()
+        text = (ROOT / "t3/added/pstack-runtime/roles.md").read_text()
         self.assertIn("There are no built-in model picks.", text)
         self.assertIn("Do not reconstruct role defaults", text)
         self.assertIn("`gpt-6.1-sol` is `gpt`", text)
         self.assertNotIn('"model": "gpt-6.1-sol"', text)
-        defaults = text.split("### Built-in defaults", 1)[1].split("### Budget", 1)[0]
+        defaults = text.split("## Built-in defaults", 1)[1].split("## Excluded seats", 1)[0]
         self.assertIn('resolves to `"inherit"`', defaults)
         self.assertIn("roles.py show` owns this mapping", defaults)
 
@@ -682,6 +682,7 @@ def light_row(runtime, spawn):
 class ModesTest(unittest.TestCase):
     def setUp(self):
         self.runtime = (ROOT / "skills/pstack-runtime/SKILL.md").read_text()
+        self.gate = (ROOT / "skills/pstack-runtime/light.md").read_text().split("## Gate review", 1)[1]
 
     def test_every_pointer_site_holds_the_pointer_once_outside_a_fence(self):
         for path, kind in MODE_POINTER_SITES.items():
@@ -735,7 +736,7 @@ class ModesTest(unittest.TestCase):
             "### Gate review",
             "### Announcement",
         ])
-        self.assertIn("pass check <item> --sha <head> --json", self.runtime)
+        self.assertIn("pass check <item> --sha <head> --json", self.gate)
 
     def test_deadlines_and_delegation_step_4_carry_the_mode_lines(self):
         deadlines = self.runtime.split("## Deadlines", 1)[1].split("\n## ", 1)[0]
@@ -760,7 +761,7 @@ class ModesTest(unittest.TestCase):
         self.assertIn("Run `/no-comments` before review.", text)
 
     def test_gate_contract_is_literal(self):
-        self.assertEqual(gate_contract(self.runtime), GATE_CONTRACT)
+        self.assertEqual(gate_contract(self.gate), GATE_CONTRACT)
 
     def test_seat_rule_is_literal(self):
         self.assertEqual(seat_rule(self.runtime), SEAT_RULE)
@@ -788,7 +789,7 @@ class ModesTest(unittest.TestCase):
         self.assertIn("(SKILL.md#gate-review)", verification)
 
     def test_explicit_reflect_names_session_full_at_both_flag_sites(self):
-        roles = self.runtime.split("### Where roles live", 1)[1].split("\n### ", 1)[0]
+        roles = (ROOT / "t3/added/pstack-runtime/roles.md").read_text().split("## Where roles live", 1)[1].split("\n## ", 1)[0]
         paragraph = next(block for block in roles.split("\n\n") if block.startswith("When the brief this call seats"))
         self.assertIn(
             "except for a user's explicit reflect, which passes `--session-mode full`",
@@ -816,10 +817,10 @@ class ModesTest(unittest.TestCase):
         )
 
     def test_gate_brief_pastes_persona_then_contract(self):
-        paragraph = brief_paragraph(self.runtime)
+        paragraph = brief_paragraph(self.gate)
         self.assertIn("Paste the body of `agents/comment-sicko.md` unchanged", paragraph)
         self.assertIn("paste the gate contract below unchanged", paragraph)
-        self.assertNotIn("and ask for that skill's checks", self.runtime)
+        self.assertNotIn("and ask for that skill's checks", self.gate)
 
     def test_every_gate_review_row_links_gate_review(self):
         light = (ROOT / "skills/pstack-runtime/light.md").read_text()
@@ -854,23 +855,23 @@ class ModesTest(unittest.TestCase):
         self.assertIn("Full mode keeps its patch-id policy in Shipping and the Autopilot playbooks.", gate)
         self.assertIn("Light mode keeps that policy for lane receipts only", gate)
         self.assertIn("pstack-runtime/SKILL.md#gate-review", gate)
-        self.assertIn("pass check <item> --sha <head> --json", self.runtime)
-        self.assertIn("Before you reuse a gate verdict, read [Reusing a verdict](gate-review.md#reusing-a-verdict).", self.runtime)
-        self.assertIn("A lane receipt never stands in for the gate review.", self.runtime)
+        self.assertIn("pass check <item> --sha <head> --json", self.gate)
+        self.assertIn("Before you reuse a gate verdict, read [Reusing a verdict](gate-review.md#reusing-a-verdict).", self.gate)
+        self.assertIn("A lane receipt never stands in for the gate review.", self.gate)
         self.assertIn("A lane receipt never stands in for the gate review.", gate)
 
     def test_current_and_qualifying_bullets_match_gate_review(self):
         gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
         current = "- **Current.** It is the latest verdict for that SHA. A later `send-back` or `blocked` at the same SHA voids an earlier `pass`."
         qualifying = "- **Qualifying.** It is `pass`, and the author and verifier are of different model families."
-        self.assertIn(current, self.runtime)
-        self.assertIn(qualifying, self.runtime)
+        self.assertIn(current, self.gate)
+        self.assertIn(qualifying, self.gate)
         self.assertIn(current, gate)
         self.assertIn(qualifying, gate)
-        runtime_current = next(line for line in self.runtime.splitlines() if line.startswith("- **Current.**"))
+        runtime_current = next(line for line in self.gate.splitlines() if line.startswith("- **Current.**"))
         gate_current = next(line for line in gate.splitlines() if line.startswith("- **Current.**"))
         self.assertEqual(runtime_current, gate_current)
-        runtime_qualifying = next(line for line in self.runtime.splitlines() if line.startswith("- **Qualifying.**"))
+        runtime_qualifying = next(line for line in self.gate.splitlines() if line.startswith("- **Qualifying.**"))
         gate_qualifying = next(line for line in gate.splitlines() if line.startswith("- **Qualifying.**"))
         self.assertEqual(runtime_qualifying, gate_qualifying)
 
@@ -1708,7 +1709,7 @@ class WorktreeAuditTest(unittest.TestCase):
 
 
 # The runtime docs join in RUNTIME_DOCS order. Later items append to this tuple.
-RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md", "gate-review.md")
+RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md", "gate-review.md", "delegation.md", "modes.md", "isolation.md", "watching.md")
 
 
 def runtime_docs():
@@ -1777,18 +1778,18 @@ class ThreadLifecycleDocTest(unittest.TestCase):
             self.assertIn(sentence, section)
 
     def test_history_states_the_thread_link_in_a_form_check_accepts(self):
-        section = runtime_section("## History")
+        section = runtime_doc_section("host.md", "## History\n")
         self.assertIn("whose target is `t3-thread://v1/<threadId>`", section)
         self.assertIn("Do not URL-encode it, decode its `%` escapes, or add an environment ID.", section)
         self.assertIn("carry no `link` field", section)
-        launch = runtime_section("## Top-level threads")
-        self.assertIn("Report it to the user as a thread link per [History](#history).", launch)
+        launch = runtime_doc_section("threads.md", "## Top-level threads")
+        self.assertIn("Report it to the user as a thread link per [History](SKILL.md#history).", launch)
         self.assertEqual(check.LINK.findall("[t](t3-thread://v1/abc)"), ["t3-thread://v1/abc"])
         targets = check.LINK.findall((ROOT / "t3/runtime.md").read_text())
         self.assertFalse(any(target.startswith("t3-thread:") for target in targets))
 
     def test_self_settle_is_a_request_not_a_settle(self):
-        section = runtime_doc_section("host.md", "## Settle on turn end") + runtime_section("## Pull request watching")
+        section = runtime_doc_section("host.md", "## Settle on turn end") + runtime_doc_section("watching.md", "## Pull request watching")
         for phrase in (
             "`settlesWhenTurnEnds: true`",
             "an accepted request, not a settled thread",
@@ -1799,7 +1800,7 @@ class ThreadLifecycleDocTest(unittest.TestCase):
             self.assertIn(phrase, section)
 
     def test_isolation_names_the_settle_action(self):
-        section = runtime_section("## Isolation") + runtime_doc_section("host.md", "## Settle on turn end")
+        section = runtime_doc_section("isolation.md", "## Isolation") + runtime_doc_section("host.md", "## Settle on turn end")
         for phrase in (
             "T3 runs the first effective project action with `runOnSettle: true`",
             "A thread in the main checkout skips it.",
@@ -1815,7 +1816,7 @@ class ThreadLifecycleDocTest(unittest.TestCase):
         self.assertNotIn("Read `t3.json` before you settle", section)
 
     def test_local_state_does_not_promise_worktrees_persist(self):
-        section = runtime_section("## Local state") + runtime_doc_section("failures.md", "## After a restart")
+        section = runtime_doc_section("host.md", "## Local state") + runtime_doc_section("failures.md", "## After a restart")
         self.assertNotIn("Pushed branches, worktrees, launched threads, and schedules persist.", section)
         self.assertIn("unless the project enables storage cleanup", section)
         self.assertIn("by squash or rebase at the worktree's head SHA", section)
@@ -1865,7 +1866,7 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
 
     def test_delegation_step_4_pastes_haiku_brief_and_the_modes_bullet_does_not(self):
         text = (ROOT / "t3/runtime.md").read_text()
-        step = text.split("4. A child starts with only its brief.", 1)[1].split("\n5. Collect results.", 1)[0]
+        step = text.split("4. A child starts with only its brief.", 1)[1].split("\n### Permissions", 1)[0]
         self.assertIn(
             "When the role entry `roles.py show` printed for the child's seat has `haikuBrief`, "
             "paste its paragraphs unchanged, in order, at the end of the brief, "
@@ -1885,10 +1886,10 @@ class MuseDocTest(unittest.TestCase):
         runtime = (ROOT / "t3/runtime.md").read_text()
         intro = next(line for line in runtime.splitlines() if "Every provider T3 drives" in line)
         self.assertIn("OpenCode, Muse, ACP agents", intro)
-        permissions = runtime_section("### Permissions", "\n### ")
+        permissions = runtime_doc_section("delegation.md", "### Permissions", "\n### ")
         self.assertIn("Muse supports only `approval-required` and `full-access`.", permissions)
         self.assertIn("Read `runtimeMode` from `orchestrator_capabilities` before you seat Muse.", permissions)
-        self.assertIn('replace the Muse seat with `"inherit"` per [Fallback](#fallback)', permissions)
+        self.assertIn('replace the Muse seat with `"inherit"` per [Fallback](SKILL.md#fallback)', permissions)
         self.assertIn("never lower it", permissions)
 
     def test_skill_locations_exclude_muse_from_the_picker(self):
@@ -1922,7 +1923,7 @@ class StalledChildDocTest(unittest.TestCase):
         self.assertIn("t3_thread_wait", waiting)
         self.assertIn("timeoutMs: 300000", waiting)
         self.assertIn("does not end its turn while a child is open", waiting)
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        step = runtime_doc_section("delegation.md", "5. Collect results.", "\n6. You own")
         self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_delegation_step_5_rechecks_a_final_result_after_two_minutes(self):
@@ -1941,7 +1942,7 @@ class StalledChildDocTest(unittest.TestCase):
         ):
             self.assertIn(phrase, waiting)
         self.assertLess(waiting.index(ten), waiting.index(two))
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        step = runtime_doc_section("delegation.md", "5. Collect results.", "\n6. You own")
         self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_delegation_step_5_waits_out_an_ended_run(self):
@@ -1964,7 +1965,7 @@ class StalledChildDocTest(unittest.TestCase):
             self.assertIn(phrase, waiting)
         self.assertLess(waiting.index(two), waiting.index(ended))
         self.assertLess(waiting.index(ended), waiting.index(now))
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        step = runtime_doc_section("delegation.md", "5. Collect results.", "\n6. You own")
         self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_delegation_step_5_holds_against_the_delegate_task_tool_text(self):
@@ -1973,7 +1974,7 @@ class StalledChildDocTest(unittest.TestCase):
         holds = "This holds even though the `delegate_task` tool text says to end the turn."
         self.assertIn(holds, waiting)
         self.assertLess(waiting.index(stay), waiting.index(holds))
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        step = runtime_doc_section("delegation.md", "5. Collect results.", "\n6. You own")
         self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_failure_handling_keeps_the_two_minute_clock_out(self):
@@ -1983,8 +1984,8 @@ class StalledChildDocTest(unittest.TestCase):
         self.assertIn("holds the result the brief asked for", section)
 
     def test_permissions_never_lowers_runtime_mode(self):
-        text = (ROOT / "t3/runtime.md").read_text()
-        section = text.split("### Permissions", 1)[1].split("### Failure handling", 1)[0]
+        text = (ROOT / "t3/added/pstack-runtime/delegation.md").read_text()
+        section = text.split("### Permissions", 1)[1].split("### Fresh children by default", 1)[0]
         self.assertIn("never lower it", section)
 
     def test_failure_handling_names_a_stalled_child(self):
@@ -2066,7 +2067,7 @@ class StalledChildDocTest(unittest.TestCase):
             self.assertIn(phrase, nightlies)
         waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
         self.assertIn("`hasPendingChildRuns` does not change that.", waiting)
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        step = runtime_doc_section("delegation.md", "5. Collect results.", "\n6. You own")
         self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_local_state_reads_a_finished_result_after_restart(self):
@@ -2085,7 +2086,7 @@ class OpenCodeLongCommandDocTest(unittest.TestCase):
     )
 
     def test_delegation_step_3_carries_the_opencode_brief_paragraph(self):
-        step = runtime_section("3. Spawn every independent child", "\n4. A child starts")
+        step = runtime_doc_section("delegation.md", "3. Spawn every independent child", "\n4. A child starts")
         cursor = "A Cursor harness sent `options` as a string, T3 refused the call, and the child then dropped the options."
         rule = step.split(cursor, 1)[1].split("\n   - ", 2)[1]
         self.assertTrue(rule.startswith("OpenCode moves a long command to the background, tells the model to end its turn"))
@@ -2097,7 +2098,7 @@ class OpenCodeLongCommandDocTest(unittest.TestCase):
             "When an OpenCode child's task is terminal and the report file its brief named is missing, "
             "the task is not finished. Read its activity with `t3_thread_read`. "
             "While a later turn on its thread still runs, wait on it per [waiting.md](waiting.md). "
-            "Otherwise handle it per [Failure handling](#failure-handling).",
+            "Otherwise handle it per [Failure handling](SKILL.md#failure-handling).",
             rule,
         )
 
@@ -2110,17 +2111,17 @@ class OpenCodeLongCommandDocTest(unittest.TestCase):
             "so this two-minute rule does not apply to it.",
             bullet,
         )
-        step = runtime_section("5. Collect results.", "\n6. You own")
+        step = runtime_doc_section("delegation.md", "5. Collect results.", "\n6. You own")
         self.assertIn("Read [waiting.md](waiting.md)", step)
 
     def test_the_paragraph_is_stated_once(self):
-        text = (ROOT / "t3/runtime.md").read_text()
+        text = (ROOT / "t3/runtime.md").read_text() + (ROOT / "t3/added/pstack-runtime/delegation.md").read_text()
         self.assertEqual(text.count("Nobody resumes you after your turn ends"), 1)
 
 
 class SeatLaunchDocTest(unittest.TestCase):
     def setUp(self):
-        self.runtime = (ROOT / "skills/pstack-runtime/SKILL.md").read_text()
+        self.runtime = (ROOT / "skills/pstack-runtime/threads.md").read_text()
 
     def test_mapping_sentence_renames_provider_instance_id_and_copies_options(self):
         section = self.runtime.split("## Top-level threads", 1)[1].split("\n## ", 1)[0]
@@ -2130,10 +2131,11 @@ class SeatLaunchDocTest(unittest.TestCase):
             section,
         )
         self.assertIn('"options": {"effort": "xhigh"}', section)
-        self.assertIn("Confirm a launched thread per [Delegation](#delegation) step 3.", section)
+        self.assertIn("Confirm a launched thread per [Delegation](SKILL.md#delegation) step 3.", section)
 
     def test_readback_sentence_names_where_to_read_and_never_retries_without_options(self):
-        step = self.runtime.split("3. Spawn every independent child", 1)[1].split("\n4. A child starts", 1)[0]
+        delegation = (ROOT / "t3/added/pstack-runtime/delegation.md").read_text()
+        step = delegation.split("3. Spawn every independent child", 1)[1].split("\n4. A child starts", 1)[0]
         self.assertIn(
             "After a `t3_thread_launch` or `delegate_task` call whose seat has `options`, "
             "read the applied options from the launch result's `modelSelection.options` or from "
@@ -2192,9 +2194,11 @@ class ForkDocTest(unittest.TestCase):
         self.section = runtime_docs_section("## Forks")
 
     def test_forks_live_under_top_level_threads(self):
-        launch = runtime_section("## Top-level threads")
-        self.assertIn("### Forks", launch)
-        self.assertLess(launch.index("`create_threads` makes up to 20 threads"), launch.index("### Forks"))
+        stub = runtime_section("## Top-level threads")
+        self.assertIn("### Forks", stub)
+        self.assertIn("Forks live in [threads.md](threads.md#forks).", stub)
+        threads = runtime_doc_section("threads.md", "## Top-level threads")
+        self.assertIn("`create_threads` makes up to 20 threads", threads)
 
     def test_a_fork_never_replaces_a_child(self):
         for sentence in (
@@ -2305,7 +2309,7 @@ class ConfigureOwnerDocTest(unittest.TestCase):
 
 class PromoteQueuedCorrectionDocTest(unittest.TestCase):
     def setUp(self):
-        self.launch = runtime_section("## Top-level threads", "\n### Forks")
+        self.launch = runtime_doc_section("threads.md", "## Top-level threads")
         self.bullet = runtime_bullet(runtime_docs_section("## Promote a queued correction"), "- A correction you queued earlier")
 
     def test_promote_sits_directly_under_the_auto_report_rule(self):
@@ -2372,7 +2376,7 @@ class RunScheduleNowDocTest(unittest.TestCase):
 
 class VisualReportsDocTest(unittest.TestCase):
     def setUp(self):
-        self.section = runtime_section("## Visual reports")
+        self.section = runtime_doc_section("verification.md", "## Visual reports")
 
     def test_section_sits_after_verification_surfaces(self):
         text = (ROOT / "t3/runtime.md").read_text()

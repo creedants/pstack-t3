@@ -34,3 +34,45 @@ Read this file before every spawn and run the row for that spawn.
 | Landing writer | One writer per unit. Its brief or `message` carries the mode lines and the seat rule from [Resolve and carry the mode](SKILL.md#resolve-and-carry-the-mode). |
 | Autonomous run watcher | Keep it. |
 | Setup smoke test | Keep one per provider. |
+
+## Light behavior
+
+In light mode, run the row for the spawn you are about to make. A step its row does not change runs as the skill says. A smaller fan-out in a row is how that step runs, not a waiver. Waived steps come only from the brief's `Waived by mode:` line, which `roles.py mode` prints from `LIGHT_WAIVERS`. Never add a waiver of your own. No light fan-out wave has more than 3 children in flight. A wave with more slices batches them into 3 briefs and keeps every slice covered.
+
+A send-back in light mode is a fix attempt with a fresh worker. Its brief carries the findings, the old head, and the `Attempt: fix` lines `roles.py mode` prints.
+
+## Gate review
+
+Light mode removes the panels that give full mode its model diversity. The gate review puts one read by another model family back before merge. Full mode keeps each playbook's own review steps.
+
+Every child that acts as the gate review runs steps 1 to 4. That includes the audit lane, the Shipping verifier, a cheap Orchestrate unit's gate, and a trail reviewer that runs with no gate at its head. Its step 2 brief adds that child's own verification tasks below the contract. Launch no second child for the same gate.
+
+1. **Seat.** Resolve `verifiers` per [Roles](SKILL.md#roles) with this work's mode flag. Take the first seat whose model family differs from the author's. The author is the code delegate's `providerInstanceId/model`, or this thread's when it wrote the code. When several models wrote the diff, the verifier's family differs from all of them. When no runnable seat qualifies, the verdict is `blocked`.
+2. **Brief.** A read-only brief. On round one, give the base ref and the full head SHA, and ask for a read of `git diff <base>...<head>`, the whole diff. On round two and later, give the previous reviewed SHA and the previous round's review file, ask for a read of `git diff <previous reviewed sha>...<head>`, and add a `FOCUS` section that carries the round rules from [Rounds after the first](../brigade/verdict-protocol.md#rounds-after-the-first). Paste the body of `agents/comment-sicko.md` unchanged and ask for its findings on the diff. Right after that body, paste the gate contract below unchanged. Add the child's own verification tasks after the contract. Name the chosen design's path when the light architect step picked one of two sketches. Name the decision log path and the run's `threadId` when the run kept a trail per `show-me-your-work`, and ask the reviewer to run that skill's audit checks itself with `t3_thread_read`. Flag weak evidence, skipped or unproven verification, misleading readiness, and a shell success that hides a failed check.
+
+   ```text
+   Gate review contract. These rules override the persona above and the tasks below where they differ.
+   Do not edit files, commit, or push. Do not post on the PR. Return your report to the parent.
+   Launch no child task, thread, or subagent. Do not run the how, why, architect, or interrogate skill. Do not launch show-me-your-work's trail reviewer.
+   Read the diff the brief names and the nearby code yourself. You may run git log -L and git blame. Run the named verification commands yourself.
+   When a claim or finding needs investigation beyond those reads, return send-back. Name the file, the line, the claim, and the question the fix must answer.
+   Report each comment the persona would delete as a send-back finding with its path and line. Make no edit.
+   End with pass, send-back, or blocked, the full head SHA, the author, and the verifier.
+   ```
+3. **Verdict.** `pass`, `send-back`, or `blocked`, with the full head SHA, the author, and the verifier. Record it in this run's work log. The parent posts the verdict where the child's playbook posts a report.
+4. **After.** A `send-back` or `blocked` stops the PR. A fresh code delegate fixes the findings, and a new gate runs at the new head SHA. On `pass`, write `Gate: pass at <short sha> by <provider/model>` under the PR body's `## Verification`. The SHA is the PR's current head. Keep one `Gate:` line.
+
+A worker whose brief carries `Gate: brigade` runs no gate of its own, because the coordinator's verifier is its gate.
+
+Launch a new gate unless a current qualifying verdict exists at the exact head SHA.
+
+- **Current.** It is the latest verdict for that SHA. A later `send-back` or `blocked` at the same SHA voids an earlier `pass`.
+- **Qualifying.** It is `pass`, and the author and verifier are of different model families.
+
+Before you reuse a gate verdict, read [Reusing a verdict](gate-review.md#reusing-a-verdict). That file holds the two sources and the four exclusions and states the patch-id split. For a brigade item, the coordinator source runs `pass check <item> --sha <head> --json`.
+
+A lane receipt never stands in for the gate review. Read the head again right before you create the PR, mark it ready, or merge. When it moved, apply this section again.
+
+## Announcement
+
+When light mode applies, say so once, at the start, in two or three short sentences. Name the source from the `Mode source:` line, what this work cuts, and what still runs, as in "Light mode is on, from this session. This change gets one design sketch and no separate comment review. Tests, the build, and a review by another model family still run." On an escalation, name the rule, as in "This change runs in full mode because its lease covers `land.py`." A worker's report repeats its brief's `Mode:` and `Waived by mode:` lines under its status. A step that line names is not a deviation. Name the mode again only when it changes.

@@ -31,3 +31,47 @@ Read this file before you call `t3_thread_configure`, `t3_queue_promote_to_steer
 - On an answer that permits work, call `update_scheduled_task` with the same ID and `enabled: true`. On an answer that keeps the work parked, record the answer and leave the schedule paused. When the done predicate holds, delete the schedule with `delete_scheduled_task`. After a T3 restart, find the paused schedule with `list_scheduled_tasks` and the recorded ID.
 - A tick queued before the pause can still run after it. It reads the record, does not raise the decision again, and does not re-enable the schedule.
 - Never pause a schedule that renews a lease, drains queued work, consumes standing intake, or notices a merge. A required merge heartbeat and a fallback heartbeat beside `watch_pull_request` keep running. This rule never pauses a brigade schedule. Brigade holds an item on a decision and keeps its liveness schedule renewing the lease.
+
+## Top-level threads
+
+Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade). Invoking those is that request. Everything else uses child tasks.
+
+```json
+{
+  "title": "PR owner: <slug>",
+  "workspaceStrategy": {"type": "worktree", "baseRef": "main", "branch": "pstack/<slug>", "startFromOrigin": false},
+  "message": "<brief>",
+  "modelSelection": {"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
+}
+```
+
+- `modelSelection` is the seat with `providerInstanceId` renamed to `instanceId`, `model` copied, and `options` copied unchanged as the same object. Omit `modelSelection` for an `inherit` seat.
+- Confirm a launched thread per [Delegation](SKILL.md#delegation) step 3.
+- For a stack, `baseRef` is the parent branch and `startFromOrigin` is false.
+- Omitted `workspaceStrategy` means the project root, not your worktree.
+- `t3_thread_launch` requires a full-access or default caller. In `approval-required` or `auto-accept-edits` it fails. Then fall back to child tasks isolated per [Isolation](SKILL.md#isolation), and tell the user that owners are children rather than threads.
+- `t3_thread_launch` has no retry key. Retain the `threadId`. After an error or lost response, check `t3_thread_list` before retrying. Report it to the user as a thread link per [History](SKILL.md#history).
+- Follow a thread with `t3_thread_wait` and read it with `t3_thread_read` (use `afterPosition` to read only what is new). Send follow-ups with `t3_thread_send`, interrupt with `t3_thread_interrupt`.
+- A thread launched with `t3_thread_launch` has no parent. Its finished turn does not wake the launcher. A launcher that needs a report names the message the launched thread sends with `t3_thread_send`.
+- Autopilot-full, Autopilot-stack, and Orchestrate owners send their report lines to the root or coordinator with `t3_thread_send` and `mode: "auto"`. `auto` starts an idle recipient, steers a fully active turn, and queues behind a turn that cannot accept steering yet. It does not merge reports into one turn. The recipient handles every report, steered or queued, and runs the playbook's head-specific checks on the head each report names. Arrival order never makes a head current. Brigade's event lines to an executive admin stay on `mode: "queue"`, as [Reporting to an executive admin](../brigade/SKILL.md#reporting-to-an-executive-admin) states.
+- A correction you queued earlier to an active owner or coordinator can sit behind a long turn. Read [Promote a queued correction](threads.md#promote-a-queued-correction) before you deliver it. Never promote brigade's event lines to an executive admin, a digest message, or a message that needs a turn of its own.
+- Change an existing launched thread's model with `t3_thread_configure` only when a playbook step already calls for that owner to run on another model, such as Orchestrate's tool-error retry. Never call it because an owner keeps failing a gate. Read [Configure an owner](threads.md#configure-an-owner) before the call.
+- `create_threads` makes up to 20 threads sharing this checkout. Use it only for read-only fan-out the user wants visible as threads.
+
+## Scheduling
+
+Call `schedule_task` with this shape.
+
+```json
+{"title": "autopilot tick", "prompt": "<self-contained tick prompt>", "schedule": {"type": "interval", "everyMs": 3600000}, "clientRequestId": "<skill>-<slug>-tick"}
+```
+
+- Pass `schedule` as an object. `everyMs` is at least 60000. Wall-clock runs use `{"type": "fixed_time", "timeOfDay": "09:00", "weekdays": [1,2,3,4,5]}`.
+- Runs post into this thread by default. Set `bindToCurrentThread: false` only when each run should start a fresh thread.
+- The tick prompt must stand alone. Point it at the work log or store so a run can rebuild state from disk.
+- Report the returned cadence and `nextRunAt`. Delete the schedule with `delete_scheduled_task` when the done predicate holds. List with `list_scheduled_tasks`.
+- Pause a schedule with `update_scheduled_task` and `enabled: false`. Resume by setting it back to true.
+- Never pause a schedule that renews a lease, drains queued work, consumes standing intake, or notices a merge. A required merge heartbeat and a fallback heartbeat beside `watch_pull_request` keep running. This rule never pauses a brigade schedule. Brigade holds an item on a decision and keeps its liveness schedule renewing the lease. Read [Pause a finite program](threads.md#pause-a-finite-program) before you pause a schedule.
+- Do not schedule a tick to wait for a child task. Child completions wake this thread, and [Delegation](SKILL.md#delegation) step 5 bounds the wait for a child that never completes.
+- Do not schedule a tick to wait on a pull request's checks, reviews, or conflicts. That wait is [Pull request watching](SKILL.md#pull-request-watching). Keep `schedule_task` for a cadence with no PR event. Beside a watch, a fallback heartbeat uses `everyMs` of at least `3600000`. A landing contract may set a longer interval. The landing skill reads it from land.py status. A required heartbeat whose job is to notice a merge may use `900000`, as that section states. A landing contract may set a longer interval. The landing skill reads it from land.py status.
+- To run an enabled `interval` schedule's work now, read [Run a schedule now](threads.md#run-a-schedule-now). Never run a paused schedule before the answer permits work.
