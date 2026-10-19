@@ -249,7 +249,7 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
 def lease_widen(store, number, paths, ttl_hours=6, owner=None):
     """Add paths to one lease in place. A live lease keeps its expiry and an expired one is admitted again.
 
-    The holder's other live active leases are orphans. Their paths join this lease and they are released in the
+    The holder's other active unexpired leases are orphans. Their paths join this lease and they are released in the
     same transaction, so a claim-and-swap that stopped before releasing its old lease leaves one live lease.
     """
     wanted = wanted_paths(paths)

@@ -231,7 +231,10 @@ def read_lease_list(project_root):
 
 
 def widen(restaurant, ident, add_text):
-    """Widen one dish lease in place, folding that holder's other live leases into it."""
+    """Widen one dish lease in place, folding that holder's other active unexpired leases into it.
+
+    A released recorded lease adopts the holder's newest live lease, or claims a fresh one when there is none.
+    """
     wanted_raw = split_add(add_text)
     if not wanted_raw:
         raise BrigadeError("--add-paths takes comma-separated paths")
