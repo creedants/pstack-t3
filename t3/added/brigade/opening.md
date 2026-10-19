@@ -20,6 +20,45 @@ Run from any thread.
 
 Opening a restaurant is the user's request for top-level threads: the head chef, and one worktree thread per worker.
 
+## Onboard
+
+Onboard detects what the repository and the store already configure. It asks only what is missing. Run it before Open a restaurant step 3, and rerun it after any setting change.
+
+1. Run `python3 <skills>/brigade/scripts/brigade.py onboard --project-root <root> --name "<restaurant>" --detect`. It prints facts and missing as JSON and writes nothing. Each fact names its state and its fix. Missing lists only the settings to ask about, in table order.
+2. Show one page that walks the flow below, with each question pinned to the step it governs. When `html_preview` and `html_render` are unavailable, print the same page as plain text.
+3. Ask the missing settings with the host question tool, in at most two rounds. When the tool is unavailable, print the questions as a plain text list and read the answers as a reply. Record the answers with `open` and `set`.
+4. Run the same command with `--summary` in place of `--detect`. It writes `onboarding.txt` in the restaurant directory, one `name: value` line per fact. A rerun prints only the change lines, as `name: old -> new`, plus `added` and `removed` lines. Identical bytes print `no change` and leave the file untouched. Before `open` it prints the lines it would write, then `not saved`, and writes nothing.
+
+### The flow in words
+
+Intake collects requests from the sources the restaurant owns. The intake question decides which sources this restaurant reads. Tickets wait on the rail. Grouping reads waiting tickets together before firing. Fire claims a lease, checks the worker cap, and writes a brief. The workers question caps parallel dishes. The mode question picks the playbook depth for the brief. The worker runs one playbook in its own worktree thread. Review checks the report and diff, then records a verdict from another model family. The landing queue holds the lease, runs the required checks, and merges or pushes the change. The landing question picks the queue mode. The generated map, the build command, the check command, and the change note directory decide how the queue verifies and records the change. Merge puts the reviewed change on trunk. The required checks and PR ability readings say whether the repository can do that today. Report tells the user what landed. The reporting question picks how often.
+
+### The questions
+
+Who lands work. Options are `merge`, `human`, `push`, and `local`. Recommend `merge` for a repository with a remote. Record it with `land.py init --mode` or `land.py mode`. When the repository already has a landing contract, its mode applies and onboard reports it as configured.
+
+How often the coordinator replies. Options are `milestones`, `every-turn`, and `digest`. Recommend `milestones`. Record it with `open --reporting` or `set --reporting`. A missing key reads as `milestones` and is never missing.
+
+Which mode the workers use. Options are `light` and `full`. Recommend `light`. Record it with `open --mode` or `set --mode`. A missing key leaves the choice to the roles files, so onboard lists it as missing until it is recorded.
+
+How many dishes run at once. This is a whole number of 1 or more. Recommend 2. Record it with `open --workers` or `set --workers`. A missing key reads as 2 and is never missing.
+
+Which sources this restaurant owns. This is a comma separated list such as `github`. Record it with `set --intake`. An empty list is missing until at least one source is recorded. A source a sibling already owns stays with that sibling.
+
+Which commands verify edits. Onboard reads `package.json` scripts, `Makefile` targets, `Cargo.toml`, `go.mod`, `pyproject.toml` or `tox.ini`, and `scripts/run_tests.py` and `scripts/build.py`, in that order. A `buildCommand` or `checkCommand` the store already records wins over every detected command. Record them with `set --build-command` and `set --check-command`. Each is missing until either the store or the repository names it.
+
+Where change notes go. This is a repository relative directory such as `changes`. Recommend `changes`. Record it with `set --change-note-dir`. An unset key leases no fragment and is missing until it is recorded.
+
+The rest need no question. Onboard shows their effective values in the summary and never lists them as missing. They are autofire `normal`, low reserve 1, round budget 3, the liveness default for the reporting level, context cap 300000, and provider `claude`. Change any of them later with the matching `set` flag.
+
+### The two rounds
+
+Round one asks landing mode, reporting, and mode. Round two asks workers, intake, the two verify commands, and the change note directory, for whatever is still missing. Two rounds are the maximum. Never re-ask a setting the store already records. When the host question tool is unavailable, print both rounds as one plain text list.
+
+### The summary file
+
+`onboarding.txt` holds one `name: value` line per fact, in table order. Rerun `--summary` after any `open`, `set`, `land.py init`, `land.py mode`, or `roles.py write` change. The rerun prints `added`, `removed`, and `old -> new` lines for exactly what changed. Treat that output as the checklist for the reply. When the rerun prints `no change`, say so and move on.
+
 ## First service
 
 1. `t3_thread_organize` with `action: "pin"` and no `threadId`, acting on the caller on purpose.
