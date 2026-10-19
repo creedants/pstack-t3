@@ -173,7 +173,7 @@ class OnboardDetectTest(BrigadeTest):
         self.open()
         found = self.detect()
         self.assertEqual(found["facts"]["repository_cap"],
-                         {"state": "configured", "value": 3, "fix": None})
+                         {"state": "detected", "value": 3, "fix": None})
 
     def test_malformed_status_gives_invalid_landing_and_generated(self):
         # Processes: git and land build the fixture project and its contract. Fake land status isolates the malformed read.
