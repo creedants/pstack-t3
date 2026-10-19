@@ -15,15 +15,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check  # noqa: E402
 import roles  # noqa: E402
+from tests.roles_tests.support import roles_source  # noqa: E402
 
 CATALOG = json.loads((ROOT / "tests/fixtures/catalog.json").read_text())
-
-
-def roles_source():
-    """Read the code wherever the split put it."""
-    parts = [(ROOT / "t3/scripts/roles.py").read_text()]
-    parts.extend(p.read_text() for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py")))
-    return "\n".join(parts)
 
 
 PLAYBOOK_FILES = {

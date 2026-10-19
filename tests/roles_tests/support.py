@@ -308,3 +308,10 @@ class ModeCliCase(unittest.TestCase):
     def show_role(self, repo, *args):
         return repo.run("show", "--catalog", str(CATALOG), "--parent", "claudeAgent/claude-opus-5-5", *args)
 
+
+def roles_source():
+    """Read the code wherever the split put it."""
+    parts = [(ROOT / "t3/scripts/roles.py").read_text()]
+    parts.extend(p.read_text() for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py")))
+    return "\n".join(parts)
+
