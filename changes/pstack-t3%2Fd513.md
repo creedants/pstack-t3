@@ -2,4 +2,4 @@
 - nightly rearm starts from ended watch state and reads current PR state
 - fork keeps links with no watch on nightly and requires fork message to stop watches on stable fork
 - stale tabId fails and recovers with a new tab from preview status
-- treat masked field as filled hidden never assert value with synthetic credentials on stable
+- treat masked field as filled hidden never assert value and use synthetic credentials on stable
