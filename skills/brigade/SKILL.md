@@ -80,7 +80,7 @@ While a dish owes it, `watch` prints `D<n>: <count> send-backs, decision pending
 ## Open a restaurant
 
 To open a restaurant, read [opening.md](opening.md#open-a-restaurant) and run its steps in order.
-To onboard first with detection, read [Onboard](opening.md#onboard) and run its steps in order.
+Before opening a restaurant or checking its settings, read [Onboard](opening.md#onboard) and run its steps in order.
 
 ## House rules
 
