@@ -2,7 +2,7 @@ from .support import BrigadeTest, json, setUpModule
 
 
 class OnboardDetectTest(BrigadeTest):
-    """Missing holds what still needs action, in table order."""
+    """Missing holds the settings in state missing in table order, which excludes invalid ones."""
 
     def detect(self, *extra):
         return json.loads(self.brigade("onboard", "--project-root", str(self.project), "--name", "Perf",
