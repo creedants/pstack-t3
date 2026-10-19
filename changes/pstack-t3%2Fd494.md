@@ -1,3 +1,4 @@
+- kind polish
 - `tests/test_activity.py` is a shim under 2000 bytes and re-exports the shared kit
 - `tests/test_activity_render.py` is a shim under 1000 bytes and re-exports the browser entry
 - `tests/activity_tests/support.py` owns the on-disk world and the run helpers
