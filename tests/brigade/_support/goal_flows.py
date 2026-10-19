@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .names import CLAUDE, CODEX, ROOT, SCRIPT, SUPPORT, _owner_words
-from .inprocess import ProcessReason, call, run_globals
+from .inprocess import ProcessReason, call, real_popen, run_globals
 from .race_child import _race_args, _wait_for_path
 from .report_texts import TRACKED
 
