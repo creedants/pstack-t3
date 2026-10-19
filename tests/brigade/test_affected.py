@@ -93,6 +93,13 @@ def _base_resolve_import(edge, loader_path, root, roots=None):
         if parent:
             cands.append(parent + "/" + tail)
         cands.append(tail)
+    cur = parent
+    while cur and cur not in (".", "/"):
+        cur = posixpath.dirname(cur)
+        if not cur or cur in (".", "/"):
+            break
+        for tail in rels:
+            cands.append(cur + "/" + tail)
     for tail in rels:
         for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
             cands.append(prefix + "/" + tail)

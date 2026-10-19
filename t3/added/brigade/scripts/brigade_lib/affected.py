@@ -111,6 +111,13 @@ def _resolve_import(edge, loader_path, root, roots, depth=0):
         if parent:
             cands.append(parent + "/" + tail)
         cands.append(tail)
+    cur = parent
+    while cur and cur not in (".", "/"):
+        cur = posixpath.dirname(cur)
+        if not cur or cur in (".", "/"):
+            break
+        for tail in rels:
+            cands.append(cur + "/" + tail)
     for tail in rels:
         for prefix in roots:
             cands.append(prefix + "/" + tail)
@@ -141,6 +148,29 @@ def _one_hop(norm, base, gen_map, roots):
     return tuple(sorted(found))
 
 
+def _helper_entries(base, layout):
+    entry_set = frozenset(_norm(one) for one in layout.entry_points)
+    entries = {}
+    for helper_rel in layout.helpers:
+        norm = _norm(helper_rel)
+        if not norm:
+            entries[norm] = None
+            continue
+        try:
+            text = (base / norm).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            entries[norm] = None
+            continue
+        try:
+            mod = ast.parse(text, norm)
+        except SyntaxError:
+            entries[norm] = None
+            continue
+        singles = _singles(mod)
+        entries[norm] = frozenset(_norm(ref) for ref in _loads_of(mod, singles) if _norm(ref) in entry_set)
+    return entries
+
+
 def _test_edges(targets, rel, base, roots):
     edges = set()
     importer_test = False
@@ -167,6 +197,20 @@ def _test_edges(targets, rel, base, roots):
                 label = symbol
             return frozenset(), "unresolved import " + label + " in " + rel
         if shaped and len(resolved) != 1:
+            if module and symbol and symbol != "*":
+                label = module + "." + symbol
+            elif module:
+                label = module
+            else:
+                label = symbol
+            found = set()
+            for got in resolved:
+                mod_name = _tree_name(Path(str(base)) / got, base)
+                if mod_name is not None:
+                    found.add(mod_name)
+            if not found:
+                return frozenset(), "unresolved import " + label + " in " + rel
+            edges.update(found)
             continue
         for got in resolved:
             mod_name = _tree_name(Path(str(base)) / got, base)
@@ -209,6 +253,7 @@ def _index(root, layout, gen_map=None):
     files = _tree_files(base)
     helper_set = frozenset(_norm(one) for one in layout.helpers)
     entry_set = frozenset(_norm(one) for one in layout.entry_points)
+    helper_entries = _helper_entries(base, layout)
     loads = {}
     pins = {}
     direct = {}
@@ -259,6 +304,16 @@ def _index(root, layout, gen_map=None):
         for ref in refs:
             if _norm(ref) in broken_helpers:
                 return _Open("unresolved helper " + _norm(ref))
+    for name, refs in direct.items():
+        for ref in refs:
+            norm_ref = _norm(ref)
+            if norm_ref in helper_entries:
+                entry = helper_entries[norm_ref]
+                if entry is None:
+                    return _Open("unresolved helper " + norm_ref)
+                if entry:
+                    prior = loads.get(name, frozenset())
+                    loads[name] = frozenset(set(prior) | set(entry))
     table = {}
     hops = {}
     for name, refs in loads.items():
