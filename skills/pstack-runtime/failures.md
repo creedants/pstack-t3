@@ -22,7 +22,7 @@ A T3 restart ends the old provider processes. Follow this section before you rea
 
 - See [Host version](host.md#host-version) for the version read. When the read is absent or ambiguous, use stable behavior.
 - On T3 Code 0.1.1-nightly.20261019.3360 or later, a new user message from web or mobile releases a held queue. A steer does not release it. A schedule does not release it. `t3_thread_send` does not release it. A queue held after worktree setup failed stays held until the thread has a worktree. On T3 Code 0.1.0, use the explicit Resume control. Never assume a coordinator send or heartbeat resumes a stopped queue.
-- On stable, inspect affected native children and resume or restart needed work by hand. Refuse an unattended native-background recovery guarantee on stable. Name 0.1.1-nightly.20261019.3360 as the nightly these rules were read against in source.
+- On stable, a restart wakes a settled turn that was awaiting a monitor, a subagent, or a background task, under the limits above. A native child the turn did not await still needs inspection by hand. Refuse an unattended native-background recovery guarantee on stable for the F6 pattern. Name 0.1.1-nightly.20261019.3360 as the nightly these rules were read against in source.
 - On stable, keep the parent turn alive while native children need T3 tools. Or use app-owned children.
 - A failed root does not prove native children stopped. Keep existing checks.
 - On T3 Code 0.1.1-nightly.20261019.3360 or later, worktree protection lifts only for a complete idle subagent chain with one owner and the same branch. Child threads alone no longer protect a worktree. On T3 Code 0.1.0, keep owned-worker cleanup. Make cleanup tolerant of an already removed path. Keep private state outside worktrees.
