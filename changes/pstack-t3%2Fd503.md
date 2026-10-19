@@ -1,0 +1,5 @@
+- kind feature
+- `brigade.py onboard --project-root <root> --name <name> --detect` prints facts and missing as JSON and writes nothing, and the same command with `--summary` writes `onboarding.txt` in the restaurant directory with one `name: value` line per fact and prints only the change lines
+- `t3/added/brigade/scripts/brigade_lib/commands/onboard.py` holds the command with one SETTINGS table driving detect, missing, the summary, and the fix text, one land status call and one roles.py show call shared across readers, and invalid states for reader failures that never crash the command
+- `t3/added/brigade/opening.md` gains an Onboard section with the flow in words, each open settings question on the step it governs, the two question rounds, and the summary file, with a plain text fallback for html_preview, html_render, and the host question tool
+- `tests/brigade/test_onboard.py` covers a fully configured store asking nothing, a fresh repo listing only the missing settings, a setting change showing old arrow new, an invalid generated map, and an unchanged rerun writing nothing
