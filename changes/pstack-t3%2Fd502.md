@@ -1,0 +1,6 @@
+- kind upkeep
+- `vendor/pstack/` is the `pstack/` tree from the repository in `upstream.json` at d457567332aa6989e753ea289f30ea2bfbc80bc0, and `upstream.json` pins that commit and version 0.15.28
+- upstream changes `pstack/.cursor-plugin/plugin.json` and `pstack/README.md` and `pstack/docs/guide/06-verify-and-ship.md` and `pstack/docs/guide/09-make-it-yours.md` and `pstack/plugin.json` and `pstack/skills/create-formal-verification-skill/SKILL.md` and `pstack/skills/poteto-help/SKILL.md` and `pstack/skills/poteto-help/references/recipes.md`, and adds `pstack/skills/maintain-formal-verification-skill/SKILL.md`
+- `t3/overrides/poteto-help/SKILL.md` and `t3/overrides/poteto-help/references/recipes.md` carry the upstream additions in T3 form with `$` skill names, and change nothing else
+- `t3/overrides.lock.json` records the new upstream digests for the two `poteto-help` overrides
+- `README.md` names upstream `pstack` 0.15.28 in the badge and states all 61 skills
