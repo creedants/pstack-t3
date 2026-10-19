@@ -316,7 +316,7 @@ class BackupCliTest(BackupCliCase):
         })
 
 
-    def test_muse_subscription_quota_exhausted_relaunches(self):
+    def test_subscription_quota_exhausted_relaunches(self):
         completed = self.backup(
             "--role", "bug-fix",
             "--provider", "grok",
