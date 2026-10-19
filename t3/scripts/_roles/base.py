@@ -145,6 +145,7 @@ USAGE_LIMIT_PATTERNS = tuple(re.compile(pattern, re.I) for pattern in (
     r"usage limit exceeded",
     r"out of usage",
     r"quota exceeded",
+    r"quota exhausted",
     r"exceeded your quota",
     r"insufficient_quota",
     r"usage balance exhausted",
