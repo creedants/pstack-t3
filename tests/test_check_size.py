@@ -33,6 +33,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 COPIED = (
     "scripts/check.py",
+    "scripts/_check/__init__.py",
+    "scripts/_check/changes.py",
+    "scripts/_check/fence.py",
+    "scripts/_check/fragments.py",
+    "scripts/_check/identity.py",
+    "scripts/_check/pyast.py",
+    "scripts/_check/readme.py",
+    "scripts/_check/shared_source.py",
+    "scripts/_check/siblings.py",
+    "scripts/_check/tree.py",
+    "scripts/_check/vocabulary.py",
+    "scripts/_check/wording.py",
     "scripts/size_limit.py",
     "t3/scripts/roles.py",
     "t3/added/landing/scripts/landing_lib/sizes.py",
