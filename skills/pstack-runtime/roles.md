@@ -18,7 +18,7 @@ Agreement between seats on the same model is weak evidence. It shows the prompt 
 
 ## Excluded seats
 
-The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with at least one of `model` (a glob), `options` (an object of option key to value), `provider` (a glob on the provider instance id), and `roles` (a list of role names the rule applies to; an absent `roles` applies to every role). A string entry is refused. A model glob such as `grok-*-fast` goes in `model`, and the object `{"model": "grok-4.7", "options": {"fastMode": true}}` refuses by both. A rule holds when every part holds. A model glob matches when it names the bare id or the normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model. `validate` reports an `options` pair no named catalog model can accept, and it does not check a rule whose `provider` or `model` glob matches no catalog model, because a later catalog may add the model.
+The merged exclude list is the union of the user and project lists. User rules come first, then project rules not already present. The roles file may carry `"exclude"`, a list of rules that refuse a seat. An entry is an object with at least one of `model` (a glob), `options` (an object of option key to value), `provider` (a glob on the provider instance id), and `roles` (a list of role names the rule applies to; an absent `roles` applies to every role). A string entry is refused. A model glob such as `grok-*-fast` goes in `model`, and the object `{"model": "grok-4.7", "options": {"fastMode": true}}` refuses by both. A rule holds when every part holds. A model glob matches when it names the bare id or the normalized id. An option pair holds only when the seat declares that option at that value. A rule with no model applies to every model. `validate` reports an `options` pair no named catalog model can accept, and it does not check a rule whose `provider` or `model` glob matches no catalog model, because a later catalog may add the model.
 
 A seat the exclude list refuses is refused in each place a new seat is chosen: a configured role seat, a backup candidate, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses this seat for this role`.
 
@@ -53,3 +53,54 @@ No role uses Claude Haiku 5.5 by default. The normalizer maps a model id to its 
 Anthropic documents two weak spots that the Haiku 5.5 brief answers. At low effort, Haiku 5.5 stops early in long agent prompts. At low or medium effort, it skips verification on coding work. `roles.py show` prints its two-paragraph Haiku 5.5 brief as `haikuBrief` on every role entry with a seat that runs Haiku 5.5, including `inherit` on a Haiku 5.5 thread. Paste it unchanged at the end of the child's brief, per [Delegation](SKILL.md#delegation) step 4.
 
 A child launches seats when it passes a `target` to `delegate_task` or a `modelSelection` to `t3_thread_launch`. A skill-test child that launches seats resolves with `roles.py show --role "skill tests" --launches-seats`. Pass exactly one `--role "skill tests"`, a catalog, and `--parent`. That form refuses a configured seat that runs on the cursor driver, including a configured `inherit` on a cursor thread. An unset `skill tests` keeps the note and is not refused. A configured non-cursor seat is not limited by `--launches-seats`. It still takes the catalog fallback and the budget cap in [Budget](SKILL.md#budget).
+
+## Where roles live
+
+1. `.pstack/t3-roles.json` in the project root. A role here replaces the same role from the user file.
+2. `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json`.
+3. No file. The role resolves to `"inherit"`, per [Built-in defaults](#built-in-defaults).
+
+Print the merged roles for the current project with:
+
+```bash
+python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedProviderInstanceId>/<inheritedModel>" [--brief-mode <value> | --session-mode light]
+```
+
+When the brief this call seats has a `Mode:` line, replace the bracket with `--brief-mode <value>`. Copy that line's bare value, and pass no other mode flag. When the brief has no `Mode:` line and the session is light, replace the bracket with `--session-mode light`, except for a user's explicit reflect, which passes `--session-mode full`. Otherwise delete the bracket. A call with no mode flag takes its mode from the roles files.
+
+Always pass `--parent` with the values from `orchestrator_capabilities`. The saved catalog records whichever thread ran setup, so it never names this thread. Without `--parent`, `show` cannot settle an `inherit` seat on a thread whose model the exclude list refuses. `show`, `validate`, and `write` reject a malformed `--parent`. See [Excluded seats](#excluded-seats).
+
+`<pstack-runtime>` is the directory holding this file. It sits next to every other pstack skill directory, so from a skill at `<dir>/swarm/SKILL.md` it is `<dir>/pstack-runtime`. Add `--role "<name>"` for one role. The output is small JSON with `source` per role. It resolves against the catalog snapshot that `setup-pstack` saved, if any. A role that reports `"seats": "catalog-required"` needs a catalog. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
+
+```bash
+python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "<name>" [--brief-mode <value> | --session-mode light] <<'JSON'
+<the orchestrator_capabilities JSON>
+JSON
+```
+
+Do not reconstruct role defaults in the calling skill. Pass a file path to `--catalog` when the catalog is already a file. Setup does that. One temporary file feeds `show`, `write`, and the saved snapshot. Fill the bracket by the same rule as the first command.
+
+## Role names
+
+| Role | Seats | Used by |
+| --- | --- | --- |
+| `feature, refactoring` | 1 | Feature and Refactoring code delegates |
+| `bug-fix` | 1 | Bug fix code delegates |
+| `perf-issue` | 1 | Perf issue code delegates |
+| `hillclimb` | 1 | Hillclimb experiment delegates |
+| `judgment and prose` | 1 | Prose, judgment, briefs, synthesis |
+| `hardest tasks` | 1 | Cross-cutting design, concurrency, subtle algorithms |
+| `how explorer` | 1 | how |
+| `how explainer` | 1 | how |
+| `why investigators` | 1 | why, one seat model for every investigator |
+| `why synthesizer` | 1 | why |
+| `reflect tooling` | 1 | reflect |
+| `reflect judgment, divergent, synthesizer` | 1 | reflect |
+| `arena runners` | N | arena, one candidate per seat |
+| `arena cross-judge pool` | N | arena, pick one seat whose model family differs from the parent's |
+| `swarm workers` | 1 | swarm, one seat for every worker |
+| `skill tests` | 1 | pstack-author-skill fresh-child test and description eval |
+| `architect runners` | N | architect, one runner per seat |
+| `interrogate reviewers` | N | interrogate, one reviewer per seat |
+| `verifiers` | N | swarm-verify, autopilot, shipping, orchestrate verification |
+| `review backups` | N | `roles.py backup`, when `review backups` is set and no `verifiers` backups seat is left |
