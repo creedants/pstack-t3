@@ -1,0 +1,3 @@
+- kind polish
+- `size-baseline.json` keeps only the files over 5000 tokens that the limit does not skip, with each allowance set to its file's bytes // 4
+- every other entry is removed, including each entry whose file is gone
