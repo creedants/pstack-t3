@@ -17,7 +17,7 @@ class AffectedAncestorSyspathCompeteTest(AffectedBase):
                    "def test_impl():\n    assert payload().strip() != \"\"\n")
         self.restaurant(self.project, layout={"always": "tests.runtime.test_impl", "entryPoints": ["src/x.py"], "helpers": [], "importRoots": []})
 
-    def test_two_inserts_in_test_falls_back(self):
+    def test_sys_path_inserts_in_test_do_not_clear_ancestor_only_import_falls_back(self):
         self._base()
         self.write("tests/group/test_a.py",
                    "import sys\nfrom pathlib import Path\n"
@@ -31,7 +31,7 @@ class AffectedAncestorSyspathCompeteTest(AffectedBase):
         out = self.affected("--paths", "src/x.py")
         self.assertIn("full suite", out)
 
-    def test_two_inserts_in_support_falls_back(self):
+    def test_sys_path_inserts_in_support_do_not_clear_ancestor_only_import_falls_back(self):
         self._base()
         self.write("tests/group/support.py",
                    "import sys\nfrom pathlib import Path\n"
@@ -47,7 +47,7 @@ class AffectedAncestorSyspathCompeteTest(AffectedBase):
         out = self.affected("--paths", "src/x.py")
         self.assertIn("full suite", out)
 
-    def test_earlier_path_in_test_with_append_in_support_falls_back(self):
+    def test_sys_path_append_in_support_does_not_clear_ancestor_only_import_falls_back(self):
         self._base()
         self.write("tests/group/support.py",
                    "import sys\nfrom pathlib import Path\n"
