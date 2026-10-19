@@ -68,6 +68,7 @@ Call `schedule_task` with this shape.
 
 - Pass `schedule` as an object. `everyMs` is at least 60000. Wall-clock runs use `{"type": "fixed_time", "timeOfDay": "09:00", "weekdays": [1,2,3,4,5]}`.
 - Runs post into this thread by default. Set `bindToCurrentThread: false` only when each run should start a fresh thread.
+- On T3 Code 0.1.1-nightly.20261019.3360 or later, each run of a schedule bound to this thread uses the thread's current provider and model. On stable 0.1.0 a bound run keeps its creation seat. After an authorized seat change, delete each `interval` or `fixed_time` schedule this thread owns and create it again with the same prompt and cadence. Recreate heartbeats in the same turn and never let them lapse. Never recreate a `webhook` schedule, because a new schedule gets a new `webhookUrl` and the old single-use `secretRef` no longer applies. Read [Configure an owner](threads.md#configure-an-owner) before the change.
 - The tick prompt must stand alone. Point it at the work log or store so a run can rebuild state from disk.
 - Report the returned cadence and `nextRunAt`. Delete the schedule with `delete_scheduled_task` when the done predicate holds. List with `list_scheduled_tasks`.
 - Pause a schedule with `update_scheduled_task` and `enabled: false`. Resume by setting it back to true.
