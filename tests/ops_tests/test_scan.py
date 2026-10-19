@@ -1,8 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from check import Identity, REQUIRED_SCAN, machine_value_findings
-from .support import DOC, ROOT, OpsTest, setUpModule
+from .support import DOC, ROOT, Identity, REQUIRED_SCAN, OpsTest, machine_value_findings, setUpModule
 
 class ScanTest(OpsTest):
     def repo(self, doc):
