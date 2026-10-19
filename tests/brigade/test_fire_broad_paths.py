@@ -40,12 +40,12 @@ class FireBroadPathsTest(BrigadeTest):
     def test_a_broad_directory_lists_the_quoted_files_in_sorted_order(self):
         self.repo(self.names(8))
         stderr = self.fire("touches `src/h.py` and `src/a.py`", "src")
-        self.assertEqual(stderr, "fire: src holds 8 tracked files; the fired tickets quote src/a.py, src/h.py")
+        self.assertEqual(stderr, "fire: src holds 8 tracked files; the fired tickets name src/a.py, src/h.py")
 
-    def test_a_broad_directory_with_no_quoted_file_says_no_fired_ticket_quotes_a_file_under_it(self):
+    def test_a_broad_directory_with_no_quoted_file_says_no_fired_ticket_names_a_file_under_it(self):
         self.repo(self.names(8))
         stderr = self.fire("touches nothing", "src")
-        self.assertEqual(stderr, "fire: src holds 8 tracked files; no fired ticket quotes a file under it")
+        self.assertEqual(stderr, "fire: src holds 8 tracked files; no fired ticket names a file under it")
 
     def test_a_directory_with_exactly_five_tracked_files_prints_no_line(self):
         self.repo(self.names(5))
@@ -58,5 +58,5 @@ class FireBroadPathsTest(BrigadeTest):
     def test_a_broad_directory_lists_five_of_six_quoted_files_in_sorted_order(self):
         self.repo(self.names(12))
         stderr = self.fire("touches `src/f.py` `src/e.py` `src/d.py` `src/c.py` `src/b.py` `src/a.py`", "src")
-        self.assertEqual(stderr, "fire: src holds 12 tracked files; the fired tickets quote src/a.py, src/b.py, "
+        self.assertEqual(stderr, "fire: src holds 12 tracked files; the fired tickets name src/a.py, src/b.py, "
                                  "src/c.py, src/d.py, src/e.py")

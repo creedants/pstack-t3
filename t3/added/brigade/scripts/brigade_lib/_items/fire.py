@@ -32,9 +32,9 @@ def broad_path_lines(rows, paths, tracked):
             continue
         found = [path for path in under if path in quoted][:BROAD_DIRECTORY_FILES]
         if found:
-            lines.append(f"fire: {entry} holds {len(under)} tracked files; the fired tickets quote {', '.join(found)}")
+            lines.append(f"fire: {entry} holds {len(under)} tracked files; the fired tickets name {', '.join(found)}")
         else:
-            lines.append(f"fire: {entry} holds {len(under)} tracked files; no fired ticket quotes a file under it")
+            lines.append(f"fire: {entry} holds {len(under)} tracked files; no fired ticket names a file under it")
     return lines
 
 
