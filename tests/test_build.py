@@ -27,7 +27,7 @@ CASES = (
         0o755,
     ),
     ("t3/scripts/roles.py", "pstack-runtime/scripts/roles.py", None),
-    # Covers the 12 split modules today.
+    # Covers the 12 split files today.
     *(
         (
             f"t3/scripts/_roles/{p.name}",

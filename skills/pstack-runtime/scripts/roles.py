@@ -63,7 +63,7 @@ def new_file(directory):
 
 
 def _add_repo_arguments(command, *, project_config=True):
-    """One --cwd, --config, and --project-config group for a subcommand."""
+    """One --cwd, --config, and --project-config group for a subcommand, unless project_config is False."""
     command.add_argument("--cwd", default=os.getcwd())
     command.add_argument("--config", help="user roles file (default ~/.config/pstack-t3/roles.json)")
     if project_config:
