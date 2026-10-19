@@ -43,7 +43,7 @@ class AffectedAncestorShadowTest(AffectedBase):
                    "def test_impl():\n    assert payload().strip() != \"\"\n")
         self.write("tests/group/support.py",
                    "import sys\nfrom pathlib import Path\n"
-                   "sys.path.insert(0, str(Path(__file__).resolve().parent / \"runtime\"))\n"
+                   "sys.path.insert(0, str(Path(__file__).resolve().parents[1] / \"runtime\"))\n"
                    "import test_impl\n"
                    "def payload():\n    return test_impl.payload()\n")
         self.write("tests/group/test_a.py",
