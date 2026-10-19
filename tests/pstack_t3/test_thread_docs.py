@@ -80,6 +80,7 @@ class ForkDocTest(unittest.TestCase):
         self.assertIn("Forks live in [threads.md](threads.md#forks).", stub)
         threads = runtime_doc_section("threads.md", "## Top-level threads")
         self.assertIn("`create_threads` makes up to 20 threads", threads)
+        self.assertLess(stub.index("`create_threads` makes up to 20 threads"), stub.index("### Forks"))
 
     def test_a_fork_never_replaces_a_child(self):
         for sentence in (

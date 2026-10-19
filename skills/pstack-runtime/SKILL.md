@@ -146,7 +146,14 @@ Light behavior lives in [light.md](light.md#light-behavior).
 
 ### Never cut
 
-The never-cut list lives in [modes.md](modes.md#never-cut).
+- Tests and the build. The worker runs the project's test command and build before every gate review, and the landing queue reruns them.
+- The landing queue's checks.
+- One review by another model family at every head SHA before merge, per [Gate review](#gate-review).
+- A review reads the whole diff against its base on round one. A later round reads the fix diff since the last reviewed SHA, per [Rounds after the first](../brigade/verdict-protocol.md#rounds-after-the-first).
+- Owner fences. Leases, `--owner` generations, worktrees, and the pass-at-head gate.
+- A fresh worker for every send-back, per [Fresh children by default](#fresh-children-by-default).
+- The code delegate, with the persona, the `roles.py mode` lines, and `roles.py check-brief`.
+- One executing fresh-child test per changed spawn or coordination behavior.
 
 ### Gate review
 
@@ -154,7 +161,7 @@ The gate procedure lives in [light.md](light.md#gate-review).
 
 ### Announcement
 
-The announcement rule lives in [light.md](light.md#announcement).
+When light mode applies, say so once, at the start, in two or three short sentences. Name the source from the `Mode source:` line, what this work cuts, and what still runs, as in "Light mode is on, from this session. This change gets one design sketch and no separate comment review. Tests, the build, and a review by another model family still run." On an escalation, name the rule, as in "This change runs in full mode because its lease covers `land.py`." A worker's report repeats its brief's `Mode:` and `Waived by mode:` lines under its status. A step that line names is not a deviation. Name the mode again only when it changes.
 
 ## Isolation
 
@@ -169,6 +176,10 @@ The slot rules live in [isolation.md](isolation.md#local-command-capacity).
 Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade). Invoking those is that request. Everything else uses child tasks.
 
 The launch shape and the other fields live in [threads.md](threads.md#top-level-threads).
+
+- Follow a thread with `t3_thread_wait` and read it with `t3_thread_read` (use `afterPosition` to read only what is new). Send follow-ups with `t3_thread_send`, interrupt with `t3_thread_interrupt`.
+- A thread launched with `t3_thread_launch` has no parent. Its finished turn does not wake the launcher. A launcher that needs a report names the message the launched thread sends with `t3_thread_send`.
+- `create_threads` makes up to 20 threads sharing this checkout. Use it only for read-only fan-out the user wants visible as threads.
 
 ### Forks
 

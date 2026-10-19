@@ -11,11 +11,11 @@
 - Point Claude Haiku 5.5 at roles.md
 - Move Light behavior to light.md
 - Move Gate review to light.md
-- Move Announcement to light.md
-- Move Never cut to modes.md
+- Keep Announcement in runtime and in light.md
+- Keep Never cut in runtime and in modes.md
 - Move Isolation to isolation.md
 - Move Local command capacity to isolation.md
-- Move Top-level threads to threads.md
+- Keep launcher lifecycle and create_threads bullets in runtime and full Top-level threads in threads.md
 - Point Forks at threads.md
 - Move Scheduling to threads.md
 - Move Local state to host.md
