@@ -45,7 +45,7 @@ class FireBroadPathsTest(BrigadeTest):
     def test_a_broad_directory_with_no_quoted_file_prints_the_file_level_advice(self):
         self.repo(self.names(8))
         stderr = self.fire("touches nothing", "src")
-        self.assertEqual(stderr, "fire: src holds 8 tracked files; name a file under it in the ticket summary to lease at file level")
+        self.assertEqual(stderr, "fire: src holds 8 tracked files; pass file paths in --paths to lease at file level")
 
     def test_a_directory_with_exactly_five_tracked_files_prints_no_line(self):
         self.repo(self.names(5))

@@ -34,7 +34,7 @@ def broad_path_lines(rows, paths, tracked):
         if found:
             lines.append(f"fire: {entry} holds {len(under)} tracked files; suggest {', '.join(found)}")
         else:
-            lines.append(f"fire: {entry} holds {len(under)} tracked files; name a file under it in the ticket summary to lease at file level")
+            lines.append(f"fire: {entry} holds {len(under)} tracked files; pass file paths in --paths to lease at file level")
     return lines
 
 
