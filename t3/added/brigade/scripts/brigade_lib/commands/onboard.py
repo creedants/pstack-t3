@@ -379,7 +379,7 @@ def detect(project_root, directory):
     except Exception as error:
         ctx.status_error = type(error).__name__
     if seam.HELD_LOCKS:
-        ctx.roles_error = (f"roles.py may run git; release {seam.HELD_LOCKS[0]}'s store lock "
+        ctx.roles_error = (f"roles.py show runs with no store lock held; release {seam.HELD_LOCKS[0]}'s store lock "
                            "before resolving the mode")
     else:
         try:
@@ -449,8 +449,8 @@ def register(sub):
     p.add_argument("--name")
     p.add_argument("--admin", action="store_true")
     p.add_argument("--at", default=None)
-    p.add_argument("--detect", action="store_true", help="print facts and missing as JSON and write nothing")
-    p.add_argument("--summary", action="store_true", help="write onboarding.txt and print the change lines")
+    p.add_argument("--detect", action="store_true", help="print facts and missing as JSON and write no brigade files")
+    p.add_argument("--summary", action="store_true", help="write onboarding.txt and print the change lines, or with no restaurant file print the lines plus not saved and write nothing")
 
 
 def handle(args, root):
