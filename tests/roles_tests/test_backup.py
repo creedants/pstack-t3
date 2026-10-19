@@ -314,3 +314,42 @@ class BackupCliTest(BackupCliCase):
             "failed": "codex/gpt-6.1-sol",
             "report": "verifiers: codex/gpt-6.1-sol hit its usage limit; no backup seat, so the work waits for the reset",
         })
+
+
+    def test_muse_subscription_quota_exhausted_relaunches(self):
+        completed = self.backup(
+            "--role", "bug-fix",
+            "--provider", "grok",
+            "--model", "grok-4.7",
+            "--options", '{"reasoningEffort": "high"}',
+            text="API error 429: Subscription quota exhausted.",
+        )
+        self.assert_backup(completed, {
+            "decision": "relaunch",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "seat": {"providerInstanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "medium"}},
+            "report": "bug-fix: grok/grok-4.7 hit its usage limit; relaunched on claudeAgent/claude-opus-5-5 at medium",
+        })
+
+
+    def test_context_full_and_prompt_too_long_are_not_a_usage_limit(self):
+        expected = {
+            "decision": "not-usage-limit",
+            "role": "bug-fix",
+            "failed": "grok/grok-4.7",
+            "report": "bug-fix: grok/grok-4.7 failed without a usage limit; respawn per Failure handling",
+        }
+        for text in (
+            "blocking_limit: context window full, compact the conversation or start another thread",
+            "prompt is too long",
+        ):
+            with self.subTest(text=text):
+                completed = self.backup(
+                    "--role", "bug-fix",
+                    "--provider", "grok",
+                    "--model", "grok-4.7",
+                    "--options", '{"reasoningEffort": "high"}',
+                    text=text,
+                )
+                self.assert_backup(completed, expected)
