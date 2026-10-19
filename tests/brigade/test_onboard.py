@@ -110,6 +110,17 @@ class OnboardSummaryTest(BrigadeTest):
         self.assertEqual(self.summary(), "no change to onboarding.txt")
         self.assertEqual((self.at / "onboarding.txt").stat().st_mtime_ns, stamp)
 
+    def test_whitespace_drift_rewrites_with_normalized_no_fact_changes(self):
+        self.open()
+        self.summary()
+        path = self.at / "onboarding.txt"
+        canonical = path.read_bytes()
+        text = path.read_text()
+        path.write_text(text.replace("\n", "  \n"))
+        self.assertNotEqual(path.read_bytes(), canonical)
+        self.assertEqual(self.summary(), "normalized onboarding.txt with no fact changes")
+        self.assertEqual(path.read_bytes(), canonical)
+
     def test_multiline_value_stays_one_line_per_fact(self):
         self.open()
         self.brigade("set", "--build-command", "make build\nsecond line")
