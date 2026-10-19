@@ -34,7 +34,7 @@ For a Grok Bot or Cursor routine the URL looks like `https://api2.cursor.sh/auto
 
 ## Receive the sender key
 
-Do not accept the sender key in chat. T3's `request_secret` tool asks the user for a secret in a private card and returns a one-use `secretRef`, but that ref only feeds a T3 tool such as `schedule_task`. The key itself never comes back to you, so the user writes it to disk.
+Do not accept the sender key in chat. T3's `request_secret` tool asks the user for a secret in a private card. A saved result includes a one-use `secretRef`. Only a T3 tool such as `schedule_task` can consume that ref. The key itself never comes back to you, so the user writes it to disk.
 
 1. Create the UI's directory and an empty key file with mode 600, for example `<ui-dir>/.webhook-key`. Add it to the directory's `.gitignore`.
 2. Ask the user to write the key into that file from their own terminal or editor, for example `$EDITOR <ui-dir>/.webhook-key`, then reply "done". End the turn there.
