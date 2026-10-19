@@ -123,7 +123,7 @@ class SizeTest(OutputCase):
                 self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest, MOD["items_of"](largest)))), (6, [6] * 6, 8, 12))
                 self.assertEqual((MOD["wire"](largest)["w"][2], len(MOD["wire"](largest)["M"])), ("167h 59m 59s", 37))
                 sizes[status, character] = len(MOD["render_html"](largest, same).encode())
-        self.assertEqual({case: size for case, size in sizes.items() if size + len("\n") > 16000}, {})
+        self.assertEqual({case: size for case, size in sizes.items() if size + len("\n") > 17000}, {})
 class BudgetTest(OutputCase):
     def test_stdout_of_the_html_form_with_its_newline_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it(self):
         fixture = busy(self.fixture).write()

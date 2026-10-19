@@ -44,7 +44,7 @@ class DocumentTest(OutputCase):
     def test_data_object_holds_the_counts_legend_items_groups_and_notes(self):
         failed_child(self.fixture).write()
         data = data_of(self.document())
-        self.assertEqual(sorted(data), ["G", "I", "M", "N", "P", "S", "c", "k", "n", "v", "w"])
+        self.assertEqual(sorted(data), ["C", "G", "I", "M", "N", "P", "S", "c", "k", "n", "v", "w"])
         self.assertEqual((data["v"], data["c"], data["n"], data["w"][1]), (1, "kit", [2, 2, 4, 1], 10800))
         self.assertEqual(data["S"], ["running", "queued", "waiting", "done", "failed", "stopped", "unknown"])
         self.assertEqual(data["P"], [["model-a", 1, 3], ["model-b", 3, 2], ["model-c", 4, 1]])
@@ -171,7 +171,7 @@ class DocumentTest(OutputCase):
         colored = [(name, value) for _, name, value in declared if name in ("color", "--c") or name.startswith(("background", "border"))]
         self.assertEqual([(name, value) for name, value in colored if other_words(value)], [])
         allowed = {"--foreground", "--muted-foreground", "--background", "--border", "--success", "--destructive", "--warning", "--info", "--radius", "--font-sans", "--font-mono"}
-        allowed |= {f"--chart-{number}" for number in range(1, 7)}
+        allowed |= {f"--chart-{number}" for number in range(1, 13)}
         own = set(re.findall(r"(--[\w-]+):", style))
         self.assertEqual(own, {"--c", "--lab"})
         self.assertEqual(set(re.findall(r"var\((--[\w-]+)", style)) - own - allowed, set())

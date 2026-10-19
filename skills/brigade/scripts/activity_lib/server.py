@@ -123,8 +123,9 @@ LIVE_FOLD = squeezed("""
         const key = (block && block.getAttribute('data-item')) || id;
         const nth = (seen[id] = (seen[id] || 0) + 1);
         const fold = id + '\\0' + nth;
+        const collapsed = head.getAttribute('data-collapsed');
         const state = (head.querySelector(':scope>b.chip') || {}).textContent || '';
-        const byDefault = !/merged|dropped|done/.test(state);
+        const byDefault = !collapsed && !/merged|dropped|done/.test(state);
         const caret = document.createElement('span');
         caret.style.cssText = 'flex:none;width:1em;color:var(--muted-foreground)';
         head.prepend(caret);

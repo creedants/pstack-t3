@@ -124,7 +124,7 @@ try:
 
     from activity_lib.privacy import UUID, OPENS, QUOTES, SEGMENT, PATH, SHAPES, LOCAL, LOCAL_CHARS, DOMAIN, TOKEN_ATOM, TOKEN, OPENS_AT, PIECE, SLASH_WORD, BESIDE, CLOSERS, CLOSES, WORD_END, NEXT_PATH_WORD, WORD, RUN, ORDINARY, ORDINARY_CHARS, ESCAPES, ANCHOR, PASSES, MODEL_CHARS, HOST, PULL, REFUSED, CUT, PATH_TAIL, SLUG, HASH, ROLE, UNIT_SUFFIX, BAR, ENTITIES, UNPRINTED, DRIVERS, OTHER_MODEL, MODEL_SLOTS, OTHER_SLOT, MIXED_SLOT, entities, plain, lowered, ordinary, unescaped, as_entities, views, path_end, without, short, Privacy, privacy_of
 
-    from activity_lib.page import Evidence, Assignment, Span, RoleCount, AttemptFold, Row, Item, LedgerLine, Group, Totals, Hidden, Page, StripGroup, Flight, ROLES, TITLE_CHARS, LABEL_CHARS, NAME_BYTES, ID_BYTES, LABEL_BYTES, SUMMARY_BYTES, MODEL_BYTES, LINK_BYTES, encode, size, clip, count, people, agents_in, union, summary, shown, tally, flight_of, checksum, model_slot, span, dur, unit_named, assign, words_of, label_of, stretches, open_turn, status_of, spans_of, seconds_of, tree, with_parents, is_open
+    from activity_lib.page import Evidence, Assignment, Span, RoleCount, AttemptFold, Row, Item, LedgerLine, Group, Totals, Hidden, Page, StripGroup, Flight, ROLES, TITLE_CHARS, LABEL_CHARS, NAME_BYTES, ID_BYTES, LABEL_BYTES, SUMMARY_BYTES, MODEL_BYTES, LINK_BYTES, encode, size, clip, count, people, agents_in, union, summary, shown, tally, flight_of, checksum, model_slot, palette_of, span, dur, unit_named, assign, words_of, label_of, stretches, open_turn, status_of, spans_of, seconds_of, tree, with_parents, is_open
 
     from activity_lib.attempts import attempt_rank, lines_of, attempt_tail, format_attempt, brief_attempt, partition_attempts, spoken, item_of, build_page
 

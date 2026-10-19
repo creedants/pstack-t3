@@ -94,8 +94,8 @@ class D501Test(unittest.TestCase):
         self.assertTrue(by_id["D7"].collapsed)
         self.assertFalse(by_id["D8"].collapsed)
         data = MOD["wire"](page)
-        collapsed = {entry[0]: entry[2] for entry in data["G"] if len(entry) > 2}
-        self.assertTrue(collapsed)
+        self.assertEqual(data["C"], [group.collapsed for group in page.groups])
+        self.assertTrue(any(data["C"]))
         self.assertIn("collapsed", MOD["RENDERER"])
         self.assertIn("collapsed", MOD["LIVE_FOLD"])
 
