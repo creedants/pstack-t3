@@ -1,0 +1,19 @@
+- kind polish
+- Move shared ops fixtures to tests/ops_tests/support.py
+- Move ConfigTest with 11 tests to tests/ops_tests/test_config.py
+- Move ArchiveTest core with 15 tests to tests/ops_tests/test_archive.py
+- Move ArchiveBatchTest with 17 tests to tests/ops_tests/test_archive_batches.py
+- Move ArchiveAncestryTest with 12 tests to tests/ops_tests/test_archive_ancestry.py
+- Move ScanTest with 2 tests to tests/ops_tests/test_scan.py
+- Keep tests/test_ops.py as thin facade with no tests
+- Move shared sync fixtures to tests/sync_upstream_tests/support.py
+- Move CheckTest with 20 tests to tests/sync_upstream_tests/test_check_mode.py
+- Move SyncTest and BadgeSyncTest with 4 tests to tests/sync_upstream_tests/test_sync_and_badge.py
+- Move MergeTest with 21 tests to tests/sync_upstream_tests/test_merge.py
+- Move MergeConflictsTest with 14 tests to tests/sync_upstream_tests/test_merge_conflicts.py
+- Move ClassifyTest and UpstreamChangesTest with 11 tests to tests/sync_upstream_tests/test_layers.py
+- Keep tests/test_sync_upstream.py as thin facade with no tests
+- Move shared skill fixtures to tests/skill_commands_tests/support.py
+- Move scanner and tape builders to tests/skill_commands_tests/tapes.py
+- Keep SkillCommandTest with 5 tests in tests/test_skill_commands.py
+- Keep test id for fence pin unchanged
