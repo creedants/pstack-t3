@@ -93,48 +93,87 @@ class OnboardDetectTest(BrigadeTest):
         self.assertEqual(found["facts"]["mode"]["state"], "invalid")
 
     def test_required_checks_use_trunk_not_current_branch(self):
-        # Processes: git builds the fixture repository. Fake git and gh isolate the trunk read.
+        # Processes: git builds the fixture repository. Fake git and gh on PATH isolate the trunk read.
         self.git_project()
-        import subprocess as sp
-        from unittest import mock as mk
-        real = sp.run
-        seen = {}
-        def fake(cmd, *a, **k):
-            text = " ".join(str(c) for c in (cmd if isinstance(cmd, (list, tuple)) else [cmd]))
-            if "remote" in text and "get-url" in text:
-                return sp.CompletedProcess(cmd, 0, "https://github.com/o/r.git\n", "")
-            if "branch" in text and "--show-current" in text:
-                return sp.CompletedProcess(cmd, 0, "feature/x\n", "")
-            if "symbolic-ref" in text and "origin/HEAD" in text:
-                return sp.CompletedProcess(cmd, 0, "refs/remotes/origin/main\n", "")
-            if isinstance(cmd, (list, tuple)) and len(cmd) > 2 and cmd[0] == "gh" and cmd[1] == "api":
-                seen["url"] = cmd[2]
-                payload = {"required_status_checks": {"contexts": ["test (3.10)", "test (3.12)"], "checks": []}}
-                return sp.CompletedProcess(cmd, 0, json.dumps(payload), "")
-            if isinstance(cmd, (list, tuple)) and len(cmd) > 1 and cmd[0] == "gh" and cmd[1] == "auth":
-                return sp.CompletedProcess(cmd, 0, "", "")
-            return real(cmd, *a, **k)
-        with mk.patch("subprocess.run", side_effect=fake):
+        import os as _os
+        import shutil as _shutil
+        import time as _time
+        from pathlib import Path as _Path
+        from unittest import mock as _mk
+        real_git = _shutil.which("git")
+        self.assertIsNotNone(real_git)
+        bindir = _Path(self.temporary.name) / f"fakebin-trunk-{_time.time_ns()}"
+        bindir.mkdir()
+        (bindir / "git").write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "text = ' '.join(args)\n"
+            "if 'remote' in text and 'get-url' in text:\n"
+            "    print('https://github.com/o/r.git')\n"
+            "    sys.exit(0)\n"
+            "if 'branch' in text and '--show-current' in text:\n"
+            "    print('feature/x')\n"
+            "    sys.exit(0)\n"
+            "if 'symbolic-ref' in text and 'origin/HEAD' in text:\n"
+            "    print('refs/remotes/origin/main')\n"
+            "    sys.exit(0)\n"
+            f"real = {real_git!r}\n"
+            "os.execv(real, [real, *args])\n"
+        )
+        (bindir / "git").chmod(0o755)
+        args_file = _Path(self.temporary.name) / f"gh-args-trunk-{_time.time_ns()}.txt"
+        payload = {"required_status_checks": {"contexts": ["test (3.10)", "test (3.12)"], "checks": []}}
+        payload_text = json.dumps(payload)
+        (bindir / "gh").write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys, json\n"
+            f"args_file = {str(args_file)!r}\n"
+            f"payload_text = {payload_text!r}\n"
+            "args = sys.argv[1:]\n"
+            "open(args_file, 'a').write(' '.join(args) + '\\n')\n"
+            "if len(args) >= 2 and args[0] == 'api' and args[1].startswith('repos/'):\n"
+            "    print(payload_text)\n"
+            "    sys.exit(0)\n"
+            "if len(args) >= 2 and args[0] == 'auth' and args[1] == 'status':\n"
+            "    sys.exit(0)\n"
+            "print('unexpected gh call: ' + ' '.join(args), file=sys.stderr)\n"
+            "sys.exit(1)\n"
+        )
+        (bindir / "gh").chmod(0o755)
+        with _mk.patch.dict(_os.environ, {"PATH": str(bindir) + _os.pathsep + _os.environ.get("PATH", "")}):
             found = self.detect()
-        self.assertIn("/branches/main/", seen.get("url", ""))
-        self.assertNotIn("feature/x", seen.get("url", ""))
+        recorded = args_file.read_text() if args_file.is_file() else ""
+        self.assertIn("/branches/main/", recorded)
+        self.assertNotIn("feature/x", recorded)
         self.assertEqual(found["facts"]["required_checks"]["state"], "detected")
         self.assertEqual(found["facts"]["required_checks"]["value"], ["test (3.10)", "test (3.12)"])
 
     def test_gitlab_remote_gives_unknown_pr_ability(self):
-        # Processes: git builds the fixture repository. Fake git and gh isolate the remote read.
+        # Processes: git builds the fixture repository. A fake git on PATH isolates the remote read.
         self.git_project()
-        import subprocess as sp
-        from unittest import mock as mk
-        real = sp.run
-        def fake(cmd, *a, **k):
-            text = " ".join(str(c) for c in (cmd if isinstance(cmd, (list, tuple)) else [cmd]))
-            if "remote" in text and "get-url" in text:
-                return sp.CompletedProcess(cmd, 0, "https://gitlab.com/o/r.git\n", "")
-            if isinstance(cmd, (list, tuple)) and len(cmd) > 1 and cmd[0] == "gh" and cmd[1] == "auth":
-                return sp.CompletedProcess(cmd, 0, "", "")
-            return real(cmd, *a, **k)
-        with mk.patch("subprocess.run", side_effect=fake):
+        import os as _os
+        import shutil as _shutil
+        import time as _time
+        from pathlib import Path as _Path
+        from unittest import mock as _mk
+        real_git = _shutil.which("git")
+        self.assertIsNotNone(real_git)
+        bindir = _Path(self.temporary.name) / f"fakebin-gitlab-{_time.time_ns()}"
+        bindir.mkdir()
+        (bindir / "git").write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "text = ' '.join(args)\n"
+            "if 'remote' in text and 'get-url' in text:\n"
+            "    print('https://gitlab.com/o/r.git')\n"
+            "    sys.exit(0)\n"
+            f"real = {real_git!r}\n"
+            "os.execv(real, [real, *args])\n"
+        )
+        (bindir / "git").chmod(0o755)
+        with _mk.patch.dict(_os.environ, {"PATH": str(bindir) + _os.pathsep + _os.environ.get("PATH", "")}):
             found = self.detect()
         self.assertEqual(found["facts"]["pr_ability"]["state"], "unknown")
         self.assertEqual(found["facts"]["pr_ability"]["value"], "remote is not GitHub")
@@ -176,21 +215,42 @@ class OnboardDetectTest(BrigadeTest):
                          {"state": "detected", "value": 3, "fix": None})
 
     def test_malformed_status_gives_invalid_landing_and_generated(self):
-        # Processes: git and land build the fixture project and its contract. Fake land status isolates the malformed read.
+        # Processes: git and land build the fixture project and its contract. A fake land.py on disk isolates the malformed read.
         self.git_project()
         self.init_landing()
         self.landing_env()
         self.open()
-        import subprocess as sp
-        from unittest import mock as mk
-        real = sp.run
-        def fake(cmd, *a, **k):
-            text = " ".join(str(c) for c in (cmd if isinstance(cmd, (list, tuple)) else [cmd]))
-            if "land.py" in text and "status" in text and "--json" in text:
-                return sp.CompletedProcess(cmd, 0, "not json", "")
-            return real(cmd, *a, **k)
-        with mk.patch("subprocess.run", side_effect=fake):
-            found = self.detect()
+        import os as _os
+        import subprocess as _sp
+        import sys as _sys
+        import time as _time
+        from pathlib import Path as _Path
+        from ._support.names import ROOT as _ROOT, _owner_words as _owner_words
+        from ._support.race_child import _race_args as _race_args
+        from .support import SUPPORT as _SUPPORT
+        case = _Path(self.temporary.name) / f"fake-land-malformed-{_time.time_ns()}"
+        case.mkdir()
+        real_land = str(_ROOT / "t3/added/landing/scripts/land.py")
+        (case / "land.py").write_text(
+            "#!/usr/bin/env python3\n"
+            "import subprocess, sys\n"
+            f"real = {real_land!r}\n"
+            "args = sys.argv[1:]\n"
+            "if 'status' in args and '--json' in args:\n"
+            "    print('not json')\n"
+            "    sys.exit(0)\n"
+            "r = subprocess.run([sys.executable, real, *args], capture_output=True, text=True)\n"
+            "sys.stdout.write(r.stdout)\n"
+            "sys.stderr.write(r.stderr)\n"
+            "sys.exit(r.returncode)\n"
+        )
+        brigade_args = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at),
+                        "onboard", "--project-root", str(self.project), "--name", "Perf", "--detect"]
+        tail = _race_args("fake-land", case, brigade_args)
+        proc = _sp.run([_sys.executable, str(_SUPPORT), *tail], capture_output=True, text=True,
+                       env=dict(_os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        found = json.loads(proc.stdout.strip())
         self.assertEqual(found["facts"]["landing_mode"]["state"], "invalid")
         self.assertEqual(found["facts"]["generated"]["state"], "invalid")
         self.assertEqual(found["facts"]["repository_cap"]["state"], "invalid")

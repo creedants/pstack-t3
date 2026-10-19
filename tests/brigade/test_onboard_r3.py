@@ -38,17 +38,37 @@ class OnboardR3Test(BrigadeTest):
                           "--rebuild", "python3 scripts/build.py")
         self.landing_env()
         self.open()
-        import subprocess as sp
-        from unittest import mock as mk
-        real = sp.run
-        seen = []
-        def fake(cmd, *a, **k):
-            text = " ".join(str(c) for c in (cmd if isinstance(cmd, (list, tuple)) else [cmd]))
-            if "land.py" in text and "status" in text and "--json" in text:
-                seen.append(text)
-            return real(cmd, *a, **k)
-        with mk.patch("subprocess.run", side_effect=fake):
-            found = json.loads(self.run_at(self.at, "onboard", "--project-root", str(self.project),
-                                           "--name", "Perf", "--detect"))
+        import os as _os
+        import subprocess as _sp
+        import sys as _sys
+        import time as _time
+        from pathlib import Path as _Path
+        from ._support.names import ROOT as _ROOT, _owner_words as _owner_words
+        from ._support.race_child import _race_args as _race_args
+        from .support import SUPPORT as _SUPPORT
+        case = _Path(self.temporary.name) / f"fake-land-count-{_time.time_ns()}"
+        case.mkdir()
+        count_file = case / "land-calls.txt"
+        real_land = str(_ROOT / "t3/added/landing/scripts/land.py")
+        (case / "land.py").write_text(
+            "#!/usr/bin/env python3\n"
+            "import subprocess, sys\n"
+            f"real = {real_land!r}\n"
+            f"count = {str(count_file)!r}\n"
+            "args = sys.argv[1:]\n"
+            "if 'status' in args and '--json' in args:\n"
+            "    open(count, 'a').write('status --json\\n')\n"
+            "r = subprocess.run([sys.executable, real, *args], capture_output=True, text=True)\n"
+            "sys.stdout.write(r.stdout)\n"
+            "sys.stderr.write(r.stderr)\n"
+            "sys.exit(r.returncode)\n"
+        )
+        brigade_args = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at),
+                        "onboard", "--project-root", str(self.project), "--name", "Perf", "--detect"]
+        tail = _race_args("fake-land", case, brigade_args)
+        proc = _sp.run([_sys.executable, str(_SUPPORT), *tail], capture_output=True, text=True,
+                       env=dict(_os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        found = json.loads(proc.stdout.strip())
         self.assertEqual(found["facts"]["generated"]["state"], "detected")
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(count_file.read_text().strip().splitlines(), ["status --json"])
