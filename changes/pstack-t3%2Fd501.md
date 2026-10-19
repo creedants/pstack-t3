@@ -1,5 +1,4 @@
 - kind polish
-- `t3/added/pstack-runtime/modes.md` replaces its Never cut list with a link to `SKILL.md#never-cut` and `t3/added/pstack-runtime/light.md` replaces its Announcement paragraph with a link to `SKILL.md#announcement`.
 - `t3/added/brigade/scripts/activity_lib/t3state.py` decodes request names twice and `t3/added/brigade/scripts/activity_lib/page.py` assigns from the thread ledger with record winning so reviewers sit under their item.
 - `t3/added/brigade/scripts/activity_lib/page.py` adds `Group.collapsed` for merged and dropped, `t3/added/brigade/scripts/activity_lib/rendering.py` wires it only when any group collapses, and `t3/added/brigade/scripts/activity_lib/theme.py` with `t3/added/brigade/scripts/activity_lib/server.py` render it expandable with the static toggle excluding links plus attempt summary and details and respecting attempt visibility.
 - `t3/added/brigade/scripts/activity_lib/attempts.py` drops the finished early return so finished items still fold earlier attempts.
