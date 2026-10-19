@@ -41,7 +41,7 @@ class PinnedBlockersTest(unittest.TestCase):
         self.fixture = Fixture(directory.name)
         self.addCleanup(self.fixture.close)
 
-    def test_palette_ignores_legend_counts_for_same_model_set(self):
+    def test_palette_ignores_legend_order_for_same_model_set(self):
         first = MOD["palette_of"]((("model-c", 2), ("model-d", 1)))
         second = MOD["palette_of"]((("model-d", 2), ("model-c", 1)))
         self.assertEqual(first, second)
