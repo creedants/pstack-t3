@@ -1,0 +1,3 @@
+- kind feature
+- `fire` prints one advisory line to stderr for a `--paths` directory holding more than 5 tracked files, naming the directory, its tracked-file count, and up to 5 tracked files under it that the fired tickets' summaries quote in backticks, or that none does.
+- The lease is unchanged, and a file path or a directory with 5 or fewer tracked files prints no line.

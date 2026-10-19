@@ -72,6 +72,8 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
 
 `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment.
 
+`fire` prints one advisory line to stderr when a `--paths` entry is a directory holding more than 5 tracked files, naming the directory, its tracked-file count, and up to 5 tracked files under it that the fired tickets' summaries quote in backticks, or stating that none does. It leaves the lease unchanged.
+
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](../script.md#brief-fields).
 
