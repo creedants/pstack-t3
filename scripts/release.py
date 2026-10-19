@@ -5,12 +5,8 @@ Orders the fragments by the commit that added each one, writes their bullets
 under a new `## X.Y.Z (YYYY-MM-DD)` heading, and deletes the fragments. It
 never stages, commits, tags, pushes, or calls gh. It prints those steps.
 
-When the changelog would pass 5000 tokens it moves older versions into docs/changelog/ and leaves an ## Archive link block. If the new section and Archive block cannot fit together it archives the new section too, leaving only the header and Archive block. Archived copies rebase eligible LINK_RE matches. The matcher handles single-line links and images. Labels may hold code spans but no `]`. Relative destinations are nonempty, lack a colon, and do not start with `/`, `#`, `<`, or `../../`. Archived bytes equal the original section except for rebased relative link destinations.
-
-A failed write or delete, or a SIGINT, SIGTERM, or SIGHUP, puts CHANGELOG.md and every fragment back
-as the script read them. The script then checks them and prints `nothing changed` only when they match.
-When a file differs, it names that file and the undo command. A kill that cannot be caught, or power
-loss, can leave a partial run. The same undo command restores it.
+A real run needs a stable check record in the release notes file passed with
+--notes-file. Past 5000 tokens it moves older versions into docs/changelog/.
 """
 import argparse
 import datetime
@@ -31,6 +27,7 @@ GROUPS = (("### New", ("feature",)), ("### Fixed", ("fix",)), ("### Changed", ("
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 LINK_RE = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)([^)]*\))")
 TICKS = re.compile(r"`+")
+STABLE = re.compile(r"Stable check: T3 Code (\d+\.\d+\.\d+) (passed|failed)")
 UNDO = "git restore --staged --worktree CHANGELOG.md changes/"
 LIMIT_TOKENS = 5000
 ARCHIVE = "docs/changelog"
@@ -296,10 +293,25 @@ def read_utf8(path):
 def refuse_unfinished_release():
  dirty = git("status", "--porcelain", "--untracked-files=all", "--", "CHANGELOG.md", "changes/", ARCHIVE)
  if dirty:
-        undo = ARCHIVE_UNDO if ARCHIVE in dirty else UNDO
-        scope = "CHANGELOG.md, changes/, or docs/changelog/" if ARCHIVE in dirty else "CHANGELOG.md or changes/"
-        sys.exit(f"{scope} has uncommitted changes; commit them, "
-                 f"or run {undo} to undo an unfinished release:\n{dirty.rstrip()}")
+  undo = ARCHIVE_UNDO if ARCHIVE in dirty else UNDO
+  scope = "CHANGELOG.md, changes/, or docs/changelog/" if ARCHIVE in dirty else "CHANGELOG.md or changes/"
+  sys.exit(f"{scope} has uncommitted changes; commit them, "
+   f"or run {undo} to undo an unfinished release:\n{dirty.rstrip()}")
+def stable_check(path):
+ text = ""
+ if path:
+  try:
+   text = Path(path).read_text(encoding="utf-8")
+  except (OSError, UnicodeDecodeError):
+   pass
+ for line in text.splitlines():
+  match = STABLE.match(line.strip().removeprefix("- "))
+  if match:
+   if match.group(2) != "passed":
+    sys.exit(f"stable check on T3 Code {match.group(1)} failed; record a passing result")
+   return
+ sys.exit("no stable check record; run setup-pstack and one small real item on the latest stable T3 Code release, "
+  "record the stable version and result in the release notes file, and pass it with --notes-file")
 def take_kind(name, lines):
  if not lines or not lines[0].startswith("- "):
   return "upkeep", lines
@@ -471,8 +483,11 @@ def main(argv=None):
  parser.add_argument("version", help="the version to cut, as X.Y.Z")
  parser.add_argument("--dry-run", action="store_true", help="print the section and change nothing")
  parser.add_argument("--date", help="the date in the heading, as YYYY-MM-DD (default: today)")
+ parser.add_argument("--notes-file", help="the release notes file that holds the stable check record")
  args = parser.parse_args(argv)
  cut = plan(args.version, args.date)
+ if not args.dry_run:
+  stable_check(args.notes_file)
  sys.stdout.write(cut.section)
  sys.stdout.flush()
  if not args.dry_run:
