@@ -1,0 +1,54 @@
+- kind polish
+- Move Delegation steps 1 to 3, 5, and 6 to delegation.md
+- Move Permissions to delegation.md
+- Move Fresh children by default to delegation.md
+- Move Where roles live to roles.md
+- Move Role names to roles.md
+- Point Built-in defaults at roles.md
+- Point Excluded seats at roles.md
+- Point Budget at roles.md
+- Point Fallback at roles.md
+- Point Claude Haiku 5.5 at roles.md
+- Move Light behavior to light.md
+- Move Gate review to light.md
+- Move Announcement to light.md
+- Move Never cut to modes.md
+- Move Isolation to isolation.md
+- Move Local command capacity to isolation.md
+- Move Top-level threads to threads.md
+- Point Forks at threads.md
+- Move Scheduling to threads.md
+- Move Local state to host.md
+- Move History to host.md
+- Move Pending requests to host.md
+- Move Visual reports to verification.md
+- Move Pull requests to watching.md
+- Move Pull request watching to watching.md
+- Move Rulings to reference/rulings.md
+- Move Capacity to reference/capacity.md
+- Move the stored-contract paragraphs to reference/contract.md
+- Move shared test helpers to tests/pstack_t3/support.py
+- Move part of RolesTest to tests/pstack_t3/test_roles.py
+- Move part of RolesTest to tests/pstack_t3/test_roles_config.py as RolesConfigTest
+- Move FixedContextWindowTest to tests/pstack_t3/test_roles_config.py
+- Move InstallTest to tests/pstack_t3/test_install.py
+- Move ModesTest to tests/pstack_t3/test_modes.py
+- Move CodeDelegateBriefTest to tests/pstack_t3/test_code_delegate.py
+- Move BuildTest to tests/pstack_t3/test_build.py
+- Move ChangelogTest to tests/pstack_t3/test_changelog.py
+- Move WorktreeAuditTest to tests/pstack_t3/test_worktree.py
+- Move ThreadLifecycleDocTest to tests/pstack_t3/test_thread_docs.py
+- Move ForkDocTest to tests/pstack_t3/test_thread_docs.py
+- Move ConfigureOwnerDocTest to tests/pstack_t3/test_thread_docs.py
+- Move PromoteQueuedCorrectionDocTest to tests/pstack_t3/test_thread_docs.py
+- Move RunScheduleNowDocTest to tests/pstack_t3/test_thread_docs.py
+- Move StalledChildDocTest to tests/pstack_t3/test_delegation_docs.py
+- Move OpenCodeLongCommandDocTest to tests/pstack_t3/test_delegation_docs.py
+- Move SeatLaunchDocTest to tests/pstack_t3/test_delegation_docs.py
+- Move LaunchingSkillTestDocTest to tests/pstack_t3/test_runtime_docs.py
+- Move MuseDocTest to tests/pstack_t3/test_runtime_docs.py
+- Move ExcludedSeatsDocTest to tests/pstack_t3/test_runtime_docs.py
+- Move SetupFastGrokDocTest to tests/pstack_t3/test_runtime_docs.py
+- Move AuthorSkillDocTest to tests/pstack_t3/test_runtime_docs.py
+- Move VisualReportsDocTest to tests/pstack_t3/test_verify_docs.py
+- Move NoCommentsReadOnlyDocTest to tests/pstack_t3/test_verify_docs.py
