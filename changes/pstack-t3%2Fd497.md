@@ -10,4 +10,4 @@
 - tests/brigade/test_launch.py becomes a thin facade over tests/brigade/seat_launch/
 - every split file stays under 5000 tokens and every test id stays stable
 - a test module is selected for a source when the source reaches it directly or through a registered helper entry or through test tree imports transitively. An unresolved helper or an unresolved test shaped support import selects the full suite.
-- an ancestor-only match may add a possible dependency edge, but it does not clear the unresolved-import uncertainty except for a directory the resolver proves on the import path, such as a configured importRoots entry, the importer own directory, or a sys.path insert or append in the loader file that resolves to the ancestor directory. The importing test module, or every runnable importer of a support module, otherwise falls back to the full suite.
+- a test shaped import with empty proven candidates and nonempty ancestor candidates falls back to the full suite for the importing test module or for every runnable importer of a support module. No sys.path analysis clears that.
