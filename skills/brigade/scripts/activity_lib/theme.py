@@ -253,7 +253,11 @@ COLLAPSE_SCRIPT = squeezed("""
         head.onclick = (e) => {
           if (e.target.closest('a,summary,details')) return;
           const detail = head.querySelector('details'), open = detail && detail.open;
-          for (const n of ns) n.style.display = n.style.display ? '' : (n.className.includes('earlier') && !open ? 'none' : '');
+          const expanded = ns.some((n) => !n.style.display);
+          for (const n of ns) {
+            if (expanded) n.style.display = 'none';
+            else n.style.display = (n.className.includes('earlier') && !open ? 'none' : '');
+          }
         };
       });
     }
