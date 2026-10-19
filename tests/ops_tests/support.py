@@ -18,8 +18,12 @@ from typing import NamedTuple, Optional, Union
 from tests import in_process
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.append(str(ROOT / "scripts"))
 from check import Identity, REQUIRED_SCAN, machine_value_findings  # noqa: E402
+_scripts = str(ROOT / "scripts")
+while _scripts in sys.path:
+    sys.path.remove(_scripts)
+sys.path.append(_scripts)
 ARCHIVE = ROOT / "ops/t3-archive-threads.py"
 EXAMPLE = ROOT / "ops/config.example"
 DOC = ROOT / "docs/operations.md"
