@@ -1,7 +1,7 @@
 """Each `$B ticket add` and `$B fire` command line in the brigade skill that contains `--`.
 
 The two live tests read the skill files. The three regression tests read only
-the fixed fixture in this module. A valid edit to the live skill leaves them passing.
+the fixed fixture in tests/skill_commands_tests/support.py. A valid edit to the live skill leaves them passing.
 
 Expansion. The filler recognizes three marks when a line has them. `a|b|c` is one token of
 alternatives, split on `|`. `[...]` wraps tokens the line includes. The brackets are not
