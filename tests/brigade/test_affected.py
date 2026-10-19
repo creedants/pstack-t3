@@ -219,7 +219,7 @@ class AffectedBase(BrigadeTest):
             else:
                 shutil.copy2(child, target)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, capture_output=True, text=True, check=True)
-        # A commit spawns detached maintenance that writes to .git during cleanup. Disable it at the source.
+        # Disable detached maintenance in this archive.
         subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=dest, capture_output=True, text=True, check=True)
         subprocess.run(["git", "config", "gc.auto", "0"], cwd=dest, capture_output=True, text=True, check=True)
         subprocess.run(["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "add", "-A"],

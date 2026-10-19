@@ -11,4 +11,4 @@
 - every split file stays under 5000 tokens and every test id stays stable
 - a test module is selected for a source when the source reaches it directly or through a registered helper entry or through test tree imports transitively. An unresolved helper or an unresolved test shaped support import selects the full suite.
 - a test shaped import with empty proven candidates and nonempty ancestor candidates falls back to the full suite for the importing test module or for every runnable importer of a support module. No sys.path analysis clears that.
-- the affected test archive sets maintenance.auto false and gc.auto 0 and runs its git commands with the same flags so no detached writer races teardown.
+- the affected test archive sets maintenance.auto false and gc.auto 0 and runs its add and commit with the same flags so the fixture starts no detached writer.
