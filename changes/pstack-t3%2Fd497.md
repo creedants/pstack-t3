@@ -9,4 +9,4 @@
 - tests/brigade/test_startable.py becomes a thin facade over tests/brigade/startable_tickets/
 - tests/brigade/test_launch.py becomes a thin facade over tests/brigade/seat_launch/
 - every split file stays under 5000 tokens and every test id stays stable
-- a test module is selected for a source when the source reaches it directly or through any module under the test tree that it imports, transitively
+- a test module is selected for a source when the source reaches it directly or through a registered helper entry or through test tree imports transitively. An unresolved helper or an unresolved test shaped support import selects the full suite.
