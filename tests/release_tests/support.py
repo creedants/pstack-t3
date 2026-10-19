@@ -1,7 +1,4 @@
-import importlib.util
 import os
-import pathlib
-import shlex
 import shutil
 import signal
 import subprocess
@@ -10,23 +7,17 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from unittest import mock
 
 from tests import in_process
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests/release_tests"))
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "t3/added/brigade/scripts"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-if "pstack_release" in sys.modules:
-    release = sys.modules["pstack_release"]
-else:
-    _spec = importlib.util.spec_from_file_location("pstack_release", ROOT / "scripts/release.py")
-    release = importlib.util.module_from_spec(_spec)
-    sys.modules[_spec.name] = release
-    _spec.loader.exec_module(release)
+from scripts import release  # noqa: E402
 from tests import test_pstack_t3  # noqa: E402
 from brigade_lib.store import KINDS as STORE_KINDS  # noqa: E402
 
