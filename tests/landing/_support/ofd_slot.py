@@ -362,8 +362,7 @@ def _cap_clause(holder):
 def _format_wait(elapsed, holders):
     """One line naming each proven holder by kind, repository, hold duration, and short command.
 
-    A holder with no proven record reads as unknown, and so does each field its record
-    does not carry. Zero holders produce no holder text. An exclusive holder with a
+    A holder with no proven record reads as unknown. Each of kind, repo, hold time, and command reads as unknown when its field is missing. The cap and reason are left out when missing. Zero holders produce no holder text. An exclusive holder with a
     usable cap names the time left when its start time is usable. It names the cap
     alone when the start time is not. The line includes the reason only when the holder has a cap clause.
     """
@@ -421,7 +420,7 @@ def _admit(kind, repo=None, command=None, cap=None, reason=None):
     turns = []
     records = []
     try:
-        # Two opens, so that unlocking the mutex byte on gate keeps the ticket byte locked on place.
+        # Two opens, so gate and place are separate open file descriptions and a probe through gate sees the ticket byte held on place.
         for _ in range(2):
             turns.append(os.open(directory / "turn", os.O_RDWR | os.O_CREAT, 0o666))
         gate, place = turns

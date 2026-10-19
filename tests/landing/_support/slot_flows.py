@@ -110,7 +110,7 @@ class SlotFlowsBase:
     def admit_latest_first(self, slots, kinds):
         """Park one stepped caller per kind behind full slots, free the slots, then let the latest parked caller try first.
 
-        A caller may start before an earlier parked caller only when that earlier caller could not take a slot.
+        A caller may start before an earlier parked caller that conflicts with it only when that earlier caller could not take a slot.
         Waiters sit on their retry fifo while a slot is released, so a release cannot land between the admission
         check and the take.
         """
