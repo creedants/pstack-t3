@@ -231,17 +231,42 @@ def _resolve_import(edge, loader_path, root, roots, depth=0):
     return _resolves(edge, cands, loader_path, root, roots, depth)
 
 
-def _module_name(path, root):
+def _tree_files(root):
+    base = Path(str(root))
+    found = []
+    for path in sorted(base.glob("tests/**/*.py")):
+        try:
+            if path.is_file():
+                found.append(path)
+        except OSError:
+            continue
+    return found
+
+
+def _tree_name(path, root):
     try:
         rel = Path(str(path)).resolve().relative_to(Path(str(root)).resolve()).as_posix()
     except ValueError:
         return None
     if not rel.startswith("tests/") or not rel.endswith(".py"):
         return None
-    stem = rel[:-3]
-    if "/test_" not in "/" + stem and not stem.split("/")[-1].startswith("test_"):
+    return rel[:-3].replace("/", ".")
+
+
+def _is_test_name(name):
+    if not isinstance(name, str) or not name.startswith("tests."):
+        return False
+    stem = name.replace(".", "/")
+    if "/test_" in "/" + stem:
+        return True
+    return stem.split("/")[-1].startswith("test_")
+
+
+def _module_name(path, root):
+    name = _tree_name(path, root)
+    if name is None or not _is_test_name(name):
         return None
-    return stem.replace("/", ".")
+    return name
 
 
 def _test_files(root):
