@@ -53,11 +53,7 @@ def link_findings(*targets):
 
 
 def fragment_tree_findings(paths, vendor=()):
-    """Write a temporary skills tree from tree-relative path to text and return the fragment check's findings.
-
-    The vendor skill directory points at a temporary path with a directory per
-    name in vendor, so no finding depends on this checkout.
-    """
+    """Write a temporary skills tree from tree-relative path to text and return the fragment check's findings."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         for rel, text in paths.items():
@@ -160,6 +156,7 @@ def checker_checkout(root, readme):
     r=root/"t3/scripts"
     r.mkdir(parents=True)
     shutil.copy(ROOT/"t3/scripts/roles.py",r/"roles.py")
+    shutil.copytree(ROOT/"t3/scripts/_roles",r/"_roles")
     k=root/"skills/demo"
     k.mkdir(parents=True)
     (k/"SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")

@@ -27,6 +27,15 @@ CASES = (
         0o755,
     ),
     ("t3/scripts/roles.py", "pstack-runtime/scripts/roles.py", None),
+    # Covers the 12 split files today.
+    *(
+        (
+            f"t3/scripts/_roles/{p.name}",
+            f"pstack-runtime/scripts/_roles/{p.name}",
+            None,
+        )
+        for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py"))
+    ),
     (
         "t3/overrides/poteto-mode/scripts/check-plan.mjs",
         "poteto-mode/scripts/check-plan.mjs",

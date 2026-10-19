@@ -1,0 +1,3 @@
+- kind polish
+- the split files stay under 5000 tokens, so roles.py splits into a thin facade plus _roles domain modules and the two roles test files split into tests/roles_tests with no behavior change
+- fix round 2 (review 2): corrected the facade comment to say the persona and playbook roots resolve from the facade's location, because the source and built trees use different relative playbook paths
