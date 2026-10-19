@@ -99,7 +99,7 @@ class SizeTest(OutputCase):
         self.assertIn("When the document exceeds its size limit, the page can fold finished rows into summaries or omit rows, and it counts the agents and work items those changes cover.", guide)
         self.assertNotIn("the page folds finished work into summary rows", guide)
 
-    def test_largest_page_the_last_fold_can_leave_is_under_17000_bytes_with_six_models_every_note_the_longest_window_label_and_every_clipped_string_over_its_byte_limit(self):
+    def test_largest_page_the_last_fold_can_leave_is_under_16000_bytes_with_six_models_every_note_the_longest_window_label_and_every_clipped_string_over_its_byte_limit(self):
         spans = tuple((x * 40, 1, "failed") for x in range(25))
         counts = ("dropped_items", "dropped_agents", "cut_agents", "cut_lines", "cut_in_flight", "other_threads", "unknown_status", "by_request_name", "unstarted")
         hidden = MOD["Hidden"](**dict.fromkeys(counts, 9999999))
@@ -123,7 +123,7 @@ class SizeTest(OutputCase):
                 self.assertEqual((len(largest.groups), [len(one.rows) for one in largest.groups], len(largest.items), len(MOD["notes"](largest, MOD["items_of"](largest)))), (6, [6] * 6, 8, 12))
                 self.assertEqual((MOD["wire"](largest)["w"][2], len(MOD["wire"](largest)["M"])), ("167h 59m 59s", 37))
                 sizes[status, character] = len(MOD["render_html"](largest, same).encode())
-        self.assertEqual({case: size for case, size in sizes.items() if size + len("\n") > 17000}, {})
+        self.assertEqual({case: size for case, size in sizes.items() if size + len("\n") > 16000}, {})
 class BudgetTest(OutputCase):
     def test_stdout_of_the_html_form_with_its_newline_is_at_most_max_bytes_at_the_exact_size_and_one_byte_under_it(self):
         fixture = busy(self.fixture).write()

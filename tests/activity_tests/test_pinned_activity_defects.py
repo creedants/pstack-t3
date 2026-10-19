@@ -35,7 +35,7 @@ def double(thread):
     return thread.replace("%2F", "%252F")
 
 
-class D501Test(unittest.TestCase):
+class PinnedActivityDefectsTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -91,9 +91,9 @@ class D501Test(unittest.TestCase):
         self.assertTrue(by_id["D7"].collapsed)
         self.assertFalse(by_id["D8"].collapsed)
         data = MOD["wire"](page)
-        self.assertEqual(data["C"], [group.collapsed for group in page.groups])
-        self.assertTrue(any(data["C"]))
-        self.assertIn("collapsed", MOD["RENDERER"])
+        self.assertEqual(data.get("C"), [group.collapsed for group in page.groups])
+        self.assertTrue(any(data.get("C", [])))
+        self.assertIn("collapsed", MOD["COLLAPSE_SCRIPT"])
         self.assertIn("collapsed", MOD["LIVE_FOLD"])
 
     def test_finished_items_still_fold_earlier_attempts(self):
@@ -120,7 +120,7 @@ class D501Test(unittest.TestCase):
         self.assertTrue(item.fold.summary)
 
     def test_model_colors_are_distinct_per_legend_with_other_shared_and_stable(self):
-        self.assertIn(".p7", MOD["STYLE"])
+        self.assertIn(".p7", MOD["OVERFLOW_STYLE"])
         palette = MOD["palette_of"]((("model-a", 3), ("model-b", 2), ("model-c", 1), ("model-d", 1), ("model-e", 1), ("model-f", 1), ("model-g", 1), ("other model", 1)))
         slots = [palette[name] for name, _ in (("model-a", 3), ("model-b", 2), ("model-c", 1), ("model-d", 1), ("model-e", 1), ("model-f", 1), ("model-g", 1))]
         self.assertEqual(len(set(slots)), len(slots))

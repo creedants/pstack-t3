@@ -158,7 +158,7 @@ class DocumentTest(OutputCase):
         self.assertEqual(re.findall(r"height:[^;}]*", MOD["STYLE"]), ["height:1.1", "height:8px", "height:9px", "height:16px", "height:19px", "height:100%", "height:11px", "height:30px", "height:13px"])
 
     def test_stylesheet_names_a_color_in_a_color_background_border_or_c_declaration_only_as_a_variable_transparent_or_inherit_and_reads_only_theme_variables_and_its_own_two(self):
-        style = MOD["STYLE"]
+        style = MOD["STYLE_BASE"]
         declared = declarations(style)
         self.assertEqual(re.findall(r"[0-9](?:vh|vw)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", style), [])
 
@@ -171,7 +171,7 @@ class DocumentTest(OutputCase):
         colored = [(name, value) for _, name, value in declared if name in ("color", "--c") or name.startswith(("background", "border"))]
         self.assertEqual([(name, value) for name, value in colored if other_words(value)], [])
         allowed = {"--foreground", "--muted-foreground", "--background", "--border", "--success", "--destructive", "--warning", "--info", "--radius", "--font-sans", "--font-mono"}
-        allowed |= {f"--chart-{number}" for number in range(1, 13)}
+        allowed |= {f"--chart-{number}" for number in range(1, 7)}
         own = set(re.findall(r"(--[\w-]+):", style))
         self.assertEqual(own, {"--c", "--lab"})
         self.assertEqual(set(re.findall(r"var\((--[\w-]+)", style)) - own - allowed, set())
