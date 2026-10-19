@@ -35,7 +35,7 @@ class AddPathsWidenTest(BrigadeTest):
         self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"), "D1: L1 already covers src/a.py")
         self.assertEqual(self.lease_lines(), ["L1 active perf/D1: README.md, src/a.py"])
 
-    def test_add_paths_reconciles_a_new_lease_recorded_by_a_stopped_swap(self):
+    def test_add_paths_reconciles_a_new_lease_claimed_by_a_stopped_swap(self):
         self.started()
         self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1", "--paths", "README.md,src/a.py"), "L2")
         self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"), "D1: L1 now covers src/a.py")
