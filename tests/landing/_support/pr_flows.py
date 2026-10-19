@@ -117,7 +117,7 @@ os.execv(real, [real, *args])
 
 
     def record_created_pr_branch(self):
-        """A PR is visible to `gh pr view` only for the head `pr create` used."""
+        """For a landing/ head, gh pr view with --json url fails unless that head is the one pr create used."""
         real = os.environ["LAND_GH"]
         wrapper = self.base / "gh-branch"
         wrapper.write_text(
@@ -175,7 +175,7 @@ os.execv({real!r}, [{real!r}, *args])
 
 
     def ignore_non_open_pr_on_landing_q(self, state):
-        """The queue opens its own pull request whatever state the one on landing/q<n> is in."""
+        """The queue opens its own pull request when the one on landing/q<n> is closed or merged."""
         with self.fake_gh():
             (self.base / "pr-seq").write_text("9\n")
             candidate = self.crashed_landing_q_pr()

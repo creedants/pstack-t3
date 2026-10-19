@@ -42,7 +42,7 @@ class MergeFlowsBase:
 
 
     def base_land_script(self):
-        """Pre-rename land.py. The fixture replaces git show, which fails in a shallow clone."""
+        """Copy the pre-rename land.py fixture into the scratch base directory and return its path."""
         path = self.base / "land-3678d11.py"
         source = ROOT / "tests/fixtures/land_before_e_rename.py"
         path.write_bytes(source.read_bytes())

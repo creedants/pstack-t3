@@ -22,7 +22,7 @@ class SlotCaller:
 
 
 class SlotCallers:
-    """Real slot processes on one scratch governor. Each command holds its slot until the test writes to its fifo.
+    """Real slot processes on one scratch governor. Each command holds its slot until the test writes to its fifo unless start is given hold, which leaves the slot after that many seconds.
 
     A stepped caller runs land.py with time.sleep replaced. It marks each failed attempt with a waiting-N file and
     makes its next attempt when the test writes to its retry fifo, so the test decides which waiter tries next.
