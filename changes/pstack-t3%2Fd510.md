@@ -1,0 +1,12 @@
+- kind polish
+- `tests/test_release.py` is a thin facade. It re-exports `RunTest`, `OrderTest`, `RefusalTest`, `KindTest`, and `RuleTest` when unittest loads it as `tests.test_release` or runs it as a script.
+- The facade imports `tests.release_tests` and each moved module, so a change to the package initializer or a moved module selects `tests.test_release`.
+- `tests/release_tests/test_run.py` holds `RunTest` with 24 tests.
+- `tests/release_tests/test_order.py` holds `OrderTest` with 10 tests.
+- `tests/release_tests/test_refusal.py` holds `RefusalTest` with 18 tests.
+- `tests/release_tests/test_kind.py` holds `KindTest` with 8 tests.
+- `tests/release_tests/test_rule.py` holds `RuleTest` with 3 tests.
+- `tests/release_tests/support.py` imports `release` from `scripts` by package path, so a change to `scripts/release.py` selects `tests.test_release`.
+- `python3 -m unittest tests.test_release` runs 63 tests with OK.
+- Discovery from `tests` finds the 63 moved tests once, and the facade adds none.
+- Every file in `tests/release_tests/` and `tests/test_release.py` is under 5000 tokens.
