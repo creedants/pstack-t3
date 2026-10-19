@@ -98,8 +98,8 @@ class RetireMixin:
             row = self.table_row(self.at, "dishes.tsv", "D1")
             self.assertEqual((row["branch"], row["lease"], row["paths"]), ("perf/d1-r2", "L1", "src,changes/perf%2Fd1.md"))
             self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1.md, src"])
-            self.assertEqual(self.brigade("dish", "D1", "--add-paths", "changes/perf%2Fd1-r2.md"), "D1: L2 replaces L1")
-            self.assertEqual(self.lease_lines(), ["L2 active perf/D1: changes/perf%2Fd1-r2.md, changes/perf%2Fd1.md, src"])
+            self.assertEqual(self.brigade("dish", "D1", "--add-paths", "changes/perf%2Fd1-r2.md"), "D1: L1 now covers changes/perf%2Fd1-r2.md")
+            self.assertEqual(self.lease_lines(), ["L1 active perf/D1: changes/perf%2Fd1-r2.md, changes/perf%2Fd1.md, src"])
             self.assertEqual(self.brigade("dish", "D1", "--branch", "perf/d1-r2"), "D1 in-progress")
 
     def test_an_active_fragment_gap_prints_no_manual_claim_or_release(self):
