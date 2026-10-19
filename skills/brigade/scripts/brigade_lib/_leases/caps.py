@@ -163,7 +163,9 @@ def workers_line(meta, running):
 
 
 def require_workers(workers):
-    if workers is not None and workers < 1:
+    if workers is None:
+        return
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
         raise BrigadeError("workers must be 1 or more")
 
 
