@@ -5,7 +5,7 @@ from tests.brigade.test_affected import AffectedBase
 class AffectedAncestorShadowTest(AffectedBase):
     def test_runnable_importer_shadowed_by_ancestor_falls_back_fails_when_ancestor_guess_clears_uncertainty(self):
         self.git_project()
-        self.write("src/x.py", "x = 1\n")
+        self.write("src/x.py", "x=1\n")
         self.write("tests/__init__.py", "")
         self.write("tests/group/__init__.py", "")
         self.write("tests/runtime/__init__.py", "")
@@ -30,7 +30,7 @@ class AffectedAncestorShadowTest(AffectedBase):
 
     def test_support_importer_shadowed_by_ancestor_falls_back_fails_when_ancestor_guess_clears_uncertainty(self):
         self.git_project()
-        self.write("src/x.py", "x = 1\n")
+        self.write("src/x.py", "x=1\n")
         self.write("tests/__init__.py", "")
         self.write("tests/group/__init__.py", "")
         self.write("tests/runtime/__init__.py", "")
