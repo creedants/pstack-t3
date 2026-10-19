@@ -4,7 +4,7 @@ Read this file when a thread settles, snoozes, or runs on a host older than the 
 
 ## Host version
 
-- Read `t3_environment_read` and inspect `serverVersion` before you rely on a nightly rule in this file. When the read is absent or ambiguous, use the stable 0.1.0 behavior. On T3 Code 0.1.0, use the stable fallback beside each nightly rule. On T3 Code 0.1.1-nightly.20261019.3360 or later, use the nightly rule beside it. Pre-0.1.0 nightlies keep the gates in Pre-0.1.0 nightlies. Any other build between 0.1.0 and the named nightly uses the stable 0.1.0 behavior. This covers pre-0.1.0 builds and builds between 0.1.0 and the named nightly.
+- Read `t3_environment_read` and inspect `serverVersion` before you rely on a nightly rule in this file. When the read is absent or ambiguous, use the stable 0.1.0 behavior. On T3 Code 0.1.0, use the stable fallback beside each nightly rule. On T3 Code 0.1.1-nightly.20261019.3360 or later, use the nightly rule beside it. Pre-0.1.0 nightlies keep their gates below. Any other build between 0.1.0 and the named nightly uses the stable 0.1.0 behavior.
 
 ## Settle on turn end
 
