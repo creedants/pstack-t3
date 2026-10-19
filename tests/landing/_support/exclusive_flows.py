@@ -26,6 +26,7 @@ from unittest import mock
 import land
 from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
+from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
 from .slot_scripts import EXCLUSIVE_MAIN, READY_MAIN, CAP_CLOCK_MAIN, EXCLUSIVE_MAIN_WITHOUT_WAITID, _darwin_eperm_main
 from .group_scripts import GROUP_SLEEP, IGNORING_GROUP
@@ -34,7 +35,7 @@ from .group_scripts import GROUP_SLEEP, IGNORING_GROUP
 class ExclusiveFlowsBase:
 
     def exclusive_args(self, argv, cap=None, grace=None, cap_max=None, main=EXCLUSIVE_MAIN):
-        return [sys.executable, "-c", main, str(SCRIPT.parent),
+        return [sys.executable, "-c", main, str(paths.SCRIPT.parent),
                 "" if cap is None else str(cap),
                 "" if grace is None else str(grace),
                 "" if cap_max is None else str(cap_max),

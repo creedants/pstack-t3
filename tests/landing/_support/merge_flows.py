@@ -26,6 +26,7 @@ from unittest import mock
 import land
 from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
+from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
 
 
@@ -49,15 +50,13 @@ class MergeFlowsBase:
 
 
     def use_land_script(self, path):
-        global SCRIPT
-        previous = SCRIPT
-        SCRIPT = path
+        previous = paths.SCRIPT
+        paths.SCRIPT = path
         return previous
 
 
     def restore_land_script(self, previous):
-        global SCRIPT
-        SCRIPT = previous
+        paths.SCRIPT = previous
 
 
     def entry_table_without_onto(self, candidates):

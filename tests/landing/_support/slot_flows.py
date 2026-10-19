@@ -26,6 +26,7 @@ from unittest import mock
 import land
 from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
+from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
 from .slot_callers import SlotCallers
 from .slot_scripts import CAP_CLOCK_MAIN, EXCLUSIVE_MAIN, EXCLUSIVE_MAIN_WITHOUT_WAITID, HOLD_SCRIPT, INTERRUPT_AFTER_THE_LEADER_EXITS, READY_MAIN, _darwin_eperm_main
@@ -204,7 +205,7 @@ class SlotFlowsBase:
         os.mkfifo(release)
         process = real_popen(
             ProcessReason.GOVERNOR,
-            [sys.executable, "-c", HOLD_SCRIPT, str(SCRIPT.parent), kind, repo or str(self.work), command,
+            [sys.executable, "-c", HOLD_SCRIPT, str(paths.SCRIPT.parent), kind, repo or str(self.work), command,
              str(ready), str(release)],
             env=self.slot_env(), cwd=directory, start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -251,7 +252,7 @@ class SlotFlowsBase:
         handles = [open(out, "w"), open(err, "w")]
         process = real_popen(
             ProcessReason.GOVERNOR,
-            [sys.executable, "-c", script, str(SCRIPT.parent), after, every, kind, repo or str(self.work), command],
+            [sys.executable, "-c", script, str(paths.SCRIPT.parent), after, every, kind, repo or str(self.work), command],
             env=self.slot_env(), cwd=self.base, start_new_session=True,
             stdout=handles[0], stderr=handles[1], text=False)
         line = self.wait_for_line(err)
@@ -297,7 +298,7 @@ class SlotFlowsBase:
         err_handle = open(err, "w")
         reporter = real_popen(
             ProcessReason.GOVERNOR,
-            [sys.executable, "-c", REPORT_SCRIPT, str(SCRIPT.parent), str(marker), str(release), "landing-0",
+            [sys.executable, "-c", REPORT_SCRIPT, str(paths.SCRIPT.parent), str(marker), str(release), "landing-0",
              "0.2", "60", str(self.work), "make test"],
             env=self.slot_env(), cwd=directory, start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=err_handle, text=False)

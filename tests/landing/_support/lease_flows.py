@@ -26,6 +26,7 @@ from unittest import mock
 import land
 from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
+from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
 
 
@@ -48,7 +49,7 @@ class LeaseFlowsBase:
 
     def lease_check(self, holder, paths):
         code, out, _err = drive(
-            SCRIPT,
+            paths.SCRIPT,
             ["--repo", str(self.work), "lease", "check", "--holder", holder, "--paths", paths],
             env=os.environ.copy())
         return code, out.strip()
@@ -83,7 +84,7 @@ class LeaseFlowsBase:
     def concurrent(self, *commands):
         procs = [real_popen(
             ProcessReason.RACE,
-            [sys.executable, str(SCRIPT), "--repo", str(self.work), *command],
+            [sys.executable, str(paths.SCRIPT), "--repo", str(self.work), *command],
             env=os.environ.copy())
             for command in commands]
         return [(proc.wait(), *(part.strip() for part in proc.communicate())) for proc in procs]

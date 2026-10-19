@@ -27,6 +27,7 @@ from unittest import mock
 import land
 from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
+from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
 
 
@@ -97,7 +98,7 @@ class CaseBase:
 
 
     def land(self, *args, ok=True):
-        code, out, err = drive(SCRIPT, ["--repo", str(self.work), *args], env=os.environ.copy())
+        code, out, err = drive(paths.SCRIPT, ["--repo", str(self.work), *args], env=os.environ.copy())
         self.assertEqual(code == 0, ok, out + err)
         return (out if ok else err).strip()
 
@@ -105,7 +106,7 @@ class CaseBase:
     def land_in_another_process(self, *args, ok=True):
         """Run land.py in a separate process. After the exit check, return stripped stdout when the exit code is 0 and stripped stderr otherwise."""
         result = real_process(
-            ProcessReason.LOCK, SCRIPT, ["--repo", str(self.work), *args], env=os.environ.copy())
+            ProcessReason.LOCK, paths.SCRIPT, ["--repo", str(self.work), *args], env=os.environ.copy())
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
         return (result.stdout if result.returncode == 0 else result.stderr).strip()
 
@@ -150,7 +151,7 @@ class CaseBase:
 
     def run_land(self, repo, *args, cwd=None):
         """Run land.py with --repo set to repo. Returns its exit status, stdout, and stderr."""
-        return drive(SCRIPT, ["--repo", str(repo), *args], env=os.environ.copy(), cwd=cwd)
+        return drive(paths.SCRIPT, ["--repo", str(repo), *args], env=os.environ.copy(), cwd=cwd)
 
 
     def files_under(self, directory):

@@ -26,6 +26,7 @@ from unittest import mock
 import land
 from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
+from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
 
 
@@ -134,7 +135,7 @@ os.execv({real!r}, [{real!r}, *args])
 
     def killed_land(self):
         result = real_process(
-            ProcessReason.KILLED_CALLER, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+            ProcessReason.KILLED_CALLER, paths.SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
         self.assertEqual(result.returncode, -signal.SIGKILL, result.stdout + result.stderr)
 
 

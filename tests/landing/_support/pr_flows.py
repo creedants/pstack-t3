@@ -27,6 +27,7 @@ from unittest import mock
 import land
 from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
+from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
 
 
@@ -158,7 +159,7 @@ os.execv({real!r}, [{real!r}, *args])
             self.queue_one()
             (self.base / "crash-on-create").write_text("")
             crashed = real_process(
-                ProcessReason.KILLED_CALLER, SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
+                ProcessReason.KILLED_CALLER, paths.SCRIPT, ["--repo", str(self.work), "land"], env=os.environ.copy())
             self.assertEqual(crashed.returncode, -9, crashed.stdout + crashed.stderr)
             self.restore_land_script(previous)
             previous = None

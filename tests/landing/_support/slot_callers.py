@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 from .inprocess import ProcessReason, real_popen
+from . import paths
 from .paths import SCRIPT
 from .slot_scripts import SLOT_HOLD, SLOT_WRAPPED
 
@@ -60,8 +61,10 @@ class SlotCallers:
         self.descriptors.append(os.open(path, os.O_RDWR | os.O_NONBLOCK))
         return self.descriptors[-1]
 
-    def start(self, name, *flags, script=SCRIPT, stepped=False, marked=False, pool="worker", hold=None):
+    def start(self, name, *flags, script=None, stepped=False, marked=False, pool="worker", hold=None):
         """Start a slot caller. With hold, its command leaves the slot after hold seconds and not on release."""
+        if script is None:
+            script = paths.SCRIPT
         directory = self.test.base / f"caller-{self.stamp}-{name}"
         directory.mkdir()
         release, retry = self.fifo(directory / "release"), self.fifo(directory / "retry")
