@@ -92,7 +92,7 @@ def _found_files(root, cands):
 
 
 def _expandable(edge):
-    """Whether the edge's resolution may add a private package's files, judged by the last imported name."""
+    """Whether the edge's resolution may add a private package's files, judged by the imported name, or for a `*` or plain `import` edge by the last segment of its module."""
     level, module, symbol = edge
     last = symbol if symbol and symbol != "*" else (module.split(".")[-1] if module else "")
     return not last.startswith("test_")

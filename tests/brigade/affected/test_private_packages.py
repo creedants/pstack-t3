@@ -48,7 +48,7 @@ class AffectedPrivatePackagesTest(AffectedBase):
         self.facade_repo()
         self.assertIn("No affected mapping", self.affected("--paths", "src/_governor/deep.py"))
 
-    def test_loader_outside_the_private_package_maps_its_tests_fails_when_expansion_disturbs_keys(self):
+    def test_loader_outside_the_private_package_maps_its_tests_fails_when_expansion_drops_their_tests(self):
         self.facade_repo()
         self.assertIn("tests.test_plain", self.affected("--paths", "src/steady.py"))
         self.assertIn("tests.test_direct", self.affected("--paths", "src/governor.py"))
