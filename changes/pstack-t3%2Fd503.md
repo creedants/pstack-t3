@@ -3,7 +3,7 @@
 - `t3/added/brigade/scripts/brigade_lib/commands/onboard.py` holds the command with one SETTINGS table driving detect, missing, the summary, and the fix text, one validated status JSON reader owning the landing, cap, generated, and contract checks facts plus one roles payload read with the show call skipped while a store lock is held, and invalid states for reader failures that never crash the command
 - `brigade.py onboard` required checks list the detected trunk's required names and report unknown for a non GitHub remote or an unreadable protection response
 - `brigade.py onboard` PR ability reports unknown for a non GitHub remote
-- `brigade.py onboard` contract checks list the recorded contract checks and report unknown when the contract or database holds none
+- `brigade.py onboard` contract checks list the recorded contract checks, report unknown when the contract is missing or the database has no checks row, and report none when the recorded checks list is empty
 - `brigade.py onboard` workers, reporting, and autofire report invalid when the stored value fails its writer validator
 - `brigade.py onboard` landing, cap, generated, and contract checks report invalid when the status JSON cannot be read as a dict
 - `t3/added/brigade/opening.md` gains an Onboard section with the flow in words, the restaurant question on the store directory, the intake, workers, mode, landing, and reporting questions on the step each governs, the models question that runs setup-pstack when no roles file exists, the verify commands question on the build and check guide, and the change note question on the queue path, the two question rounds, and the summary file, with a plain text fallback for html_preview, html_render, and the host question tool
