@@ -1,4 +1,7 @@
+import contextlib
+import io
 import json
+import posixpath
 import sys
 from brigade_lib import seam
 from brigade_lib._items.doc_gate import DocRefused, doc_policy, prepare_doc_fire
@@ -7,7 +10,35 @@ from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths
 from brigade_lib.reviews import fix_round_refusal
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import KIND_CHOICE, STATION_KIND
-from brigade_lib.tickets import ActsOn, Label, paths_of, priority_of, read_labels
+from brigade_lib.tickets import ActsOn, Label, paths_of, priority_of, quoted_paths, read_labels, tracked_paths
+
+BROAD_DIRECTORY_FILES = 5
+
+
+def broad_path_lines(rows, paths, tracked):
+    """Advisory lines for `--paths` entries that are directories holding more than BROAD_DIRECTORY_FILES tracked files.
+
+    `rows` are the fired tickets' rail rows. The lease is unchanged. The helper returns no line when `tracked` is None.
+    """
+    if tracked is None:
+        return []
+    quoted = {path for row in rows for path in quoted_paths(row["summary"], tracked) if path in tracked.files}
+    lines, seen = [], set()
+    for raw in paths.split(","):
+        entry = posixpath.normpath(raw.strip().replace("\\", "/")).lstrip("/")
+        if entry in ("", ".", "..") or entry.startswith("../") or entry not in tracked.directories or entry in seen:
+            continue
+        seen.add(entry)
+        under = sorted(path for path in tracked.files if path.startswith(entry + "/"))
+        if len(under) <= BROAD_DIRECTORY_FILES:
+            continue
+        found = [path for path in under if path in quoted][:BROAD_DIRECTORY_FILES]
+        if found:
+            lines.append(f"fire: {entry} holds {len(under)} tracked files; suggest {', '.join(found)}")
+        else:
+            lines.append(f"fire: {entry} holds {len(under)} tracked files; pass file paths in --paths to lease at file level")
+    return lines
+
 
 def workers_full(restaurant):
     cap = worker_cap(restaurant.meta)
@@ -242,6 +273,20 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                                                         [part for part in paths.split(",") if part]):
                         print(f"fire: {stale} is not in the checkout; a stale ticket path leases nothing real",
                               file=sys.stderr)
+                    fired = [row for row in rows if row["id"] in ids]
+                    try:
+                        with contextlib.ExitStack() as output:
+                            try:
+                                advisory = output.enter_context(open(
+                                    sys.stderr.fileno(), "w", encoding=sys.stderr.encoding,
+                                    errors="backslashreplace", closefd=False))
+                            except (AttributeError, io.UnsupportedOperation):
+                                advisory = sys.stderr
+                            for line in broad_path_lines(fired, paths, tracked_paths(restaurant.meta.get("projectRoot", ""))):
+                                if advisory is not None:
+                                    print(line, file=advisory)
+                    except (OSError, ValueError):
+                        pass
                 return fired_line(dish, lease, holder(restaurant, dish), added)
             if full and not refusal:
                 record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
