@@ -27,7 +27,7 @@ else:
     release = importlib.util.module_from_spec(_spec)
     sys.modules[_spec.name] = release
     _spec.loader.exec_module(release)
-import test_pstack_t3  # noqa: E402
+from tests import test_pstack_t3  # noqa: E402
 from brigade_lib.store import KINDS as STORE_KINDS  # noqa: E402
 
 ENV = {
