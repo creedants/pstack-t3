@@ -17,12 +17,20 @@ backup tries, in order, after a usage limit.
 
 import argparse
 import errno
+import fnmatch
+import functools
 import importlib as _importlib
+import json
 import os
+import posixpath
+import re
+import subprocess
 import sys
 import sys as _sys
 import types as _types
 import uuid as _uuid
+from contextlib import suppress
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -112,8 +120,14 @@ try:
         for _key in _module.__all__:
             assert _key not in _seen, f"roles: {_key} is defined in both {_seen[_key]} and {_name}"
             _seen[_key] = _name
-            globals()[_key] = getattr(_module, _key)
-    del _seen, _name, _module, _key
+            _value = getattr(_module, _key)
+            try:
+                if getattr(_value, "__module__", None) == "_roles." + _name:
+                    _value.__module__ = __name__
+            except Exception:
+                pass
+            globals()[_key] = _value
+    del _seen, _name, _module, _key, _value
     seam.bind(globals())
 finally:
     _sys.dont_write_bytecode = _bw
