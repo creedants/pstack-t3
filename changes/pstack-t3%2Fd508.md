@@ -1,0 +1,4 @@
+- kind polish
+- `t3/added/pstack-runtime/delegation.md` deduplicates steered-send task ids and keeps report verification with a stable cancel fallback
+- `t3/added/pstack-runtime/threads.md` recreates owned interval and fixed_time schedules after an authorized seat change and never recreates webhook schedules
+- `t3/added/brigade/reference/housekeeping.md` points seat-change schedule recreation at Scheduling
