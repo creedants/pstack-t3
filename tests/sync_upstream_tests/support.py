@@ -15,10 +15,14 @@ from tests import in_process
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/sync_upstream.py"
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.append(str(ROOT / "scripts"))
 
 import build  # noqa: E402
 import sync_upstream  # noqa: E402
+_scripts = str(ROOT / "scripts")
+while _scripts in sys.path:
+    sys.path.remove(_scripts)
+sys.path.append(_scripts)
 
 GIT_ENV = {
     **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
