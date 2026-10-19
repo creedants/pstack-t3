@@ -17,7 +17,7 @@ $B fire --tickets ... --station <playbook> --summary "<outcome>" --timebox <minu
 $B ticket add --from-report reports/D1.md
 ```"""
 
-# Fixture for the regression tests below.
+# Fixture for the regression tests in tests/test_skill_commands.py.
 
 # Quoted "..." fills from "...quoted". A bare "..." fills from "...bare".
 FILL = {
