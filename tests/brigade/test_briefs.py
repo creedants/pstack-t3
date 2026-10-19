@@ -1,7 +1,22 @@
 from .support import (
     setUpModule,
     BrigadeTest,
+    CLAUDE,
+    CODEX,
+    Path,
+    ROOT,
+    ProcessReason,
+    SCRIPT,
+    _owner_words,
+    real_popen,
+    _shown_root,
+    _wait_for_path,
     json,
+    os,
+    runpy,
+    subprocess,
+    sys,
+    time,
 )
 from .worker_briefs.test_fields_and_contract import FieldsContractMixin
 from .worker_briefs.test_fire_leases import FireLeasesMixin
