@@ -57,7 +57,7 @@ Then it proposes a provider and model for each role, reasoning from the live cat
 You can skip setup entirely. Every role except `review backups` then resolves to `inherit`, so children run on the thread's own seat, unless the `exclude` list refuses that seat, and `review backups` stays unset. A seat whose model you cannot run falls back, and the report names each replacement.
 
 
-When a provider hits its usage limit, the lead relaunches on a backup seat. See [the usage limit detail](guide/reference.md#when-a-provider-hits-its-usage-limit) for the table and the resume rule.
+A usage limit relaunches the failed seat on a `backups` seat when one is free. See [the usage limit detail](guide/reference.md#when-a-provider-hits-its-usage-limit) for the table and the resume rule.
 ## 3. Your first rigorous task
 
 Pick something real, such as a bug you can describe.
@@ -176,6 +176,8 @@ See [reporting](guide/reporting.md#landing-modes) for the four modes.
 ### Reporting levels
 
 See [reporting](guide/reporting.md#reporting-levels) for the levels.
+
+Ask a coordinator what its agents are doing and it shows the activity page. [`activity.py`](cli/activity.md) builds that page from the coordinator's store and T3 Code's state database. The page shows what is running now, what is queued, a timeline of agents and sub-agents grouped by unit, and the units in flight with their state and pull request link. It covers the last 3 hours by default. When the document exceeds its size limit, the page can fold finished rows into summaries or omit rows, and it counts the agents and work items those changes cover. A pull request link is shown only as an `https://host/owner/repository/pull/number` address. A note counts the work items the page shows without their link, for that reason or for size. Every string on the page passes one filter that removes each word it reads as a T3 Code thread or sub-agent id, an absolute or home-relative file path, a `file:` address, or an email address. The [reference](cli/activity.md) states what it reads as each.
 
 #### An executive admin
 

@@ -54,7 +54,9 @@ The numbers about real use come from the pstack-t3 coordinator's store (`dishes.
 
 ## Changes
 
-Changes 1 through 7 close the gaps above. Changes 8 through 11 add the admin and the docs. Each change keeps its number as its heading in its part.
+Each change is one PR through the landing queue, with its own tests and its own changelog fragment (change 1). Every change that edits a skill's behavior needs a fresh-child test per the `pstack-author-skill` skill. Every exclusion the design promises across two coordinators gets a test that runs two processes at once, because the experiment ran commands one after another.
+
+Each change keeps its number as its heading in its part.
 
 
 ## Map

@@ -49,8 +49,6 @@ Each row names one spawn. "Merged" means two passes become one. "Cheaper seat" m
 A send-back in light mode is a fix attempt with a fresh worker. Its brief carries the findings and waives the steps [Waivers](rules.md#waivers) names.
 
 
-The normative list lives in [Light behavior](../../t3/runtime.md#light-behavior).
-
 ### Never cut
 
 - Tests and the build gate. The worker runs the project test command and build before the gate. The queue runs its configured checks.

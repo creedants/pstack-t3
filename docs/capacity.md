@@ -13,7 +13,7 @@ MemTotal is 27421264 KiB, 26.2 GiB. The 2026-10-04 estimate calls this machine 2
 The machine had been up for about 2 days at both baselines.
 
 
-Forty idle agents fit on this host with memory still available. A rerun held forty agents and ran four copies of the build and the unit suite. Each copy completed one passing iteration. See [agents](capacity/agents.md#what-was-measured) for the tables and [test runner](capacity/test-runner.md#concurrent-runs-of-the-test-runner) for the runner numbers.
+See [agents](capacity/agents.md#what-was-measured) for the tables and [test runner](capacity/test-runner.md#concurrent-runs-of-the-test-runner) for the runner numbers.
 
 ## Map
 

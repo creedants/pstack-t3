@@ -26,7 +26,7 @@ Last, the opener launches the admin's thread in the repository's project and pin
 
 You can still write to any coordinator directly. It answers you as it always did.
 
-The admin settles four kinds of conflict by published rules. See [the rule set](../multi-coordinator/admin-rulings.md#rulings) for the table and the order.
+The admin settles four kinds of conflict by published rules. See [the rule set](../multi-coordinator/admin-rulings.md#rulings) for the table and the order. It runs `land.py cap` or `land.py mode` only when you ask, and then tells every coordinator.
 
 A coordinator must comply with a ruling. When it disagrees, it complies and appeals. The admin rechecks the ruling with the new facts, and either replaces it or keeps it and lists the appeal in its next update for you. When compliance would be irreversible, the coordinator holds instead of complying, and the admin asks you.
 
@@ -38,3 +38,7 @@ R2 in-force contested-paths (docs, engine): Who claims README.md next? Decided b
 ```
 
 A script carries out each ruling. See [how rulings are enforced](../multi-coordinator/admin-rulings.md#rulings) for the reservation and share commands.
+
+**Recovery.** If the thread breaks, ask any thread to recover the executive admin. See [Recovery and retirement](../multi-coordinator/admin-rulings.md#recovery-and-retirement) for the replacement steps. Reads such as `status` still work.
+
+To retire the admin, ask it to close.
