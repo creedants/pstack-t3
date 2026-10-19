@@ -64,7 +64,7 @@ def _resolves(edge, cands, loader_path, root, roots, depth):
     return tuple(out)
 
 
-def _resolve_import(edge, loader_path, root, roots, depth=0):
+def _resolve_import(edge, loader_path, root, roots, depth=0, ancestors=True):
     level, module, symbol = edge
     if symbol == "*":
         symbol = ""
@@ -111,17 +111,22 @@ def _resolve_import(edge, loader_path, root, roots, depth=0):
         if parent:
             cands.append(parent + "/" + tail)
         cands.append(tail)
-    cur = parent
-    while cur and cur not in (".", "/"):
-        cur = posixpath.dirname(cur)
-        if not cur or cur in (".", "/"):
-            break
-        for tail in rels:
-            cands.append(cur + "/" + tail)
+    if ancestors:
+        cur = parent
+        while cur and cur not in (".", "/"):
+            cur = posixpath.dirname(cur)
+            if not cur or cur in (".", "/"):
+                break
+            for tail in rels:
+                cands.append(cur + "/" + tail)
     for tail in rels:
         for prefix in roots:
             cands.append(prefix + "/" + tail)
     return _resolves(edge, cands, loader_path, root, roots, depth)
+
+
+def _resolve_proven(edge, loader_path, root, roots, depth=0):
+    return _resolve_import(edge, loader_path, root, roots, depth, ancestors=False)
 
 def _one_hop(norm, base, gen_map, roots):
     if not norm or not norm.endswith(".py"):
@@ -188,6 +193,16 @@ def _test_edges(targets, rel, base, roots):
             last = ""
         shaped = last.startswith("test_")
         resolved = _resolve_import(target, rel, base, roots)
+        if shaped:
+            proven = _resolve_proven(target, rel, base, roots)
+            if len(proven) == 0 and len(resolved) > 0:
+                if module and symbol and symbol != "*":
+                    label = module + "." + symbol
+                elif module:
+                    label = module
+                else:
+                    label = symbol
+                return frozenset(), "unresolved import " + label + " in " + rel
         if shaped and len(resolved) != 1 and importer_test:
             if module and symbol and symbol != "*":
                 label = module + "." + symbol
