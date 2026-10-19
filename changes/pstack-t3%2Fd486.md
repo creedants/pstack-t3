@@ -1,0 +1,11 @@
+- kind polish
+- scripts/release.py moves older changelog versions into docs/changelog/ when the changelog would pass 5000 tokens
+- scripts/release.py keeps newest versions that fit in CHANGELOG.md with an Archive link block
+- scripts/release.py splits a version section at bullet boundaries
+- scripts/release.py refuses a hand edited Archive block and an orphan archive part
+- scripts/release.py prints git add with docs/changelog/ only when the run archived something
+- the current CHANGELOG.md is migrated into docs/changelog/ with every file under 5000 tokens
+- archived bytes equal the original section except for rebased relative link destinations
+- scripts/release.py archives the new section too when the new section and the Archive block cannot fit together and leaves only the header and the Archive block
+- archived copies rebase eligible LINK_RE matches. The matcher handles single-line links and images. Labels may hold code spans but no `]`. Relative destinations are nonempty, lack a colon, and do not start with `/`, `#`, `<`, or `../../`.
+- scripts/release.py names docs/changelog/ in the dirty message when the archive is dirty
