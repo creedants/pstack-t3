@@ -43,6 +43,13 @@ class OnboardDetectTest(BrigadeTest):
         self.assertEqual(found["facts"]["models"], {"state": "missing", "value": "", "fix": "run setup-pstack"})
         self.assertEqual(found["missing"], ["restaurant", "mode", "models", "intake", "change_note_dir", "landing_mode"])
 
+    def test_global_at_selects_the_existing_store(self):
+        self.open()
+        self.brigade("set", "--mode", "full")
+        found = json.loads(self.brigade("onboard", "--project-root", str(self.project),
+                                       "--name", "Other", "--detect"))
+        self.assertEqual(found["facts"]["mode"]["value"], "full")
+
     def test_models_configured_when_project_roles_file_exists(self):
         # Processes: git builds the fixture repository. No land contract and no store exist.
         self.git_project()
@@ -85,6 +92,100 @@ class OnboardDetectTest(BrigadeTest):
         found = self.detect()
         self.assertEqual(found["facts"]["mode"]["state"], "invalid")
 
+    def test_required_checks_use_trunk_not_current_branch(self):
+        # Processes: git builds the fixture repository. Fake git and gh isolate the trunk read.
+        self.git_project()
+        import subprocess as sp
+        from unittest import mock as mk
+        real = sp.run
+        seen = {}
+        def fake(cmd, *a, **k):
+            text = " ".join(str(c) for c in (cmd if isinstance(cmd, (list, tuple)) else [cmd]))
+            if "remote" in text and "get-url" in text:
+                return sp.CompletedProcess(cmd, 0, "https://github.com/o/r.git\n", "")
+            if "branch" in text and "--show-current" in text:
+                return sp.CompletedProcess(cmd, 0, "feature/x\n", "")
+            if "symbolic-ref" in text and "origin/HEAD" in text:
+                return sp.CompletedProcess(cmd, 0, "refs/remotes/origin/main\n", "")
+            if isinstance(cmd, (list, tuple)) and len(cmd) > 2 and cmd[0] == "gh" and cmd[1] == "api":
+                seen["url"] = cmd[2]
+                payload = {"required_status_checks": {"contexts": ["test (3.10)", "test (3.12)"], "checks": []}}
+                return sp.CompletedProcess(cmd, 0, json.dumps(payload), "")
+            if isinstance(cmd, (list, tuple)) and len(cmd) > 1 and cmd[0] == "gh" and cmd[1] == "auth":
+                return sp.CompletedProcess(cmd, 0, "", "")
+            return real(cmd, *a, **k)
+        with mk.patch("subprocess.run", side_effect=fake):
+            found = self.detect()
+        self.assertIn("/branches/main/", seen.get("url", ""))
+        self.assertNotIn("feature/x", seen.get("url", ""))
+        self.assertEqual(found["facts"]["required_checks"]["state"], "detected")
+        self.assertEqual(found["facts"]["required_checks"]["value"], ["test (3.10)", "test (3.12)"])
+
+    def test_gitlab_remote_gives_unknown_pr_ability(self):
+        # Processes: git builds the fixture repository. Fake git and gh isolate the remote read.
+        self.git_project()
+        import subprocess as sp
+        from unittest import mock as mk
+        real = sp.run
+        def fake(cmd, *a, **k):
+            text = " ".join(str(c) for c in (cmd if isinstance(cmd, (list, tuple)) else [cmd]))
+            if "remote" in text and "get-url" in text:
+                return sp.CompletedProcess(cmd, 0, "https://gitlab.com/o/r.git\n", "")
+            if isinstance(cmd, (list, tuple)) and len(cmd) > 1 and cmd[0] == "gh" and cmd[1] == "auth":
+                return sp.CompletedProcess(cmd, 0, "", "")
+            return real(cmd, *a, **k)
+        with mk.patch("subprocess.run", side_effect=fake):
+            found = self.detect()
+        self.assertEqual(found["facts"]["pr_ability"]["state"], "unknown")
+        self.assertEqual(found["facts"]["pr_ability"]["value"], "remote is not GitHub")
+
+    def test_recorded_contract_gives_detected_contract_checks_and_generated(self):
+        # Processes: git and land build the fixture project and its contract with checks and generated map.
+        self.git_project()
+        self.init_landing("--check", "make test", "--generated", "skills", "--generated-map", "t3src=skills/dst", "--rebuild", "python3 scripts/build.py")
+        self.landing_env()
+        self.open()
+        found = self.detect()
+        self.assertEqual(found["facts"]["contract_checks"]["state"], "detected")
+        self.assertEqual(found["facts"]["contract_checks"]["value"], ["make test"])
+        self.assertEqual(found["facts"]["generated"]["state"], "detected")
+
+    def test_bad_workers_reporting_autofire_read_as_invalid(self):
+        # Processes: git builds the fixture repository. The writers refuse these values, so the test writes them directly.
+        self.git_project()
+        self.open()
+        meta_path = self.at / "restaurant.json"
+        for key, bad in (("workers", 0), ("reporting", "bad"), ("autofire", "bad")):
+            meta = json.loads(meta_path.read_text())
+            meta[key] = bad
+            meta_path.write_text(json.dumps(meta))
+            found = self.detect()
+            self.assertEqual(found["facts"][key]["state"], "invalid", key)
+            meta = json.loads(meta_path.read_text())
+            meta.pop(key, None)
+            meta_path.write_text(json.dumps(meta))
+
+    def test_malformed_status_gives_invalid_landing_and_generated(self):
+        # Processes: git and land build the fixture project and its contract. Fake land status isolates the malformed read.
+        self.git_project()
+        self.init_landing()
+        self.landing_env()
+        self.open()
+        import subprocess as sp
+        from unittest import mock as mk
+        real = sp.run
+        def fake(cmd, *a, **k):
+            text = " ".join(str(c) for c in (cmd if isinstance(cmd, (list, tuple)) else [cmd]))
+            if "land.py" in text and "status" in text and "--json" in text:
+                return sp.CompletedProcess(cmd, 0, "not json", "")
+            return real(cmd, *a, **k)
+        with mk.patch("subprocess.run", side_effect=fake):
+            found = self.detect()
+        self.assertEqual(found["facts"]["landing_mode"]["state"], "invalid")
+        self.assertEqual(found["facts"]["generated"]["state"], "invalid")
+        self.assertEqual(found["facts"]["repository_cap"]["state"], "invalid")
+        self.assertEqual(found["facts"]["contract_checks"]["state"], "invalid")
+
 
 class OnboardSummaryTest(BrigadeTest):
     """The summary file records one line per fact and its reruns show only what changed."""
@@ -123,7 +224,7 @@ class OnboardSummaryTest(BrigadeTest):
 
     def test_multiline_value_stays_one_line_per_fact(self):
         self.open()
-        self.brigade("set", "--build-command", "make build\nsecond line")
+        self.brigade("set", "--build-command", "make build\nsecond line\u2028third line\vfourth line")
         found = json.loads(self.brigade("onboard", "--project-root", str(self.project), "--name", "Perf", "--detect"))
         self.assertIn("\n", found["facts"]["build_command"]["value"])
         self.summary()
@@ -131,5 +232,5 @@ class OnboardSummaryTest(BrigadeTest):
         self.assertEqual(len(lines), len(found["facts"]))
         matching = [line for line in lines if line.startswith("build_command: ")]
         self.assertEqual(len(matching), 1)
-        self.assertIn("make build second line", matching[0])
+        self.assertIn("make build second line third line fourth line", matching[0])
         self.assertEqual(self.summary(), "no change to onboarding.txt")

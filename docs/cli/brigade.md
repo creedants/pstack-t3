@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `onboard`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
 
 ## brigade.py open
 
@@ -284,6 +284,23 @@ print the verify paragraph for the changed paths
 | `--root ROOT` |  |  |  | project root to scan |
 | `--paths PATHS` (repeatable) |  |  |  | repo path the dish will change; repeatable |
 | `--diff DIFF` |  |  |  | git diff range to name changed files, such as origin/main...HEAD |
+
+## brigade.py onboard
+
+```text
+brigade.py [flags] onboard --project-root PROJECT_ROOT [--name NAME] [--admin] [--at AT] [--detect] [--summary]
+```
+
+detect onboarding settings
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--project-root PROJECT_ROOT` | yes |  |  |  |
+| `--name NAME` |  |  |  |  |
+| `--admin` |  |  |  |  |
+| `--at AT` |  |  | `==SUPPRESS==` |  |
+| `--detect` |  |  |  | print facts and missing as JSON and write no brigade files |
+| `--summary` |  |  |  | write onboarding.txt and print the change lines, or with identical bytes print no change to onboarding.txt and skip the write, or with different bytes but unchanged parsed facts print normalized onboarding.txt with no fact changes and rewrite the file, or with no restaurant file print the lines plus not saved and write nothing |
 
 ## brigade.py contract
 
