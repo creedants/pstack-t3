@@ -4,10 +4,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import quote
 
-try:
-    from tests import test_activity
-except ImportError:
-    import test_activity
+from tests import test_activity
 
 Fixture = test_activity.Fixture
 MOD = test_activity.MOD
