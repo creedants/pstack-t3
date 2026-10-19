@@ -2,7 +2,7 @@ from .support import BrigadeTest, json, setUpModule
 
 
 class OnboardDetectTest(BrigadeTest):
-    """Onboarding detection names only the settings the store still needs."""
+    """Missing names only the settings the store still needs."""
 
     def detect(self, *extra):
         return json.loads(self.brigade("onboard", "--project-root", str(self.project), "--name", "Perf",
@@ -63,6 +63,16 @@ class OnboardDetectTest(BrigadeTest):
         self.assertEqual(found["facts"]["generated"]["state"], "invalid")
         self.assertIn("land.py init --generated-map", found["facts"]["generated"]["value"])
         self.assertIn("land.py init --generated-map", found["facts"]["generated"]["fix"])
+
+    def test_non_utf8_restaurant_json_reports_invalid_restaurant(self):
+        # Processes: git builds the fixture repository. A non UTF-8 restaurant.json must not crash detect.
+        self.git_project()
+        self.open()
+        (self.at / "restaurant.json").write_bytes(b"\xff\xfe\x00bad")
+        out = self.brigade("onboard", "--project-root", str(self.project), "--name", "Perf",
+                           "--detect", owner=False)
+        found = json.loads(out)
+        self.assertEqual(found["facts"]["restaurant"]["state"], "invalid")
 
 
 class OnboardSummaryTest(BrigadeTest):

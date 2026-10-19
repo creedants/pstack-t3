@@ -359,7 +359,10 @@ def detect(project_root, directory):
         ctx.root = Path(project_root).resolve()
     except (OSError, ValueError):
         pass
-    meta, state = _read_meta(ctx.directory / "restaurant.json")
+    try:
+        meta, state = _read_meta(ctx.directory / "restaurant.json")
+    except (OSError, ValueError):
+        meta, state = None, "invalid"
     ctx.meta = meta
     ctx.meta_state = state if state in ("ok", "missing", "invalid") else "invalid"
     if ctx.meta_state == "ok":
