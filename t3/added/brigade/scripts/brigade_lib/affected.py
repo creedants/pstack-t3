@@ -5,7 +5,7 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import generated
 from brigade_lib._affected.model import AFFECTED_KEY, DEFAULT_SUITE, Layout, _Closed, _Full, _Modules, _Open, layout
 from brigade_lib._affected.report import _fallback, _paragraph, _settings
-from brigade_lib._affected.scan import PIN_CHARS, _canonicals, _diff_names, _expand_one, _expandable, _found_files, _import_targets, _imports_of, _is_test_name, _loads_of, _looks_repo, _norm, _pin_literals, _private_of, _resolve_expr, _singles, _tracked, _tree_files, _tree_name
+from brigade_lib._affected.scan import PIN_CHARS, _canonicals, _diff_names, _expand_one, _expandable, _found_files, _import_targets, _imports_of, _is_test_name, _loads_of, _looks_repo, _norm, _pin_literals, _private_of, _singles, _tracked, _tree_files, _tree_name
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import HELD_LOCKS
 
@@ -182,42 +182,6 @@ def _helper_entries(base, layout):
     return entries
 
 
-def _syspath_inserts(rel, base):
-    try:
-        text = (Path(str(base)) / rel).read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return frozenset()
-    try:
-        mod = ast.parse(text, rel)
-    except SyntaxError:
-        return frozenset()
-    singles = _singles(mod)
-    found = set()
-    for sub in ast.walk(mod):
-        if not isinstance(sub, ast.Call):
-            continue
-        func = sub.func
-        if not isinstance(func, ast.Attribute):
-            continue
-        if func.attr not in ("insert", "append"):
-            continue
-        inner = func.value
-        if not isinstance(inner, ast.Attribute) or inner.attr != "path":
-            continue
-        if func.attr == "insert":
-            if len(sub.args) < 2:
-                continue
-            arg = sub.args[1]
-        else:
-            if not sub.args:
-                continue
-            arg = sub.args[0]
-        got = _resolve_expr(arg, singles)
-        if got is not None:
-            found.add(_norm(got))
-    return frozenset(found)
-
-
 def _test_edges(targets, rel, base, roots):
     edges = set()
     importer_test = False
@@ -238,20 +202,13 @@ def _test_edges(targets, rel, base, roots):
         if shaped:
             proven = _resolve_proven(target, rel, base, roots)
             if len(proven) == 0 and len(resolved) > 0:
-                inserts = _syspath_inserts(rel, base)
-                proved = False
-                for got in resolved:
-                    if posixpath.dirname(_norm(got)) in inserts:
-                        proved = True
-                        break
-                if not proved:
-                    if module and symbol and symbol != "*":
-                        label = module + "." + symbol
-                    elif module:
-                        label = module
-                    else:
-                        label = symbol
-                    return frozenset(), "unproven import " + label + " in " + rel
+                if module and symbol and symbol != "*":
+                    label = module + "." + symbol
+                elif module:
+                    label = module
+                else:
+                    label = symbol
+                return frozenset(), "unproven import " + label + " in " + rel
         if shaped and len(resolved) != 1 and importer_test:
             if module and symbol and symbol != "*":
                 label = module + "." + symbol
