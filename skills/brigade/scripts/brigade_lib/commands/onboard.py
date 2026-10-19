@@ -450,7 +450,7 @@ def register(sub):
     p.add_argument("--admin", action="store_true")
     p.add_argument("--at", default=None)
     p.add_argument("--detect", action="store_true", help="print facts and missing as JSON and write no brigade files")
-    p.add_argument("--summary", action="store_true", help="write onboarding.txt and print the change lines, or with identical bytes print no change to onboarding.txt and skip the write, or with no restaurant file print the lines plus not saved and write nothing")
+    p.add_argument("--summary", action="store_true", help="write onboarding.txt and print the change lines, or with identical bytes print no change to onboarding.txt and skip the write, or with whitespace drift print normalized onboarding.txt with no fact changes and rewrite the file, or with no restaurant file print the lines plus not saved and write nothing")
 
 
 def handle(args, root):
@@ -494,4 +494,4 @@ def handle(args, root):
         if name not in new:
             changes.append(f"removed {name}: {old[name]}")
     write_atomic(target, wanted)
-    return "\n".join(changes) if changes else "no change to onboarding.txt"
+    return "\n".join(changes) if changes else "normalized onboarding.txt with no fact changes"
