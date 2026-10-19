@@ -34,8 +34,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 
-# Persona and playbook paths resolve from this file, so the source tree
-# and the built skills tree share the same relative layout.
+# Persona and playbook roots resolve from this facade's location.
 AGENTS_DIR = Path(__file__).resolve().parents[1] / "agents"
 TREE_ROOT = Path(__file__).resolve().parents[2]
 
