@@ -1,3 +1,3 @@
 - kind polish
-- `brigade affected` maps a file under a private package directory `<pkg>/_<name>/` that its facade `<pkg>/<name>.py` imports directly or through `<pkg>/_<name>/__init__.py` with every test that facade selects, when an import resolution lands that facade or a hop's loader is that facade.
-- That mapping follows the facade's imports directly and through `<pkg>/_<name>/__init__.py`, and a private file that already maps keeps its tests and gains the facade's.
+- `brigade affected` maps a file under a private package directory `<pkg>/_<name>/` that its facade `<pkg>/<name>.py` imports directly or through `<pkg>/_<name>/__init__.py` with the tests that select that facade, when an import resolution lands that facade or when an import whose loader is that facade lands `<pkg>/_<name>/__init__.py`, and the edge's last imported name does not start with `test_`. Files under that directory which no such import reaches stay unmapped.
+- That mapping follows the facade's imports directly and through `<pkg>/_<name>/__init__.py`, and a private file that already maps keeps its tests and gains the tests that select that facade.

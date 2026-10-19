@@ -4,7 +4,7 @@ from tests.brigade.test_affected import AffectedBase
 
 class AffectedPrivatePackagesTest(AffectedBase):
     def facade_repo(self):
-        """A repo whose private package src/_governor only a hop of the load ref src/land.py reaches."""
+        """A repo whose private package src/_governor is reached by the load ref src/governor.py directly and by the load ref src/land.py through one hop."""
         self.git_project()
         self.write("src/governor.py",
                    "from ._governor.admission import slot\nfrom ._governor import marker\n")
@@ -44,11 +44,11 @@ class AffectedPrivatePackagesTest(AffectedBase):
         self.assertEqual(self.facade_modules("src/_governor/admission.py"), modules)
         self.assertEqual(self.facade_modules("src/_governor/extra.py"), modules)
 
-    def test_private_member_of_a_member_not_mapped_fails_when_expansion_not_bounded(self):
+    def test_private_file_no_import_reaches_not_mapped_fails_when_expansion_beyond_imports(self):
         self.facade_repo()
         self.assertIn("No affected mapping", self.affected("--paths", "src/_governor/deep.py"))
 
-    def test_loader_outside_the_private_package_maps_unchanged_fails_when_expansion_disturbs_keys(self):
+    def test_loader_outside_the_private_package_maps_its_tests_fails_when_expansion_disturbs_keys(self):
         self.facade_repo()
         self.assertIn("tests.test_plain", self.affected("--paths", "src/steady.py"))
         self.assertIn("tests.test_direct", self.affected("--paths", "src/governor.py"))

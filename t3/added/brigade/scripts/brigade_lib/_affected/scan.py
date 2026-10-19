@@ -112,7 +112,7 @@ def _private_of(norm):
 
 
 def _imports_of(rel, root):
-    """The import edges of the readable Python file at rel, empty when it cannot be read or parsed."""
+    """The import edges of the readable Python file at rel, empty when it cannot be read as UTF-8 or raises SyntaxError."""
     full = Path(str(root)) / rel
     try:
         text = full.read_text(encoding="utf-8")
