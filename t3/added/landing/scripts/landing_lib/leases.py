@@ -101,8 +101,8 @@ def admission(store, db, holder, wanted, renewing=None, excluding=()):
     Store.trial, which rolls back, so a check arms no reservation and adds no log row. renewing is an expired
     lease id. A reservation that already lists it is taken again and left out of the count, so that renewal
     fits a full cap. excluding names lease ids left out of the cap and share count only. Arming and the clash
-    and reservation checks still see every lease in flight, because the caller releases the excluded leases in
-    the same transaction that writes this one.
+    and reservation checks still see every lease in flight, because the caller releases or rewrites the excluded
+    leases in the same transaction that writes this one.
     """
     leases, cap = in_flight(db), store.contract.get("cap")
     arm_reservations(store, db, leases, cap)
