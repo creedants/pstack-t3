@@ -1,0 +1,4 @@
+- kind fix
+- `t3/scripts/_roles/base.py` treats `quota exhausted` as a usage limit.
+- `tests/roles_tests/test_backup.py` covers `API error 429: Subscription quota exhausted.` as a usage limit.
+- `tests/roles_tests/test_backup.py` covers `blocking_limit` context-full and `prompt is too long` as not usage limits.
