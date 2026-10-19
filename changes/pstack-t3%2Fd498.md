@@ -1,0 +1,2 @@
+- kind polish
+- `docs/guide/reporting.md` points the landing line link and the pull request lifecycle link at `skills/landing/pauses.md`, the file in the landing skill that holds the `### The line` and `## Pull request lifecycle` headings
