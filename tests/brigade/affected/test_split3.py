@@ -163,7 +163,7 @@ class AffectedSplit3Test(AffectedBase):
                 self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
                 self.assertEqual(self.store_files(), before_store)
 
-    def test_d411_pair_keeps_every_old_key_fails_when_a_gained_key_is_not_private(self):
+    def test_d411_pair_keeps_every_old_key_fails_when_a_gained_key_is_outside_an_underscore_directory(self):
         self.close_function()
         import sys
         module = sys.modules["brigade_lib.affected"]
