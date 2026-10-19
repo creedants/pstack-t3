@@ -163,7 +163,7 @@ class AffectedSplit3Test(AffectedBase):
                 self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
                 self.assertEqual(self.store_files(), before_store)
 
-    def test_d411_pair_maps_same_as_old_literals_fails_when_the_archive_tables_differ(self):
+    def test_d411_pair_keeps_every_old_key_fails_when_a_gained_key_is_outside_an_underscore_directory(self):
         self.close_function()
         import sys
         module = sys.modules["brigade_lib.affected"]
@@ -183,8 +183,7 @@ class AffectedSplit3Test(AffectedBase):
         new_index = module._index(archive, new)
         self.assertIsInstance(old_index, module._Closed)
         self.assertIsInstance(new_index, module._Closed)
-        self.assertEqual(old_index.table, new_index.table)
         lost = set(old_index.table) - set(new_index.table)
         gained = set(new_index.table) - set(old_index.table)
         self.assertEqual(lost, set())
-        self.assertEqual(gained, set())
+        self.assertTrue(all(posixpath.basename(posixpath.dirname(key)).startswith("_") for key in gained))

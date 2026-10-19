@@ -1,10 +1,11 @@
 """For AFFECTED_KEY, DEFAULT_SUITE, Layout, layout, PIN_CHARS, _diff_names, and _found_files, this module re-exports them from _affected. Patching one of those names here need not reroute bare-name calls inside _affected."""
 import ast
+import posixpath
 from pathlib import Path, PurePosixPath
 from brigade_lib import generated
 from brigade_lib._affected.model import AFFECTED_KEY, DEFAULT_SUITE, Layout, _Closed, _Full, _Modules, _Open, layout
 from brigade_lib._affected.report import _fallback, _paragraph, _settings
-from brigade_lib._affected.scan import PIN_CHARS, _canonicals, _diff_names, _expand_one, _found_files, _import_targets, _loads_of, _looks_repo, _module_name, _norm, _pin_literals, _resolve_import, _singles, _test_files, _tracked
+from brigade_lib._affected.scan import PIN_CHARS, _canonicals, _diff_names, _expand_one, _facade_private, _found_files, _import_targets, _loads_of, _looks_repo, _module_name, _norm, _pin_literals, _resolve_import, _singles, _test_files, _tracked
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import HELD_LOCKS
 
@@ -27,6 +28,9 @@ def _one_hop(norm, base, gen_map, roots):
         for got in _resolve_import(target, norm, base, roots):
             for canon in _canonicals(_norm(got), gen_map):
                 found.add(canon)
+    for got in _facade_private(norm, base, roots):
+        for canon in _canonicals(_norm(got), gen_map):
+            found.add(canon)
     return tuple(sorted(found))
 
 
@@ -226,6 +230,23 @@ def _index(root, layout, gen_map=None):
                     table.setdefault(canon, set()).update(tests)
             else:
                 table.setdefault(key[0], set()).update(tests)
+    unions = {}
+    for key in sorted(table):
+        private = posixpath.dirname(key)
+        name = posixpath.basename(private)
+        if len(name) < 2 or not name.startswith("_"):
+            continue
+        facade = posixpath.join(posixpath.dirname(private), name[1:] + ".py")
+        if facade not in unions:
+            own = set()
+            for canon in _canonicals(facade, gen_map):
+                own.update(table.get(canon, ()))
+            unions[facade] = (_facade_private(facade, base, layout.import_roots), own)
+        members, own = unions[facade]
+        if not own or _norm(key) not in members:
+            continue
+        for canon in _canonicals(key, gen_map):
+            table.setdefault(canon, set()).update(own)
     closed = _close(table, edges)
     ordered = {key: tuple(sorted(value)) for key, value in closed.items()}
     return _Closed(ordered)
