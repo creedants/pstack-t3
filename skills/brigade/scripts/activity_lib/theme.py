@@ -256,7 +256,7 @@ COLLAPSE_SCRIPT = squeezed("""
           const expanded = ns.some((n) => !n.style.display);
           for (const n of ns) {
             if (expanded) n.style.display = 'none';
-            else n.style.display = (n.className.includes('earlier') && !open ? 'none' : '');
+            else n.style.display = '';
           }
         };
       });
