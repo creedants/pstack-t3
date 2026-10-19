@@ -1,0 +1,448 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+from brigade_lib import generated, seam
+from brigade_lib.commands.setup import validate_settings
+from brigade_lib.compact import effective_cap, effective_provider
+from brigade_lib.leases import autofire_of, contract_mode, repository_cap, worker_cap
+from brigade_lib.shared import BrigadeError, command_words, slug
+from brigade_lib.store import ADMIN_DIR, _read_meta, change_note_dir, liveness_of, low_reserve_of, reporting_of, roles_script, round_budget_of, write_atomic
+
+COMMANDS = ("onboard",)
+
+
+def _text(value):
+    if value is None:
+        return "none"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value) if value else "none"
+    made = str(value)
+    return made if made.strip() else "unset"
+
+
+class _Ctx:
+    def __init__(self, root, directory):
+        self.root = root
+        self.directory = directory
+        self.meta = None
+        self.meta_state = "missing"
+        self.validate_error = ""
+        self.status = None
+        self.status_error = ""
+        self.roles_payload = None
+        self.roles_error = ""
+        self._remote = None
+        self._branch = None
+
+
+def _meta(ctx):
+    return ctx.meta if isinstance(ctx.meta, dict) else {}
+
+
+def _read_restaurant(ctx):
+    if ctx.meta_state == "missing":
+        return ("missing", "no restaurant.json")
+    if ctx.meta_state == "invalid":
+        return ("invalid", "restaurant.json is not valid JSON")
+    if ctx.validate_error:
+        return ("invalid", ctx.validate_error)
+    return ("configured", ctx.meta.get("restaurant") or ctx.directory.name)
+
+
+def _read_mode(ctx):
+    value = _meta(ctx).get("mode")
+    if value in (None, ""):
+        return ("missing", "")
+    if not isinstance(value, str):
+        return ("invalid", "mode is not full or light")
+    return ("configured", value)
+
+
+def _read_intake(ctx):
+    value = _meta(ctx).get("intake")
+    if value is None:
+        return ("missing", [])
+    if not isinstance(value, list):
+        return ("invalid", "intake is not a list")
+    return ("configured", value) if value else ("missing", [])
+
+
+def _read_file(root, *parts):
+    try:
+        return root.joinpath(*parts).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return ""
+
+
+def _manifest(root):
+    """(test command, build command) from repo files in fixed order. Empty string means none found."""
+    test, build = "", ""
+    try:
+        scripts = json.loads(_read_file(root, "package.json")).get("scripts") or {}
+    except ValueError:
+        scripts = {}
+    if not isinstance(scripts, dict):
+        scripts = {}
+    if not test and scripts.get("test"):
+        test = "npm test"
+    if not build and scripts.get("build"):
+        build = "npm run build"
+    made = _read_file(root, "Makefile").splitlines()
+    heads = [line.split("#")[0].strip() for line in made]
+    if not test and any(head == "test:" or head.startswith("test:") for head in heads):
+        test = "make test"
+    if not build and any(head == "build:" or head.startswith("build:") for head in heads):
+        build = "make build"
+    if not test and root.joinpath("Cargo.toml").is_file():
+        test = "cargo test"
+    if not build and root.joinpath("Cargo.toml").is_file():
+        build = "cargo build"
+    if not test and root.joinpath("go.mod").is_file():
+        test = "go test ./..."
+    if not build and root.joinpath("go.mod").is_file():
+        build = "go build ./..."
+    if not test and (root.joinpath("pyproject.toml").is_file() or root.joinpath("tox.ini").is_file()):
+        test = "pytest" if root.joinpath("pyproject.toml").is_file() else "tox"
+    if not test and root.joinpath("scripts", "run_tests.py").is_file():
+        test = "python3 scripts/run_tests.py"
+    if not build and root.joinpath("scripts", "build.py").is_file():
+        build = "python3 scripts/build.py"
+    return test, build
+
+
+def _stored(meta, key):
+    value = meta.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise BrigadeError(f"{key} is not text")
+    return value.strip()
+
+
+def _read_build(ctx):
+    if isinstance(ctx.meta, dict):
+        kept = _stored(ctx.meta, "buildCommand")
+        if kept:
+            command_words(kept)
+            return ("configured", kept)
+    found = _manifest(ctx.root)[1]
+    return ("detected", found) if found else ("missing", "")
+
+
+def _read_check(ctx):
+    if isinstance(ctx.meta, dict):
+        kept = _stored(ctx.meta, "checkCommand")
+        if kept:
+            command_words(kept)
+            return ("configured", kept)
+    found = _manifest(ctx.root)[0]
+    return ("detected", found) if found else ("missing", "")
+
+
+def _read_note(ctx):
+    made = change_note_dir(_meta(ctx))
+    return ("configured", made) if made else ("missing", "")
+
+
+def _cached(ctx, func):
+    original = seam.land_result
+    seam.land_result = lambda root, *args: ctx.status if args == ("status",) else original(root, *args)
+    try:
+        return func()
+    finally:
+        seam.land_result = original
+
+
+def _read_landing(ctx):
+    if ctx.status_error:
+        return ("invalid", ctx.status_error)
+    mode = _cached(ctx, lambda: contract_mode(str(ctx.root)))
+    if mode == "no landing contract":
+        return ("missing", mode)
+    return ("configured", mode)
+
+
+def _read_cap(ctx):
+    if ctx.status_error:
+        return ("invalid", ctx.status_error)
+    cap = _cached(ctx, lambda: repository_cap(str(ctx.root)))
+    return ("detected", cap) if cap is not None else ("none", None)
+
+
+def _read_generated(ctx):
+    gen_map = generated.read(str(ctx.root))
+    if not gen_map.rules:
+        return ("none", [])
+    found = sorted(f"{'/'.join(r.source.segments)} -> {'/'.join(r.target.segments)} ({r.kind.value})"
+                   for r in gen_map.rules)
+    return ("detected", found)
+
+
+def _read_roles(ctx):
+    if ctx.roles_error:
+        return ("invalid", ctx.roles_error)
+    return ("detected", (ctx.roles_payload or {}).get("mode", "unknown"))
+
+
+def _git(ctx, *args):
+    try:
+        result = subprocess.run(["git", "-C", str(ctx.root), *args], capture_output=True, text=True, timeout=10)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return None, f"git did not run: {type(error).__name__}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        return None, detail[0] if detail else f"git exited {result.returncode}"
+    return result.stdout.strip(), ""
+
+
+def _gh(*args):
+    try:
+        result = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=10)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return None, f"gh did not run: {type(error).__name__}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        return None, detail[0] if detail else f"gh exited {result.returncode}"
+    return result.stdout.strip(), ""
+
+
+def _remote(ctx):
+    if ctx._remote is None:
+        ctx._remote = _git(ctx, "remote", "get-url", "origin")
+    return ctx._remote
+
+
+def _branch(ctx):
+    if ctx._branch is None:
+        ctx._branch = _git(ctx, "branch", "--show-current")
+    return ctx._branch
+
+
+def _read_trunk(ctx):
+    out, error = _git(ctx, "symbolic-ref", "refs/remotes/origin/HEAD")
+    if out:
+        return ("detected", out.rsplit("/", 1)[-1])
+    if error and "not a git repository" in error:
+        return ("none", "no repository")
+    branch, _ = _branch(ctx)
+    if branch:
+        return ("detected", branch)
+    return ("unknown", error or "no trunk branch")
+
+
+def _read_remote(ctx):
+    out, error = _remote(ctx)
+    if out:
+        return ("detected", out)
+    lowered = (error or "").lower()
+    if "no such remote" in lowered:
+        return ("none", "no remote")
+    if "not a git repository" in lowered:
+        return ("none", "no repository")
+    return ("unknown", error or "no remote")
+
+
+def _github_repo(url):
+    text = (url or "").strip()
+    for prefix in ("https://github.com/", "git@github.com:"):
+        if text.startswith(prefix):
+            rest = text[len(prefix):].removesuffix(".git").strip("/")
+            parts = rest.split("/")
+            if len(parts) == 2 and all(part not in ("", ".", "..") for part in parts):
+                return f"{parts[0]}/{parts[1]}"
+            return ""
+    return ""
+
+
+def _read_checks(ctx):
+    remote, remote_error = _remote(ctx)
+    if not remote:
+        return ("unknown", remote_error or "no remote")
+    repo = _github_repo(remote)
+    if not repo:
+        return ("unknown", "remote is not GitHub")
+    branch, branch_error = _branch(ctx)
+    if not branch:
+        return ("unknown", branch_error or "no branch")
+    out, error = _gh("api", f"repos/{repo}/branches/{branch}/protection")
+    if error:
+        return ("unknown", error)
+    return ("detected", ["protected"])
+
+
+def _read_pr(ctx):
+    remote, remote_error = _remote(ctx)
+    if not remote:
+        if remote_error and "not a git repository" in remote_error:
+            return ("none", "no repository")
+        return ("no", remote_error or "no remote")
+    _, error = _gh("auth", "status")
+    if error:
+        return ("unknown", error)
+    return ("yes", remote)
+
+
+SETTINGS = (
+    ("restaurant", _read_restaurant, "open --project-root <root> --name <name>", _text),
+    ("reporting", lambda ctx: ("configured", reporting_of(_meta(ctx))), "set --reporting milestones", _text),
+    ("workers", lambda ctx: ("configured", worker_cap(_meta(ctx))), "open --workers 2 or set --workers 2", _text),
+    ("mode", _read_mode, "open --mode light or set --mode light", _text),
+    ("intake", _read_intake, "set --intake <sources>", _text),
+    ("autofire", lambda ctx: ("configured", autofire_of(_meta(ctx))), "set --autofire normal", _text),
+    ("low_reserve", lambda ctx: ("configured", low_reserve_of(_meta(ctx))), "set --low-reserve 1", _text),
+    ("round_budget", lambda ctx: ("configured", round_budget_of(_meta(ctx))), "set --round-budget 3", _text),
+    ("liveness", lambda ctx: ("configured", list(liveness_of(_meta(ctx)))), "set --liveness-ms 600000", _text),
+    ("context_cap", lambda ctx: ("configured", effective_cap(_meta(ctx))), "set --context-cap 300000", _text),
+    ("coordinator_provider", lambda ctx: ("configured", effective_provider(_meta(ctx))), "set --coordinator-provider claude", _text),
+    ("build_command", _read_build, "set --build-command <command>", _text),
+    ("check_command", _read_check, "set --check-command <command>", _text),
+    ("change_note_dir", _read_note, "set --change-note-dir changes", _text),
+    ("landing_mode", _read_landing, "land.py init --mode merge or land.py mode merge", _text),
+    ("repository_cap", _read_cap, None, _text),
+    ("generated", _read_generated, "land.py init --generated-map <MAP>", _text),
+    ("roles", _read_roles, "roles.py show, then roles.py write", _text),
+    ("trunk", _read_trunk, None, _text),
+    ("remote", _read_remote, None, _text),
+    ("required_checks", _read_checks, None, _text),
+    ("pr_ability", _read_pr, None, _text),
+    ("contract_checks", lambda ctx: ("unknown", "see land.py status"), None, _text),
+)
+
+
+def detect(project_root, directory):
+    ctx = _Ctx(Path(project_root), Path(directory))
+    try:
+        ctx.root = Path(project_root).resolve()
+    except (OSError, ValueError):
+        pass
+    meta, state = _read_meta(ctx.directory / "restaurant.json")
+    ctx.meta = meta
+    ctx.meta_state = state if state in ("ok", "missing", "invalid") else "invalid"
+    if ctx.meta_state == "ok":
+        try:
+            validate_settings(meta)
+        except (BrigadeError, OSError, ValueError) as error:
+            ctx.validate_error = str(error) or type(error).__name__
+        except Exception as error:
+            ctx.validate_error = type(error).__name__
+    try:
+        ctx.status = seam.land_result(str(ctx.root), "status")
+    except (BrigadeError, OSError, ValueError) as error:
+        ctx.status_error = str(error) or type(error).__name__
+    except Exception as error:
+        ctx.status_error = type(error).__name__
+    if seam.HELD_LOCKS:
+        ctx.roles_error = (f"roles.py may run git; release {seam.HELD_LOCKS[0]}'s store lock "
+                           "before resolving the mode")
+    else:
+        try:
+            script = roles_script()
+        except (BrigadeError, OSError, ValueError) as error:
+            ctx.roles_error = str(error) or type(error).__name__
+        else:
+            result, error = _roles_show(script, ctx.root)
+            if error:
+                ctx.roles_error = error
+            else:
+                ctx.roles_payload = result
+    facts = {}
+    for name, reader, fix, _ in SETTINGS:
+        try:
+            state, value = reader(ctx)
+        except (BrigadeError, OSError, ValueError) as error:
+            state, value = "invalid", str(error) or type(error).__name__
+        except Exception as error:
+            state, value = "invalid", type(error).__name__
+        facts[name] = {"state": state, "value": value, "fix": fix}
+    return facts
+
+
+def _roles_show(script, root):
+    try:
+        result = subprocess.run([sys.executable, str(script), "show", "--cwd", str(root)],
+                                capture_output=True, timeout=30)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return None, f"roles.py show did not run: {type(error).__name__}"
+    try:
+        out = result.stdout.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        return None, "roles.py show printed no JSON object"
+    if result.returncode != 0:
+        return None, f"roles.py show exited {result.returncode}"
+    try:
+        payload = json.loads(out)
+    except ValueError:
+        return None, "roles.py show printed no JSON object"
+    return payload if isinstance(payload, dict) else {}, ""
+
+
+def _lines(facts):
+    return [f"{name}: {show(facts[name]['value'])}" for name, _, _, show in SETTINGS]
+
+
+def _parse(text):
+    found = {}
+    for line in text.splitlines():
+        if ":" in line:
+            name, _, value = line.partition(":")
+            found[name.strip()] = value.strip()
+        elif line.strip():
+            found[line.strip()] = ""
+    return found
+
+
+def register(sub):
+    p = sub.add_parser("onboard", help="detect onboarding settings")
+    p.add_argument("--project-root", required=True)
+    p.add_argument("--name")
+    p.add_argument("--admin", action="store_true")
+    p.add_argument("--at", default=None)
+    p.add_argument("--detect", action="store_true")
+    p.add_argument("--summary", action="store_true")
+
+
+def handle(args, root):
+    if seam.READ_ONLY:
+        raise BrigadeError("brigade: next is read-only")
+    if args.admin and args.name:
+        raise BrigadeError("onboard --admin takes no --name")
+    if not args.admin and not args.name:
+        raise BrigadeError("onboard needs --name, or --admin")
+    if args.detect == args.summary:
+        raise BrigadeError("onboard needs --detect or --summary")
+    project_root = Path(args.project_root)
+    if args.at:
+        directory = Path(args.at)
+    else:
+        directory = Path(root) / slug(project_root.resolve().name) / (ADMIN_DIR if args.admin else slug(args.name))
+    facts = detect(str(project_root), str(directory))
+    missing = [name for name, _, _, _ in SETTINGS if facts[name]["state"] == "missing"]
+    if args.detect:
+        return json.dumps({"facts": facts, "missing": missing}, indent=2)
+    lines = _lines(facts)
+    if not (directory / "restaurant.json").is_file():
+        return "\n".join([*lines, "not saved; run brigade.py open to create the restaurant"])
+    target = directory / "onboarding.txt"
+    wanted = "\n".join(lines) + "\n"
+    try:
+        old_bytes = target.read_bytes()
+    except OSError:
+        old_bytes = None
+    if old_bytes is not None and old_bytes == wanted.encode("utf-8"):
+        return "no change to onboarding.txt"
+    old = _parse(old_bytes.decode("utf-8", errors="replace")) if old_bytes is not None else {}
+    new = _parse(wanted)
+    changes = []
+    for name in new:
+        if name not in old:
+            changes.append(f"added {name}: {new[name]}")
+        elif old[name] != new[name]:
+            changes.append(f"{name}: {old[name]} -> {new[name]}")
+    for name in old:
+        if name not in new:
+            changes.append(f"removed {name}: {old[name]}")
+    write_atomic(target, wanted)
+    return "\n".join(changes) if changes else "no change to onboarding.txt"
