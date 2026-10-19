@@ -93,6 +93,13 @@ def _base_resolve_import(edge, loader_path, root, roots=None):
         if parent:
             cands.append(parent + "/" + tail)
         cands.append(tail)
+    cur = parent
+    while cur and cur not in (".", "/"):
+        cur = posixpath.dirname(cur)
+        if not cur or cur in (".", "/"):
+            break
+        for tail in rels:
+            cands.append(cur + "/" + tail)
     for tail in rels:
         for prefix in ("scripts", "t3/scripts", "t3/added/brigade/scripts/brigade_lib"):
             cands.append(prefix + "/" + tail)
@@ -144,9 +151,11 @@ class AffectedBase(BrigadeTest):
         exists = subprocess.run(["git", "-C", str(archive), "rev-parse", "--verify", "--quiet", "main"],
                                 capture_output=True)
         if exists.returncode != 0:
-            subprocess.run(["git", "-C", str(archive), "add", "-A"], check=True,
+            subprocess.run(["git", "-C", str(archive), "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+                            "add", "-A"], check=True,
                            capture_output=True, text=True)
-            subprocess.run(["git", "-C", str(archive), "-c", "user.name=t", "-c", "user.email=t@t",
+            subprocess.run(["git", "-C", str(archive), "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+                            "-c", "user.name=t", "-c", "user.email=t@t",
                             "commit", "-qm", "archive"], check=True, capture_output=True, text=True)
         self.land_repo(archive, "init", "--trunk", "main", "--mode", "local", "--base", "main",
                        "--generated", self.GENERATED, "--generated-map", self.MAP)
@@ -210,7 +219,11 @@ class AffectedBase(BrigadeTest):
             else:
                 shutil.copy2(child, target)
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, capture_output=True, text=True, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=dest, capture_output=True, text=True, check=True)
+        # Disable detached maintenance in this archive.
+        subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=dest, capture_output=True, text=True, check=True)
+        subprocess.run(["git", "config", "gc.auto", "0"], cwd=dest, capture_output=True, text=True, check=True)
+        subprocess.run(["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "add", "-A"],
+                       cwd=dest, capture_output=True, text=True, check=True)
         return dest
 
     def archive_root(self):

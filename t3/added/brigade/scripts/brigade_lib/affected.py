@@ -5,9 +5,134 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import generated
 from brigade_lib._affected.model import AFFECTED_KEY, DEFAULT_SUITE, Layout, _Closed, _Full, _Modules, _Open, layout
 from brigade_lib._affected.report import _fallback, _paragraph, _settings
-from brigade_lib._affected.scan import PIN_CHARS, _canonicals, _diff_names, _expand_one, _facade_private, _found_files, _import_targets, _loads_of, _looks_repo, _module_name, _norm, _pin_literals, _resolve_import, _singles, _test_files, _tracked
+from brigade_lib._affected.scan import PIN_CHARS, _canonicals, _diff_names, _expand_one, _expandable, _found_files, _import_targets, _imports_of, _is_test_name, _loads_of, _looks_repo, _norm, _pin_literals, _private_of, _singles, _tracked, _tree_files, _tree_name
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import HELD_LOCKS
+
+
+def _private_edges(loader, private, root, roots):
+    prefix = private + "/"
+    found = set()
+    for edge in _imports_of(loader, root):
+        try:
+            resolved = _resolve_import(edge, loader, root, roots, 1)
+        except TypeError:
+            resolved = _resolve_import(edge, loader, root, roots)
+        for got in resolved:
+            if got.startswith(prefix):
+                found.add(got)
+    return found
+
+
+def _init_private(norm, loader_path, root, roots):
+    if not norm.endswith("/__init__.py"):
+        return ()
+    private = posixpath.dirname(norm)
+    name = posixpath.basename(private)
+    if len(name) < 2 or not name.startswith("_"):
+        return ()
+    facade = posixpath.join(posixpath.dirname(private), name[1:] + ".py")
+    if _norm(loader_path) != facade or not _found_files(root, [facade]):
+        return ()
+    return _private_edges(norm, private, root, roots)
+
+
+def _facade_private(norm, root, roots):
+    private = _private_of(norm)
+    if not private:
+        return ()
+    try:
+        inside = (Path(str(root)) / private).is_dir()
+    except OSError:
+        inside = False
+    if not inside:
+        return ()
+    found = _private_edges(norm, private, root, roots)
+    for init in _found_files(root, [private + "/__init__.py"]):
+        found |= _private_edges(init, private, root, roots)
+    return tuple(sorted(found))
+
+
+def _resolves(edge, cands, loader_path, root, roots, depth):
+    files = _found_files(root, cands)
+    if depth or not _expandable(edge):
+        return files
+    out = list(files)
+    for got in files:
+        out.extend(_facade_private(got, root, roots))
+        out.extend(_init_private(got, loader_path, root, roots))
+    return tuple(out)
+
+
+def _resolve_import(edge, loader_path, root, roots, depth=0, ancestors=True):
+    level, module, symbol = edge
+    if symbol == "*":
+        symbol = ""
+    module_parts = module.split(".") if module else []
+    if level and level > 0:
+        parent = posixpath.dirname(_norm(loader_path) if loader_path else "")
+        parts = parent.split("/") if parent else []
+        if level - 1 > len(parts):
+            return ()
+        base_dir = "/".join(parts[:len(parts) - (level - 1)]) if level - 1 else parent
+        cands = []
+        if module_parts:
+            mod_rel = "/".join(module_parts)
+            if base_dir:
+                cands.append(base_dir + "/" + mod_rel + ".py")
+                cands.append(base_dir + "/" + mod_rel + "/__init__.py")
+            else:
+                cands.append(mod_rel + ".py")
+                cands.append(mod_rel + "/__init__.py")
+        if symbol:
+            sym_rel = "/".join(module_parts + [symbol]) if module_parts else symbol
+            if base_dir:
+                cands.append(base_dir + "/" + sym_rel + ".py")
+                cands.append(base_dir + "/" + sym_rel + "/__init__.py")
+            else:
+                cands.append(sym_rel + ".py")
+                cands.append(sym_rel + "/__init__.py")
+        return _resolves(edge, cands, loader_path, root, roots, depth)
+    parent = posixpath.dirname(_norm(loader_path) if loader_path else "")
+    cands = []
+    rels = []
+    if module_parts:
+        mod_rel = "/".join(module_parts)
+        rels.append(mod_rel + ".py")
+        rels.append(mod_rel + "/__init__.py")
+    if symbol:
+        sym_rel = "/".join(module_parts + [symbol]) if module_parts else symbol
+        rels.append(sym_rel + ".py")
+        rels.append(sym_rel + "/__init__.py")
+    if not rels and module_parts:
+        mod_rel = "/".join(module_parts)
+        rels = [mod_rel + ".py", mod_rel + "/__init__.py"]
+    for tail in rels:
+        if parent:
+            cands.append(parent + "/" + tail)
+        cands.append(tail)
+    if ancestors:
+        cur = parent
+        while cur and cur not in (".", "/"):
+            cur = posixpath.dirname(cur)
+            if not cur or cur in (".", "/"):
+                break
+            for tail in rels:
+                cands.append(cur + "/" + tail)
+    for tail in rels:
+        for prefix in roots:
+            cands.append(prefix + "/" + tail)
+    return _resolves(edge, cands, loader_path, root, roots, depth)
+
+
+def _resolve_proven(edge, loader_path, root, roots, depth=0):
+    try:
+        return _resolve_import(edge, loader_path, root, roots, depth, ancestors=False)
+    except TypeError:
+        try:
+            return _resolve_import(edge, loader_path, root, roots, depth)
+        except TypeError:
+            return _resolve_import(edge, loader_path, root, roots)
 
 def _one_hop(norm, base, gen_map, roots):
     if not norm or not norm.endswith(".py"):
@@ -35,28 +160,35 @@ def _one_hop(norm, base, gen_map, roots):
 
 
 def _helper_entries(base, layout):
+    entry_set = frozenset(_norm(one) for one in layout.entry_points)
     entries = {}
     for helper_rel in layout.helpers:
+        norm = _norm(helper_rel)
+        if not norm:
+            entries[norm] = None
+            continue
         try:
-            helper_text = (Path(str(base)) / helper_rel).read_text(encoding="utf-8")
+            text = (base / norm).read_text(encoding="utf-8")
         except (OSError, UnicodeError):
-            entries[helper_rel] = None
+            entries[norm] = None
             continue
         try:
-            helper_mod = ast.parse(helper_text, helper_rel)
+            mod = ast.parse(text, norm)
         except SyntaxError:
-            entries[helper_rel] = None
+            entries[norm] = None
             continue
-        helper_singles = _singles(helper_mod)
-        found = frozenset(
-            _norm(ref) for ref in _loads_of(helper_mod, helper_singles) if _norm(ref) in layout.entry_points
-        )
-        entries[helper_rel] = found
+        singles = _singles(mod)
+        entries[norm] = frozenset(_norm(ref) for ref in _loads_of(mod, singles) if _norm(ref) in entry_set)
     return entries
 
 
 def _test_edges(targets, rel, base, roots):
     edges = set()
+    importer_test = False
+    if rel.endswith(".py"):
+        stem = rel[:-3]
+        if "/test_" in "/" + stem or stem.split("/")[-1].startswith("test_"):
+            importer_test = True
     for target in targets:
         level, module, symbol = target
         if symbol and symbol != "*":
@@ -67,7 +199,17 @@ def _test_edges(targets, rel, base, roots):
             last = ""
         shaped = last.startswith("test_")
         resolved = _resolve_import(target, rel, base, roots)
-        if shaped and len(resolved) != 1:
+        if shaped:
+            proven = _resolve_proven(target, rel, base, roots)
+            if len(proven) == 0 and len(resolved) > 0:
+                if module and symbol and symbol != "*":
+                    label = module + "." + symbol
+                elif module:
+                    label = module
+                else:
+                    label = symbol
+                return frozenset(), "unproven import " + label + " in " + rel
+        if shaped and len(resolved) != 1 and importer_test:
             if module and symbol and symbol != "*":
                 label = module + "." + symbol
             elif module:
@@ -75,8 +217,24 @@ def _test_edges(targets, rel, base, roots):
             else:
                 label = symbol
             return frozenset(), "unresolved import " + label + " in " + rel
+        if shaped and len(resolved) != 1:
+            if module and symbol and symbol != "*":
+                label = module + "." + symbol
+            elif module:
+                label = module
+            else:
+                label = symbol
+            found = set()
+            for got in resolved:
+                mod_name = _tree_name(Path(str(base)) / got, base)
+                if mod_name is not None:
+                    found.add(mod_name)
+            if not found:
+                return frozenset(), "unresolved import " + label + " in " + rel
+            edges.update(found)
+            continue
         for got in resolved:
-            mod_name = _module_name(Path(str(base)) / got, base)
+            mod_name = _tree_name(Path(str(base)) / got, base)
             if mod_name is not None:
                 edges.add(mod_name)
     return frozenset(edges), None
@@ -113,34 +271,45 @@ def _index(root, layout, gen_map=None):
             raise
         except Exception:
             gen_map = generated.EMPTY
-    files = _test_files(base)
+    files = _tree_files(base)
+    helper_set = frozenset(_norm(one) for one in layout.helpers)
+    entry_set = frozenset(_norm(one) for one in layout.entry_points)
     helper_entries = _helper_entries(base, layout)
     loads = {}
     pins = {}
     direct = {}
     edges = {}
-    mods = {}
+    broken_helpers = set()
     for path in files:
-        name = _module_name(path, base)
+        name = _tree_name(path, base)
         if not name:
             continue
-        mods[str(path)] = name
+        try:
+            rel = Path(str(path)).resolve().relative_to(base.resolve()).as_posix()
+        except ValueError:
+            continue
+        helper = _norm(rel) in helper_set
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
+            if helper:
+                broken_helpers.add(_norm(rel))
             continue
         try:
             mod = ast.parse(text, str(path))
         except SyntaxError:
+            if helper:
+                broken_helpers.add(_norm(rel))
             continue
         singles = _singles(mod)
         refs = _loads_of(mod, singles)
+        if helper:
+            refs = frozenset(_norm(ref) for ref in refs if _norm(ref) in entry_set)
         if refs:
             loads[name] = refs
         lits = _pin_literals(mod)
         if lits:
             pins[name] = lits
-        rel = Path(str(path)).resolve().relative_to(base.resolve()).as_posix()
         targets = _import_targets(mod)
         resolved = set()
         for target in targets:
@@ -152,21 +321,23 @@ def _index(root, layout, gen_map=None):
         if open_reason is not None:
             return _Open(open_reason)
         edges[name] = edge_set
-    combined = {}
-    for name in set(list(loads) + list(direct)):
-        own = set(loads.get(name, ()))
-        for ref in direct.get(name, ()):
+    for refs in direct.values():
+        for ref in refs:
+            if _norm(ref) in broken_helpers:
+                return _Open("unresolved helper " + _norm(ref))
+    for name, refs in direct.items():
+        for ref in refs:
             norm_ref = _norm(ref)
             if norm_ref in helper_entries:
                 entry = helper_entries[norm_ref]
                 if entry is None:
                     return _Open("unresolved helper " + norm_ref)
-                own = own | set(entry)
-        if own:
-            combined[name] = own
+                if entry:
+                    prior = loads.get(name, frozenset())
+                    loads[name] = frozenset(set(prior) | set(entry))
     table = {}
     hops = {}
-    for name, refs in combined.items():
+    for name, refs in loads.items():
         for ref in refs:
             norm = _norm(ref)
             if norm and _looks_repo(norm):
@@ -248,8 +419,12 @@ def _index(root, layout, gen_map=None):
         for canon in _canonicals(key, gen_map):
             table.setdefault(canon, set()).update(own)
     closed = _close(table, edges)
-    ordered = {key: tuple(sorted(value)) for key, value in closed.items()}
-    return _Closed(ordered)
+    filtered = {}
+    for key, value in closed.items():
+        kept = tuple(sorted(one for one in value if _is_test_name(one)))
+        if kept:
+            filtered[key] = kept
+    return _Closed(filtered)
 
 
 def _select(root, paths, layout, change_dir=""):
