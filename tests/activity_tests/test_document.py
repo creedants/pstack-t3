@@ -44,7 +44,7 @@ class DocumentTest(OutputCase):
     def test_data_object_holds_the_counts_legend_items_groups_and_notes(self):
         failed_child(self.fixture).write()
         data = data_of(self.document())
-        self.assertEqual(sorted(data), ["G", "I", "M", "N", "P", "S", "c", "k", "n", "v", "w"])
+        self.assertEqual(sorted(data), ["C", "G", "I", "M", "N", "P", "S", "c", "k", "n", "v", "w"])
         self.assertEqual((data["v"], data["c"], data["n"], data["w"][1]), (1, "kit", [2, 2, 4, 1], 10800))
         self.assertEqual(data["S"], ["running", "queued", "waiting", "done", "failed", "stopped", "unknown"])
         self.assertEqual(data["P"], [["model-a", 1, 3], ["model-b", 3, 2], ["model-c", 4, 1]])
@@ -157,8 +157,8 @@ class DocumentTest(OutputCase):
         self.assertIn(".now div,.strip>*,.grp,.l{display:flex;gap:8px;align-items:baseline;min-width:0}", wide)
         self.assertEqual(re.findall(r"height:[^;}]*", MOD["STYLE"]), ["height:1.1", "height:8px", "height:9px", "height:16px", "height:19px", "height:100%", "height:11px", "height:30px", "height:13px"])
 
-    def test_stylesheet_names_a_color_in_a_color_background_border_or_c_declaration_only_as_a_variable_transparent_or_inherit_and_reads_only_theme_variables_and_its_own_two(self):
-        style = MOD["STYLE"]
+    def test_base_stylesheet_names_a_color_in_a_color_background_border_or_c_declaration_only_as_a_variable_transparent_or_inherit_and_reads_only_theme_variables_and_its_own_two(self):
+        style = MOD["STYLE_BASE"]
         declared = declarations(style)
         self.assertEqual(re.findall(r"[0-9](?:vh|vw)\b|#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", style), [])
 

@@ -118,6 +118,7 @@ class Group:
     rows: tuple[Row, ...]
     agents: int
     subagents: int
+    collapsed: bool = False
 
 
 @dataclass(frozen=True)
@@ -188,6 +189,12 @@ def assign(store, t3):
         for thread in (*unit.earlier_workers, unit.worker, t3.node_thread.get(unit.task), requested.get(unit.task)):
             if thread:
                 recorded[thread] = unit.id
+    known = {unit.id for unit in store.units}
+    for row in store.threads:
+        thread = row.get("thread", "")
+        dish = row.get("dish", "")
+        if thread and dish in known:
+            recorded[thread] = dish
     found = {}
     for start in t3.agents:
         thread, below = start, []
@@ -472,6 +479,31 @@ def model_slot(name: str) -> int:
     if name == OTHER_MODEL:
         return OTHER_SLOT
     return checksum(name) % MODEL_SLOTS + 1
+
+
+def palette_of(legend) -> dict:
+    """Allocate in sorted name order. Reserve OTHER_SLOT for OTHER_MODEL. Wrap after eleven named models. Stable for one model set."""
+    palette, used = {}, {MIXED_SLOT, OTHER_SLOT}
+    available = [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]
+    for name in sorted(name for name, _ in legend):
+        if name == OTHER_MODEL:
+            palette[name] = OTHER_SLOT
+        elif not name:
+            palette[name] = MIXED_SLOT
+        elif name not in palette:
+            wanted = model_slot(name)
+            if wanted not in used and wanted in available:
+                palette[name] = wanted
+                used.add(wanted)
+            else:
+                free = [slot for slot in available if slot not in used]
+                if free:
+                    palette[name] = free[0]
+                    used.add(free[0])
+                else:
+                    wrapped = available[checksum(name) % len(available)]
+                    palette[name] = wrapped
+    return palette
 
 
 def span(window):

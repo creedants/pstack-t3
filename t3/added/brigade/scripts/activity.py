@@ -118,13 +118,13 @@ try:
 
     from activity_lib.store import ActivityError, SourceError, GoalRecord, Goal, Unit, Store, STORE_RECORD, STORE_LOCK, UNITS_TABLE, LOG_TABLE, GOALS_TABLE, THREADS_TABLE, STORE_COLUMNS, ADDED_COLUMNS, TABLE_WORDS, RECORD_WORDS, STATE_WORDS, UNKNOWN_STATE, FINISHED_STATES, KINDS, UNGROUPED, UNNAMED, UNASSIGNED, read_table, malformed, record_text, goals_of, read_store, roots_of
 
-    from activity_lib.theme import joined_lines, squeezed, STYLE, RENDERER, STRIP_CSS, LEDGER_CSS, ATTEMPT_CSS, LEDGER_HOOK, STRIP_HOOK
+    from activity_lib.theme import joined_lines, squeezed, STYLE, STYLE_BASE, OVERFLOW_STYLE, RENDERER, COLLAPSE_SCRIPT, STRIP_CSS, LEDGER_CSS, ATTEMPT_CSS, LEDGER_HOOK, STRIP_HOOK
 
     from activity_lib.t3state import Status, T3_STATUS, OPEN, LIVE, QUIET, Window, Turn, Delegation, Agent, T3, PROJECTION, SUPPORTED_PROJECTION, THREADS, RUNS, SUBAGENTS, METADATA, T3_SHAPE, THREAD_PAYLOAD_KEY, SELECTION_KEYS, NULLABLE, STAMP, T3_DATABASE, BATCH, CHANGED, T3_KINDS, t3_database, open_t3, unreadable, check_shape, check_coordinator, parse_time, text_in, time_in, parse_status, request_name, in_scope, batches, touches, check_parents, same_project, read_t3, selection_of
 
     from activity_lib.privacy import UUID, OPENS, QUOTES, SEGMENT, PATH, SHAPES, LOCAL, LOCAL_CHARS, DOMAIN, TOKEN_ATOM, TOKEN, OPENS_AT, PIECE, SLASH_WORD, BESIDE, CLOSERS, CLOSES, WORD_END, NEXT_PATH_WORD, WORD, RUN, ORDINARY, ORDINARY_CHARS, ESCAPES, ANCHOR, PASSES, MODEL_CHARS, HOST, PULL, REFUSED, CUT, PATH_TAIL, SLUG, HASH, ROLE, UNIT_SUFFIX, BAR, ENTITIES, UNPRINTED, DRIVERS, OTHER_MODEL, MODEL_SLOTS, OTHER_SLOT, MIXED_SLOT, entities, plain, lowered, ordinary, unescaped, as_entities, views, path_end, without, short, Privacy, privacy_of
 
-    from activity_lib.page import Evidence, Assignment, Span, RoleCount, AttemptFold, Row, Item, LedgerLine, Group, Totals, Hidden, Page, StripGroup, Flight, ROLES, TITLE_CHARS, LABEL_CHARS, NAME_BYTES, ID_BYTES, LABEL_BYTES, SUMMARY_BYTES, MODEL_BYTES, LINK_BYTES, encode, size, clip, count, people, agents_in, union, summary, shown, tally, flight_of, checksum, model_slot, span, dur, unit_named, assign, words_of, label_of, stretches, open_turn, status_of, spans_of, seconds_of, tree, with_parents, is_open
+    from activity_lib.page import Evidence, Assignment, Span, RoleCount, AttemptFold, Row, Item, LedgerLine, Group, Totals, Hidden, Page, StripGroup, Flight, ROLES, TITLE_CHARS, LABEL_CHARS, NAME_BYTES, ID_BYTES, LABEL_BYTES, SUMMARY_BYTES, MODEL_BYTES, LINK_BYTES, encode, size, clip, count, people, agents_in, union, summary, shown, tally, flight_of, checksum, model_slot, palette_of, span, dur, unit_named, assign, words_of, label_of, stretches, open_turn, status_of, spans_of, seconds_of, tree, with_parents, is_open
 
     from activity_lib.attempts import attempt_rank, lines_of, attempt_tail, format_attempt, brief_attempt, partition_attempts, spoken, item_of, build_page
 

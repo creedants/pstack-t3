@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Mapping, Optional
 from urllib.parse import quote, unquote, urlsplit
 from activity_lib.store import UNGROUPED
-from activity_lib.theme import ATTEMPT_CSS, LEDGER_CSS, LEDGER_HOOK, RENDERER, STRIP_CSS, STRIP_HOOK, STYLE, squeezed
+from activity_lib.theme import ATTEMPT_CSS, COLLAPSE_SCRIPT, LEDGER_CSS, LEDGER_HOOK, OVERFLOW_STYLE, RENDERER, STRIP_CSS, STRIP_HOOK, STYLE, STYLE_BASE, squeezed
 from activity_lib.t3state import Status
-from activity_lib.page import checksum, count, dur, encode, flight_of, model_slot, people, span, summary
+from activity_lib.page import checksum, count, dur, encode, flight_of, model_slot, palette_of, people, span, summary
 from activity_lib.attempts import spoken
 from activity_lib.fitting import FOLDS, count_line
 from activity_lib.sizing import FRAME_FOLDS, frame_cuts, height, items_of, notes
@@ -131,13 +131,15 @@ def wire(page):
         "w": [int(page.window.start), round(page.window.end - page.window.start), span(page.window)],
         "n": [totals.running, totals.agents, totals.subagents, totals.failed],
         "S": [status.value for status in WIRE_STATUS],
-        "P": [[name, model_slot(name), agents] for name, agents in page.legend],
+        "P": [[name, palette_of(page.legend).get(name, model_slot(name)), agents] for name, agents in page.legend],
         "k": own and [model(own.model), WIRE_STATUS.index(own.status), dur(own.seconds), bars(own.spans)],
         "I": [cells(item) for item in items],
         "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
         "M": models,
         "N": notes(page, items),
     }
+    if any(bool(getattr(group, "collapsed", False)) for group in page.groups):
+        data["C"] = [bool(getattr(group, "collapsed", False)) for group in page.groups]
     if grouped:
         places = {id(item): index for index, item in enumerate(items)}
         data["F"] = [[count_line(group), group.heading, [places[id(item)] for item in group.items]] for group in page.flight.groups]
@@ -154,8 +156,11 @@ def wire(page):
 def render_html(page, clean):
     """The document. The only strings in it that are not constants of this file are in the data element, and encode() passes each of those to clean."""
     data = encode(wire(page), clean)
-    style = STYLE if page.flight is None else STYLE + STRIP_CSS
-    script = RENDERER if page.flight is None else RENDERER + STRIP_HOOK
+    palette = palette_of(page.legend)
+    needs_overflow = any(slot > 6 for slot in palette.values())
+    needs_collapse = any(bool(getattr(group, "collapsed", False)) for group in page.groups)
+    style = (STYLE_BASE if not needs_overflow else STYLE) if page.flight is None else ((STYLE_BASE if not needs_overflow else STYLE) + STRIP_CSS)
+    script = (RENDERER if not needs_collapse else RENDERER + COLLAPSE_SCRIPT) if page.flight is None else ((RENDERER if not needs_collapse else RENDERER + COLLAPSE_SCRIPT) + STRIP_HOOK)
     if any(item.lines or item.fold.summary for item in items_of(page)):
         style += LEDGER_CSS
         script += squeezed(LEDGER_HOOK)
