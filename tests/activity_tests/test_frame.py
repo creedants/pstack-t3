@@ -158,10 +158,10 @@ class FrameTest(OutputCase):
             fixture.thread(worker(number + 1), title=f"D{number} worker", turns=(("completed", 10, 9),))
         page = page_of(fixture)
         fitted, document = MOD["fit"](page, 15999, CLEAN, 1960)
-        # The last fold before the cap renders 16073 bytes, over the 15999-byte budget and over the 1960-pixel frame, so its frame cuts run before the cap.
+        # The fit at 15999 bytes and 1960 pixels keeps 6 groups at 1056 pixels and 9255 bytes.
         self.assertEqual((len(fitted.groups), MOD["height"](fitted), len(document.encode())), (6, 1056, 9255))
         shifted, shifted_document = MOD["fit"](page, 16117, CLEAN, 1960)
-        # The reclaimed cut of twenty groups renders at 16118 bytes, one over the 16117-byte budget, so fit keeps the cut before reclaim.
+        # The fit at 16117 bytes and 1960 pixels keeps 6 groups at 1056 pixels and 9255 bytes.
         self.assertEqual((len(shifted.groups), MOD["height"](shifted), len(shifted_document.encode())), (6, 1056, 9255))
 
     def test_fit_tries_the_fold_pages_frame_cuts_when_the_trimmed_pages_frame_cuts_stay_over_budget(self):
