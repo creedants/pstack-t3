@@ -1,0 +1,2 @@
+- kind fix
+- `t3/overrides/make-bot-ui/SKILL.md` states that `schedule_task` runs a `{"type": "webhook"}` schedule in a T3 thread rather than the external bot's routine, and that `request_secret` returns a one-use `secretRef` for T3 tools only, so the external sender key stays on disk.
