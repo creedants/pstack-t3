@@ -2,7 +2,7 @@ from .support import BrigadeTest, json, setUpModule
 
 
 class OnboardDetectTest(BrigadeTest):
-    """Missing names only the settings the store still needs."""
+    """Missing holds what still needs action, in table order."""
 
     def detect(self, *extra):
         return json.loads(self.brigade("onboard", "--project-root", str(self.project), "--name", "Perf",
@@ -73,6 +73,17 @@ class OnboardDetectTest(BrigadeTest):
                            "--detect", owner=False)
         found = json.loads(out)
         self.assertEqual(found["facts"]["restaurant"]["state"], "invalid")
+
+    def test_outside_mode_reads_as_invalid(self):
+        # Processes: git builds the fixture repository. The writers refuse this value, so the test writes it directly.
+        self.git_project()
+        self.open()
+        meta_path = self.at / "restaurant.json"
+        meta = json.loads(meta_path.read_text())
+        meta["mode"] = "medium"
+        meta_path.write_text(json.dumps(meta))
+        found = self.detect()
+        self.assertEqual(found["facts"]["mode"]["state"], "invalid")
 
 
 class OnboardSummaryTest(BrigadeTest):
