@@ -223,7 +223,7 @@ class SeatLaunchDocTest(unittest.TestCase):
             section,
         )
         self.assertIn('"options": {"effort": "xhigh"}', section)
-        self.assertIn("Confirm a launched thread per [Delegation](SKILL.md#delegation) step 3.", section)
+        self.assertIn("Confirm a launched thread per [Delegation](delegation.md#spawn-and-collect) step 3.", section)
 
     def test_readback_sentence_names_where_to_read_and_never_retries_without_options(self):
         delegation = (ROOT / "t3/added/pstack-runtime/delegation.md").read_text()

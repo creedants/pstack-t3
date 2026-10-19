@@ -144,7 +144,7 @@ class ConfigureOwnerDocTest(unittest.TestCase):
         for sentence in (
             "Resolve the seat per [Roles](SKILL.md#roles) with `roles.py show`.",
             "Call it when `t3_thread_read` shows no `activeRunId`, or after `t3_thread_interrupt` and `t3_thread_wait` end the run.",
-            "compare `instanceId`, `model`, and every option per [Delegation](SKILL.md#delegation) step 3.",
+            "compare `instanceId`, `model`, and every option per [Delegation](delegation.md#spawn-and-collect) step 3.",
             "On a refusal or a mismatch, send nothing to the thread and report the tool's error text.",
         ):
             self.assertIn(sentence, self.bullet)

@@ -121,7 +121,7 @@ def brief_paragraph(runtime):
             prose.append(line.strip())
     return " ".join(prose)
 def light_behavior_rows(runtime):
-    section = runtime.split("# Light behavior", 1)[1].split("\n### ", 1)[0]
+    section = runtime.split("# Light mode reference", 1)[1].split("## Light behavior", 1)[0]
     rows = []
     for line in section.splitlines():
         stripped = line.strip()
