@@ -1,0 +1,8 @@
+- kind polish
+- `t3/added/brigade/scripts/brigade_lib/reporting.py` is a thin facade. Code lives in `_reporting` status close walk and admin.
+- `t3/added/brigade/scripts/brigade_lib/spend.py` keeps `add_arguments` and `spend_text`. Code lives in `_spend` model items render tokens and claude.
+- `t3/added/brigade/scripts/brigade_lib/watch.py` is a thin facade. Code lives in `_watch` progress runs trunk sweep and seats.
+- `t3/added/brigade/scripts/brigade_lib/wake.py` keeps `trigger_from` and `next_text`. Code lives in `_wake` snapshot hangs occasions and cues.
+- Tests live in `tests/brigade/reporting` `tests/brigade/spend` `tests/brigade/wake` and `tests/brigade/watch` with matching test counts.
+- `_watch/sweep.py` adds the `_worker_skip` import. Its fallback line for unreadable worker runs resolves again.
+- Facade docstrings state the patch rule. For bare-name calls in a private package, patch the module that reads the name.
