@@ -118,9 +118,11 @@ def commit(repo, files, day=1, second=0):
 
 
 def run(repo, *args, env=ENV, date="2026-10-09"):
+    notes = repo.parent / "stable-notes.md"
+    notes.write_text("Stable check: T3 Code 0.1.0 passed\n")
     return in_process.invoke(in_process.Invocation(
         program=repo / "scripts/release.py",
-        argv=(*args, "--date", date),
+        argv=(*args, "--notes-file", str(notes), "--date", date),
         env=env,
         cwd=repo.parent,
     ))
