@@ -41,7 +41,7 @@ def _contract(c):
 def _expected_common(root):
     try:
         r = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            ["git", "-C", str(root), "--work-tree=.", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             capture_output=True, text=True, timeout=10)
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -104,7 +104,7 @@ def _read_cap(c):
         return ("invalid", str(e) or type(e).__name__)
     if cap is None:
         return ("none", None)
-    return ("configured", cap)
+    return ("detected", cap)
 
 
 def _read_generated(c):
