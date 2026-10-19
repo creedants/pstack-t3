@@ -1,0 +1,3 @@
+- kind fix
+- `brigade affected` derives the members of a facade with `_facade_private` from every path in the table, so a member below a subpackage inside the facade's private directory gains the tests that select the facade.
+- The facade-to-member union repeats until a round adds no test to any member, so a member visited before its facade gains tests still receives them.

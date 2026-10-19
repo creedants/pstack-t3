@@ -402,22 +402,27 @@ def _index(root, layout, gen_map=None):
             else:
                 table.setdefault(key[0], set()).update(tests)
     unions = {}
-    for key in sorted(table):
-        private = posixpath.dirname(key)
-        name = posixpath.basename(private)
-        if len(name) < 2 or not name.startswith("_"):
-            continue
-        facade = posixpath.join(posixpath.dirname(private), name[1:] + ".py")
-        if facade not in unions:
+    changed = True
+    while changed:
+        changed = False
+        for key in sorted(table):
+            if key not in unions:
+                unions[key] = _facade_private(key, base, layout.import_roots)
+        for facade in sorted(unions):
+            members = unions[facade]
+            if not members:
+                continue
             own = set()
             for canon in _canonicals(facade, gen_map):
                 own.update(table.get(canon, ()))
-            unions[facade] = (_facade_private(facade, base, layout.import_roots), own)
-        members, own = unions[facade]
-        if not own or _norm(key) not in members:
-            continue
-        for canon in _canonicals(key, gen_map):
-            table.setdefault(canon, set()).update(own)
+            if not own:
+                continue
+            for member in members:
+                for canon in _canonicals(member, gen_map):
+                    have = table.setdefault(canon, set())
+                    if not own.issubset(have):
+                        have.update(own)
+                        changed = True
     closed = _close(table, edges)
     filtered = {}
     for key, value in closed.items():
