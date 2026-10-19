@@ -91,7 +91,95 @@ def _found_files(root, cands):
     return tuple(seen)
 
 
-def _resolve_import(edge, loader_path, root, roots):
+def _expandable(edge):
+    """Whether the edge's resolution may add a private package's files, judged by the last imported name."""
+    level, module, symbol = edge
+    last = symbol if symbol and symbol != "*" else (module.split(".")[-1] if module else "")
+    return not last.startswith("test_")
+
+
+def _private_of(norm):
+    """The sibling private package directory of a facade path <pkg>/<name>.py, empty when the path cannot have one."""
+    if not norm.endswith(".py"):
+        return ""
+    pkg, name = posixpath.split(norm)
+    if not pkg or pkg in (".", "/"):
+        return ""
+    stem = posixpath.splitext(name)[0]
+    if stem in ("__init__", "_") or stem.startswith("test_"):
+        return ""
+    return posixpath.join(pkg, "_" + stem)
+
+
+def _imports_of(rel, root):
+    """The import edges of the readable Python file at rel, empty when it cannot be read or parsed."""
+    full = Path(str(root)) / rel
+    try:
+        text = full.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ()
+    try:
+        return tuple(sorted(_import_targets(ast.parse(text, rel))))
+    except SyntaxError:
+        return ()
+
+
+def _resolves(edge, cands, loader_path, root, roots, depth):
+    """The candidate files that exist, plus when depth is zero and the edge may expand, the private package files of every resolved facade, and the files a resolved private __init__.py imports under its own directory when the loader is that init's facade."""
+    files = _found_files(root, cands)
+    if depth or not _expandable(edge):
+        return files
+    out = list(files)
+    for got in files:
+        out.extend(_facade_private(got, root, roots))
+        out.extend(_init_private(got, loader_path, root, roots))
+    return tuple(out)
+
+
+def _init_private(norm, loader_path, root, roots):
+    """The files under a private package directory which its __init__.py imports, when norm is that __init__.py, the package's facade file exists, and the loader is that facade, in sorted order."""
+    if not norm.endswith("/__init__.py"):
+        return ()
+    private = posixpath.dirname(norm)
+    name = posixpath.basename(private)
+    if len(name) < 2 or not name.startswith("_"):
+        return ()
+    facade = posixpath.join(posixpath.dirname(private), name[1:] + ".py")
+    if _norm(loader_path) != facade or not _found_files(root, [facade]):
+        return ()
+    return _private_edges(norm, private, root, roots)
+
+
+def _facade_private(norm, root, roots):
+    """The files under the private package directory of facade norm that norm imports directly or through that package's __init__.py, in sorted order, empty when norm has no such package."""
+    private = _private_of(norm)
+    if not private:
+        return ()
+    try:
+        inside = (Path(str(root)) / private).is_dir()
+    except OSError:
+        inside = False
+    if not inside:
+        return ()
+    prefix = private + "/"
+    found = _private_edges(norm, private, root, roots)
+    for init in _found_files(root, [private + "/__init__.py"]):
+        found |= _private_edges(init, private, root, roots)
+    return tuple(sorted(found))
+
+
+def _private_edges(loader, private, root, roots):
+    """The resolutions of loader's imports that stay under the private directory."""
+    prefix = private + "/"
+    found = set()
+    for edge in _imports_of(loader, root):
+        for got in _resolve_import(edge, loader, root, roots, 1):
+            if got.startswith(prefix):
+                found.add(got)
+    return found
+
+
+def _resolve_import(edge, loader_path, root, roots, depth=0):
     level, module, symbol = edge
     if symbol == "*":
         symbol = ""
@@ -119,7 +207,7 @@ def _resolve_import(edge, loader_path, root, roots):
             else:
                 cands.append(sym_rel + ".py")
                 cands.append(sym_rel + "/__init__.py")
-        return _found_files(root, cands)
+        return _resolves(edge, cands, loader_path, root, roots, depth)
     parent = posixpath.dirname(_norm(loader_path) if loader_path else "")
     cands = []
     rels = []
@@ -141,7 +229,7 @@ def _resolve_import(edge, loader_path, root, roots):
     for tail in rels:
         for prefix in roots:
             cands.append(prefix + "/" + tail)
-    return _found_files(root, cands)
+    return _resolves(edge, cands, loader_path, root, roots, depth)
 
 
 def _module_name(path, root):
