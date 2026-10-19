@@ -1,0 +1,2 @@
+- kind polish
+- `t3/added/pstack-runtime/modes.md` replaces its Never cut list with a link to `SKILL.md#never-cut` and `t3/added/pstack-runtime/light.md` replaces its Announcement paragraph with a link to `SKILL.md#announcement`.
