@@ -1,6 +1,13 @@
 """Runner tests facade. Package holds mixins and ids stay stable."""
 import os
+import sys
 import unittest
+from pathlib import Path
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import tests.runner_tests
 from tests.runner_tests.support import (
     LINUX,
     NEEDS_LINUX,
