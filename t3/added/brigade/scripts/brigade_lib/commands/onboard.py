@@ -1,11 +1,11 @@
 import argparse
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-from brigade_lib import generated, seam
+from brigade_lib import seam
+from brigade_lib.commands.onboard_contract import _read_cap, _read_contract_checks, _read_generated, _read_landing
 from brigade_lib.commands.setup import validate_settings
 from brigade_lib.compact import effective_cap, effective_provider
 from brigade_lib.leases import require_workers
@@ -186,66 +186,6 @@ def _read_autofire(c):
  if v in(None,""):return("configured","normal")
  if v not in AUTOFIRE:return("invalid",0)
  return("configured",v)
-def _contract(c):
- try:return c._contract
- except:pass
- try:r=seam.land_result(str(c.root),"status","--json")
- except Exception as e:c._contract=("invalid",str(e)or 0);return c._contract
- if r.returncode!=0:
-  e=(r.stderr or r.stdout).strip()or 0
-  c._contract=("missing",e)if"has no landing contract"in(r.stderr or"")else("invalid",e)
-  return c._contract
- try:p=json.loads(r.stdout)
- except ValueError:c._contract=("invalid",0);return c._contract
- if not isinstance(p,dict):c._contract=("invalid",0);return c._contract
- c._contract=("ok",p);return c._contract
-def _db_rows(c):
- root=Path(c.root).resolve()
- base=Path(os.getenv("XDG_STATE_HOME")or str(Path.home()/".local/state"))/"pstack-t3/landing"
- for q in base.glob("*/land.db"):
-  try:
-   s=sqlite3.connect(q)
-   try:rows=dict(s.execute("SELECT*FROM contract"))
-   finally:s.close()
-   try:common=Path(json.loads(rows.get("commonDir"))).resolve()
-   except Exception:continue
-   if common==root or common.parent==root:return rows
-  except Exception:continue
- return None
-def _read_landing(c):
- s,d=_contract(c)
- if s=="invalid":return("invalid",d)
- if s=="missing":return("missing","")
- m=d.get("mode")
- if not isinstance(m,str)or not m:return("invalid",0)
- return("configured","lands by "+m)
-def _read_cap(c):
- s,d=_contract(c)
- if s=="invalid":return("invalid",d)
- if s=="missing":return("none",None)
- return("none",None)
-def _read_generated(c):
- s,d=_contract(c)
- if s=="invalid":return("invalid",d)
- if s=="missing":return("none",[])
- m=generated.read(str(c.root))
- if not m.rules:return("none",[])
- f=sorted("/".join(r.source.segments)+" -> "+"/".join(r.target.segments)+" ("+r.kind.value+")"for r in m.rules)
- return("detected",f)
-def _read_contract_checks(c):
- s,d=_contract(c)
- if s=="invalid":return("invalid",d)
- if s=="missing":return("unknown",0)
- rows=_db_rows(c)
- if not rows or"checks"not in rows:return("unknown",0)
- try:checks=json.loads(rows["checks"])
- except ValueError:return("invalid",0)
- if not isinstance(checks,list):return("invalid",0)
- if not checks:return("none",[])
- for i in checks:
-  if not isinstance(i,str)or not i:return("invalid",0)
- return("detected",checks)
-
 def _read_roles(ctx):
     if ctx.roles_error:
         return ("invalid", ctx.roles_error)

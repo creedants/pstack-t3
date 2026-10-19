@@ -155,15 +155,25 @@ class OnboardDetectTest(BrigadeTest):
         self.git_project()
         self.open()
         meta_path = self.at / "restaurant.json"
-        for key, bad in (("workers", 0), ("reporting", "bad"), ("autofire", "bad")):
+        for key, bad in (("workers", 0), ("workers", 1.5), ("workers", True), ("reporting", "bad"), ("autofire", "bad")):
             meta = json.loads(meta_path.read_text())
             meta[key] = bad
             meta_path.write_text(json.dumps(meta))
             found = self.detect()
-            self.assertEqual(found["facts"][key]["state"], "invalid", key)
+            self.assertEqual(found["facts"][key]["state"], "invalid", (key, bad))
             meta = json.loads(meta_path.read_text())
             meta.pop(key, None)
             meta_path.write_text(json.dumps(meta))
+
+    def test_repository_cap_reports_recorded_cap(self):
+        # Processes: git and land build the fixture project and its cap, then a second project with no cap.
+        self.git_project()
+        self.init_landing("--cap", "3")
+        self.landing_env()
+        self.open()
+        found = self.detect()
+        self.assertEqual(found["facts"]["repository_cap"],
+                         {"state": "configured", "value": 3, "fix": None})
 
     def test_malformed_status_gives_invalid_landing_and_generated(self):
         # Processes: git and land build the fixture project and its contract. Fake land status isolates the malformed read.
