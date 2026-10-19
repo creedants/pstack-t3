@@ -1,0 +1,8 @@
+- kind feature
+- `land.py lease widen` adds paths to one lease in one store transaction and keeps its id and holder
+- a widen runs the claim overlap, reservation, cap, and share checks over the whole widened path set, with the widened lease and the same-holder leases it folds left out of the in-flight count
+- a widen refuses a submitted or released lease and refuses a clash or reservation, and a refusal rolls back every row it would write
+- a widen folds another live lease of the same holder into the widened lease by adding its paths and releasing it in the same transaction, so the next `dish --add-paths` reconciles an interrupted claim-and-swap
+- an expired lease is widened by re-admitting it on the merged paths with a fresh ttl
+- `dish --add-paths` calls `land.py lease widen` and records the same lease id, so a live item never claims a second lease and swaps
+- `watch` keeps renewing the recorded lease and does not fold another lease into it

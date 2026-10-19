@@ -91,7 +91,7 @@ def arm_reservations(store, db, leases, cap):
         store.log(db, "reservation", row["id"], "armed")
 
 
-def admission(store, db, holder, wanted, renewing=None):
+def admission(store, db, holder, wanted, renewing=None, excluding=()):
     """Arm what can arm, then test a lease on these paths for holder.
 
     Returns the other holders' overlapping leases, a refusal, and the standing reservations the lease takes from.
@@ -99,7 +99,9 @@ def admission(store, db, holder, wanted, renewing=None):
     lease still commits when refused, so arming is never lost to a refused claim. lease check runs it in
     Store.trial, which rolls back, so a check arms no reservation and adds no log row. renewing is an expired
     lease id. A reservation that already lists it is taken again and left out of the count, so that renewal
-    fits a full cap.
+    fits a full cap. excluding names lease ids left out of the cap and share count only. Arming and the clash
+    and reservation checks still see every lease in flight, because the caller releases the excluded leases in
+    the same transaction that writes this one.
     """
     leases, cap = in_flight(db), store.contract.get("cap")
     arm_reservations(store, db, leases, cap)
@@ -113,13 +115,14 @@ def admission(store, db, holder, wanted, renewing=None):
     taken = [row["id"] for row in reserved]
     if renewing is not None:
         taken += [row["id"] for row in standing(db) if row["id"] not in taken and renewing in taken_ids(row["taken"])]
+    counting = [row for row in leases if row["id"] not in excluding]
     others = [row for row in standing(db) if counts(row, leases) and row["id"] not in taken]
-    count = len(leases) + len(others)
+    count = len(counting) + len(others)
     if cap and count >= cap:
-        names = ([holders_of(leases)] if leases else []) + [f"S{row['id']} for {row['prefix']}" for row in others]
+        names = ([holders_of(counting)] if counting else []) + [f"S{row['id']} for {row['prefix']}" for row in others]
         return [], f"repository at its cap: {count} of {cap} changes in flight ({', '.join(names)})", []
     for share in db.execute("SELECT * FROM share ORDER BY prefix"):
-        used = under(share["prefix"], leases, others)
+        used = under(share["prefix"], counting, others)
         if holder.startswith(share["prefix"]) and used >= share["count"]:
             return [], f"{share['prefix']} is at its share: {used} of {share['count']}", []
     return [], "", taken
@@ -241,6 +244,48 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
     if refusal:
         raise seam.LandError(refusal)
     return f"L{number} renewed"
+
+
+def lease_widen(store, number, paths, ttl_hours=6, owner=None):
+    """Add paths to one lease in place. A live lease keeps its expiry and an expired one is admitted again.
+
+    The holder's other live active leases are orphans. Their paths join this lease and they are released in the
+    same transaction, so a claim-and-swap that stopped before releasing its old lease leaves one live lease.
+    """
+    wanted = wanted_paths(paths)
+    with store.tx() as db:
+        row = db.execute("SELECT * FROM lease WHERE id = ?", (number,)).fetchone()
+        if not row:
+            raise seam.LandError(f"no L{number}")
+        check_owner(db, row["holder"], owner)
+        if row["state"] == "submitted":
+            raise seam.LandError(f"L{number} is submitted; the queue holds it")
+        if row["state"] == "released":
+            raise seam.LandError(f"L{number} is released")
+        expired = row["expires"] <= seam.stamp()
+        orphans = [lease for lease in in_flight(db)
+                   if lease["holder"] == row["holder"] and lease["state"] == "active" and lease["id"] != number]
+        merged = sorted({*row["paths"].split("\n"), *(path for lease in orphans for path in lease["paths"].split("\n")), *wanted})
+        excluding = {number, *(lease["id"] for lease in orphans)}
+        clash, refusal, taken = admission(store, db, row["holder"], merged, excluding=excluding)
+        if clash:
+            raise seam.LandError("paths overlap " + "; ".join(held_on(held) for held in clash))
+        if refusal:
+            raise seam.LandError(refusal)
+        added = [path for path in merged if path not in row["paths"].split("\n")]
+        db.execute("UPDATE lease SET paths = ? WHERE id = ?", ("\n".join(merged), number))
+        if expired:
+            db.execute("UPDATE lease SET expires = ? WHERE id = ?",
+                       (seam.stamp(seam.now() + timedelta(hours=ttl_hours)), number))
+        for orphan in orphans:
+            release_lease(store, db, orphan["id"], f"folded into L{number}")
+        take(store, db, taken, number, merged)
+        note = ", ".join(added)
+        if orphans:
+            folded = ", ".join(f"L{orphan['id']}" for orphan in orphans)
+            note = f"{note}, folded {folded}" if note else f"folded {folded}"
+        store.log(db, "lease", number, "widened", note)
+    return f"L{number} widened"
 
 
 def lease_reserve(store, prefix, paths, ruling, ttl_hours, owner):

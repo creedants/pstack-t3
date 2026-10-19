@@ -106,9 +106,9 @@ raise a holder prefix's generation floor; it never lowers
 land.py [flags] lease <action>
 ```
 
-claim, renew, release, or list path leases
+claim, renew, widen, release, or list path leases
 
-`<action>` is one of `claim`, `renew`, `release`, `list`, `check`, `reserve`, `unreserve`.
+`<action>` is one of `claim`, `renew`, `widen`, `release`, `list`, `check`, `reserve`, `unreserve`.
 
 ## land.py lease claim
 
@@ -134,6 +134,21 @@ land.py [flags] lease renew [--ttl-hours TTL_HOURS] [--if-live] [--owner OWNER] 
 | `id` | yes |  |  |  |
 | `--ttl-hours TTL_HOURS` |  |  | `6` |  |
 | `--if-live` |  |  |  | refuse when the lease has expired instead of admitting it again |
+| `--owner OWNER` |  |  |  | \<holder prefix>@\<generation> of the coordinator writing; refused below that prefix's floor |
+
+## land.py lease widen
+
+```text
+land.py [flags] lease widen --paths PATHS [--ttl-hours TTL_HOURS] [--owner OWNER] id
+```
+
+add paths to a live lease in place; its id and holder stay, and an expired lease is admitted again
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `id` | yes |  |  |  |
+| `--paths PATHS` | yes |  |  | comma-separated files or directories to add |
+| `--ttl-hours TTL_HOURS` |  |  | `6` |  |
 | `--owner OWNER` |  |  |  | \<holder prefix>@\<generation> of the coordinator writing; refused below that prefix's floor |
 
 ## land.py lease release
