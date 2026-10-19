@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -68,6 +69,45 @@ def _read_intake(ctx):
     if not isinstance(value, list):
         return ("invalid", "intake is not a list")
     return ("configured", value) if value else ("missing", [])
+
+
+def _user_roles_path():
+    value = os.environ.get("XDG_CONFIG_HOME")
+    if value and os.path.isabs(value):
+        return Path(value) / "pstack-t3" / "roles.json"
+    return Path.home() / ".config" / "pstack-t3" / "roles.json"
+
+
+def _project_roles_path(root):
+    current = Path(root)
+    try:
+        current = current.resolve()
+    except (OSError, ValueError):
+        pass
+    for directory in [current, *current.parents]:
+        try:
+            if (directory / ".pstack" / "t3-roles.json").is_file():
+                return directory / ".pstack" / "t3-roles.json"
+            if (directory / ".git").exists():
+                return directory / ".pstack" / "t3-roles.json"
+        except (OSError, ValueError):
+            continue
+    return current / ".pstack" / "t3-roles.json"
+
+
+def _read_models(ctx):
+    try:
+        user_file = _user_roles_path()
+        user_exists = user_file.is_file()
+    except (OSError, ValueError):
+        user_exists = False
+    try:
+        project_exists = _project_roles_path(ctx.root).is_file()
+    except (OSError, ValueError):
+        project_exists = False
+    if not user_exists and not project_exists:
+        return ("missing", "")
+    return ("configured", "present")
 
 
 def _read_file(root, *parts):
@@ -290,6 +330,7 @@ SETTINGS = (
     ("reporting", lambda ctx: ("configured", reporting_of(_meta(ctx))), "set --reporting milestones", _text),
     ("workers", lambda ctx: ("configured", worker_cap(_meta(ctx))), "open --workers 2 or set --workers 2", _text),
     ("mode", _read_mode, "open --mode light or set --mode light", _text),
+    ("models", _read_models, "run setup-pstack", _text),
     ("intake", _read_intake, "set --intake <sources>", _text),
     ("autofire", lambda ctx: ("configured", autofire_of(_meta(ctx))), "set --autofire normal", _text),
     ("low_reserve", lambda ctx: ("configured", low_reserve_of(_meta(ctx))), "set --low-reserve 1", _text),
@@ -380,7 +421,12 @@ def _roles_show(script, root):
 
 
 def _lines(facts):
-    return [f"{name}: {show(facts[name]['value'])}" for name, _, _, show in SETTINGS]
+    lines = []
+    for name, _, _, show in SETTINGS:
+        rendered = str(show(facts[name]["value"]))
+        flat = rendered.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+        lines.append(f"{name}: {flat}")
+    return lines
 
 
 def _parse(text):

@@ -14,6 +14,9 @@ class OnboardDetectTest(BrigadeTest):
         self.init_landing()
         self.landing_env()
         self.open()
+        roles_dir = self.project / ".pstack"
+        roles_dir.mkdir(exist_ok=True)
+        (roles_dir / "t3-roles.json").write_text(json.dumps({"version": 1, "budget": "default", "roles": {}}))
         self.brigade("set", "--mode", "light", "--intake", "github", "--build-command", "make build",
                      "--check-command", "make test", "--change-note-dir", "changes")
         before = self.store_files()
@@ -21,6 +24,7 @@ class OnboardDetectTest(BrigadeTest):
         self.assertEqual(found["missing"], [])
         self.assertEqual(found["facts"]["restaurant"]["state"], "configured")
         self.assertEqual(found["facts"]["landing_mode"]["state"], "configured")
+        self.assertEqual(found["facts"]["models"], {"state": "configured", "value": "present", "fix": "run setup-pstack"})
         self.assertEqual(self.store_files(), before)
 
     def test_fresh_repo_lists_only_the_missing_settings(self):
@@ -36,7 +40,18 @@ class OnboardDetectTest(BrigadeTest):
         self.assertEqual(found["facts"]["generated"]["state"], "none")
         self.assertEqual(found["facts"]["trunk"], {"state": "detected", "value": "main", "fix": None})
         self.assertEqual(found["facts"]["contract_checks"]["state"], "unknown")
-        self.assertEqual(found["missing"], ["restaurant", "mode", "intake", "change_note_dir", "landing_mode"])
+        self.assertEqual(found["facts"]["models"], {"state": "missing", "value": "", "fix": "run setup-pstack"})
+        self.assertEqual(found["missing"], ["restaurant", "mode", "models", "intake", "change_note_dir", "landing_mode"])
+
+    def test_models_configured_when_project_roles_file_exists(self):
+        # Processes: git builds the fixture repository. No land contract and no store exist.
+        self.git_project()
+        roles_dir = self.project / ".pstack"
+        roles_dir.mkdir(exist_ok=True)
+        (roles_dir / "t3-roles.json").write_text(json.dumps({"version": 1, "budget": "default", "roles": {}}))
+        found = self.detect()
+        self.assertEqual(found["facts"]["models"]["state"], "configured")
+        self.assertNotIn("models", found["missing"])
 
     def test_generated_paths_without_a_map_read_as_invalid(self):
         # Processes: git and land build the fixture project and a contract with generated paths but no map.
@@ -73,3 +88,16 @@ class OnboardSummaryTest(BrigadeTest):
         stamp = (self.at / "onboarding.txt").stat().st_mtime_ns
         self.assertEqual(self.summary(), "no change to onboarding.txt")
         self.assertEqual((self.at / "onboarding.txt").stat().st_mtime_ns, stamp)
+
+    def test_multiline_value_stays_one_line_per_fact(self):
+        self.open()
+        self.brigade("set", "--build-command", "make build\nsecond line")
+        found = json.loads(self.brigade("onboard", "--project-root", str(self.project), "--name", "Perf", "--detect"))
+        self.assertIn("\n", found["facts"]["build_command"]["value"])
+        self.summary()
+        lines = (self.at / "onboarding.txt").read_text().splitlines()
+        self.assertEqual(len(lines), len(found["facts"]))
+        matching = [line for line in lines if line.startswith("build_command: ")]
+        self.assertEqual(len(matching), 1)
+        self.assertIn("make build second line", matching[0])
+        self.assertEqual(self.summary(), "no change to onboarding.txt")

@@ -24,22 +24,26 @@ Opening a restaurant is the user's request for top-level threads: the head chef,
 
 Onboard detects what the repository and the store already configure. It asks only what is missing. Run it before Open a restaurant step 3, and rerun it after any setting change.
 
-1. Run `python3 <skills>/brigade/scripts/brigade.py onboard --project-root <root> --name "<restaurant>" --detect`. It prints facts and missing as JSON and writes nothing. Each fact names its state and its fix. Missing lists only the settings to ask about, in table order.
+1. Run `python3 <skills>/brigade/scripts/brigade.py onboard --project-root <root> --name "<restaurant>" --detect`. It prints facts and missing as JSON and writes nothing. Each fact names its state and its fix. Missing lists the settings to ask about plus restaurant, in table order.
 2. Show one page that walks the flow below, with each question pinned to the step it governs. When `html_preview` and `html_render` are unavailable, print the same page as plain text.
 3. Ask the missing settings with the host question tool, in at most two rounds. When the tool is unavailable, print the questions as a plain text list and read the answers as a reply. Record the answers with `open` and `set`.
 4. Run the same command with `--summary` in place of `--detect`. It writes `onboarding.txt` in the restaurant directory, one `name: value` line per fact. A rerun prints only the change lines, as `name: old -> new`, plus `added` and `removed` lines. Identical bytes print `no change` and leave the file untouched. Before `open` it prints the lines it would write, then `not saved`, and writes nothing.
 
 ### The flow in words
 
-Intake collects requests from the sources the restaurant owns. The intake question decides which sources this restaurant reads. Tickets wait on the rail. Grouping reads waiting tickets together before firing. Fire claims a lease, checks the worker cap, and writes a brief. The workers question caps parallel dishes. The mode question picks the playbook depth for the brief. The worker runs one playbook in its own worktree thread. Review checks the report and diff, then records a verdict from another model family. The landing queue holds the lease, runs the required checks, and merges or pushes the change. The landing question picks the queue mode. The generated map, the build command, the check command, and the change note directory decide how the queue verifies and records the change. Merge puts the reviewed change on trunk. The required checks and PR ability readings say whether the repository can do that today. Report tells the user what landed. The reporting question picks how often.
+Intake collects requests from the sources the restaurant owns. The intake question decides which sources this restaurant reads. Tickets wait on the rail. The head chef reads waiting tickets together before firing. Fire records the ticket ids the caller passes unchanged. Fire claims a lease and checks the worker cap. The brief command writes a brief. The workers question caps parallel dishes. The mode question picks the playbook depth for the brief. The worker runs one playbook in its own worktree thread. Review checks the report and diff, then records a verdict from another model family, or the same family with --same-family. The landing queue holds the lease, runs the required checks, and merges or pushes the change. The landing question picks the queue mode. The queue reads only the generated path list. The map guides brigade claims and affected paths. The build and check commands guide edits verify and affected reports. Only the change note directory names a queue path. Merge puts the reviewed change on trunk. The required checks reading confirms only that a branch protection API call succeeds. The PR ability reading confirms only gh authentication against a remote. Report tells the user what landed. The reporting question picks how often.
 
 ### The questions
+
+Which restaurant to open. This names the store directory. Record it with open. Before open creates it the summary prints the lines and a not saved line and writes nothing.
 
 Who lands work. Options are `merge`, `human`, `push`, and `local`. Recommend `merge` for a repository with a remote. Record it with `land.py init --mode` or `land.py mode`. When the repository already has a landing contract, its mode applies and onboard reports it as configured.
 
 How often the coordinator replies. Options are `milestones`, `every-turn`, and `digest`. Recommend `milestones`. Record it with `open --reporting` or `set --reporting`. A missing key reads as `milestones` and is never missing.
 
 Which mode the workers use. Options are `light` and `full`. Recommend `light`. Record it with `open --mode` or `set --mode`. A missing key leaves the choice to the roles files, so onboard lists it as missing until it is recorded.
+
+Which models the workers use. This is missing when neither the user roles file nor the project roles file exists. Record it with setup-pstack.
 
 How many dishes run at once. This is a whole number of 1 or more. Recommend 2. Record it with `open --workers` or `set --workers`. A missing key reads as 2 and is never missing.
 
@@ -49,11 +53,11 @@ Which commands verify edits. Onboard reads `package.json` scripts, `Makefile` ta
 
 Where change notes go. This is a repository relative directory such as `changes`. Recommend `changes`. Record it with `set --change-note-dir`. An unset key leases no fragment and is missing until it is recorded.
 
-The rest need no question. Onboard shows their effective values in the summary and never lists them as missing. They are autofire `normal`, low reserve 1, round budget 3, the liveness default for the reporting level, context cap 300000, and provider `claude`. Change any of them later with the matching `set` flag.
+The rest need no question. Onboard shows their effective values in the summary and never lists them as missing. They are autofire `normal`, low reserve 1, round budget 3, the liveness default for the reporting level, context cap 300000, and provider `claude`. Change any of them later with the matching `set` flag. The file size limit question waits until the size ticket lands.
 
 ### The two rounds
 
-Round one asks landing mode, reporting, and mode. Round two asks workers, intake, the two verify commands, and the change note directory, for whatever is still missing. Two rounds are the maximum. Never re-ask a setting the store already records. When the host question tool is unavailable, print both rounds as one plain text list.
+Round one asks landing mode, models, and mode. Round two asks intake, the two verify commands, and the change note directory, for whatever is still missing. Two rounds are the maximum. Never re-ask a setting the store already records. When the host question tool is unavailable, print both rounds as one plain text list.
 
 ### The summary file
 
