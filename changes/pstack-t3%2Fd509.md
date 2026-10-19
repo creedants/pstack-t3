@@ -1,7 +1,7 @@
 - kind fix
 - host notes define the serverVersion read and name nightly 0.1.1-nightly.20261019.3360 beside stable 0.1.0 fallbacks
-- isolation and older hosts reject foreign worktree bindings with manual fallback and never share a checkout
+- isolation and older hosts return invalid_request for foreign bindings on nightly and use manual fallback with preflight on stable and never share a checkout.
 - watching prefers pullRequests array with unknown null state and keeps the final list check with stable explicit threadId fallback
-- failures recovery separates nightly held queue release and cleanup ownership from stable resume and manual cleanup
+- failures recovery separates nightly held queue release and cleanup ownership from stable resume and owned-worker cleanup.
 - host root setup runs only with a worktree path on nightly and needs inspection on stable
 - setup points to host notes for stable versus nightly behavior

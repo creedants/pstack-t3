@@ -4,7 +4,7 @@ Read this file when a thread settles, snoozes, or runs on a host older than the 
 
 ## Host version
 
-- Read `t3_environment_read` and inspect `serverVersion` before you rely on a nightly rule in this file. When the read is absent or ambiguous, use the stable 0.1.0 behavior. On T3 Code 0.1.0, use the stable fallback beside each nightly rule. On T3 Code 0.1.1-nightly.20261019.3360 or later, use the nightly rule beside it.
+- Read `t3_environment_read` and inspect `serverVersion` before you rely on a nightly rule in this file. When the read is absent or ambiguous, use the stable 0.1.0 behavior. On T3 Code 0.1.0, use the stable fallback beside each nightly rule. On T3 Code 0.1.1-nightly.20261019.3360 or later, use the nightly rule beside it. On any other version, use the stable 0.1.0 behavior. This covers pre-0.1.0 builds and builds between 0.1.0 and the named nightly.
 
 ## Settle on turn end
 
@@ -14,7 +14,7 @@ If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (n
 
 ## Older hosts
 
-- An older host, or a child that needs a chosen branch or a different base, uses a worktree the parent creates before delegating with `git worktree add <path> -b <branch> <base>`. Omit `isolation`. The child's default working directory stays in the parent's checkout. The brief says "Work only in `<absolute worktree path>`. Use absolute paths under it for every read and edit, and prefix every command with `cd <absolute worktree path> &&`. Report the branch and head SHA." Check that the diff landed there and remove that worktree after integrating. On T3 Code 0.1.1-nightly.20261019.3360 or later, `delegate_task` with `isolation` `worktree` returns `invalid_request` when the parent checkout is outside the project repository. Bind the project to the actual repository before you use automatic isolation. When the checkout is foreign, use the manual worktree in this section. Never use shared concurrent writing as a fallback. Two writers never share a checkout on any host. On T3 Code 0.1.0, run the same binding preflight and use the manual worktree in this section. A long-lived independent owner uses `t3_thread_launch` with a worktree strategy only where [Top-level threads](SKILL.md#top-level-threads) allows it.
+- An older host, or a child that needs a chosen branch or a different base, uses a worktree the parent creates before delegating with `git worktree add <path> -b <branch> <base>`. Omit `isolation`. The child's default working directory stays in the parent's checkout. The brief says "Work only in `<absolute worktree path>`. Use absolute paths under it for every read and edit, and prefix every command with `cd <absolute worktree path> &&`. Report the branch and head SHA." Check that the diff landed there and remove that worktree after integrating. On T3 Code 0.1.1-nightly.20261019.3360 or later, `delegate_task` with `isolation` `worktree` returns `invalid_request` when the parent thread runs in its own worktree and the parent commit does not resolve in the project repository. Bind the project to the actual repository before you use automatic isolation. When the checkout is foreign, use the manual worktree in this section. Never use shared concurrent writing as a fallback. Two writers never share a checkout on any host. On T3 Code 0.1.0, run the same binding preflight and use the manual worktree in this section. A long-lived independent owner uses `t3_thread_launch` with a worktree strategy only where [Top-level threads](SKILL.md#top-level-threads) allows it.
 
 ### Pre-0.1.0 nightlies
 
