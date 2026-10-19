@@ -1,0 +1,3 @@
+- kind polish
+- `t3/added/landing/scripts/landing_lib/__init__.py` lists `generated_path` under `foundation`, `AUTHOR_POLICIES`, `author_policy_note`, and `pr_item_line_note` under `store`, and the five `genmap` helpers under `genmap` in `AREAS`
+- `tests/test_landing_areas.py` checks every `AREAS` name resolves on its area module
