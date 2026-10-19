@@ -482,26 +482,27 @@ def model_slot(name: str) -> int:
 
 
 def palette_of(legend) -> dict:
-    """Distinct color slots in legend order, with OTHER_MODEL sharing OTHER_SLOT. Stable for one legend."""
+    """Distinct color slots in sorted name order, with OTHER_MODEL sharing OTHER_SLOT. Stable for one model set."""
     palette, used = {}, {MIXED_SLOT, OTHER_SLOT}
-    for name, _ in legend:
+    available = [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]
+    for name in sorted(name for name, _ in legend):
         if name == OTHER_MODEL:
             palette[name] = OTHER_SLOT
         elif not name:
             palette[name] = MIXED_SLOT
         elif name not in palette:
             wanted = model_slot(name)
-            if wanted not in used:
+            if wanted not in used and wanted in available:
                 palette[name] = wanted
                 used.add(wanted)
             else:
-                slot = 1
-                while slot in used:
-                    slot += 1
-                    if slot in (MIXED_SLOT, OTHER_SLOT):
-                        slot += 1
-                palette[name] = slot
-                used.add(slot)
+                free = [slot for slot in available if slot not in used]
+                if free:
+                    palette[name] = free[0]
+                    used.add(free[0])
+                else:
+                    wrapped = available[checksum(name) % len(available)]
+                    palette[name] = wrapped
     return palette
 
 
