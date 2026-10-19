@@ -61,7 +61,7 @@ Round one asks restaurant, landing mode, models, and mode. Run open when restaur
 
 ### The summary file
 
-`onboarding.txt` holds one `name: value` line per fact, in table order. Rerun `--summary` after any `open`, `set`, `land.py init`, `land.py mode`, or `roles.py write` change. The rerun prints `added`, `removed`, and `old -> new` lines for exactly what changed. Treat that output as the checklist for the reply. When the rerun prints `no change to onboarding.txt`, say so and move on.
+`onboarding.txt` holds one `name: value` line per fact, in table order. Rerun `--summary` after any `open`, `set`, `land.py init`, `land.py mode`, or `roles.py write` change. The rerun prints `added`, `removed`, and `old -> new` lines for exactly what changed. Treat that output as the checklist for the reply. When the rerun prints `no change to onboarding.txt` with identical bytes, say so and move on.
 
 ## First service
 
