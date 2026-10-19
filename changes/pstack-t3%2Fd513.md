@@ -1,0 +1,5 @@
+- kind polish
+- nightly rearm starts from ended watch state and reads current PR state
+- fork keeps links with no watch on nightly and stops watches on stable fork
+- stale tabId fails and recovers with a new tab from preview status
+- masked field reads filled hidden never asserted with synthetic credentials on stable
