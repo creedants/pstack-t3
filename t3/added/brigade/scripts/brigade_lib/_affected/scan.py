@@ -125,7 +125,7 @@ def _imports_of(rel, root):
 
 
 def _resolves(edge, cands, loader_path, root, roots, depth):
-    """The candidate files that exist, plus when depth is zero and the edge may expand, the private package files of every resolved facade, and the files a resolved private __init__.py imports under its own directory when the loader is that init's facade."""
+    """The candidate files that exist, plus when depth is zero and the edge may expand, the files under each resolved facade's private package which the facade or that package's __init__.py imports, and the files a resolved private __init__.py imports under its own directory when the loader is that init's facade."""
     files = _found_files(root, cands)
     if depth or not _expandable(edge):
         return files
@@ -137,7 +137,7 @@ def _resolves(edge, cands, loader_path, root, roots, depth):
 
 
 def _init_private(norm, loader_path, root, roots):
-    """The files under a private package directory which its __init__.py imports, when norm is that __init__.py, the package's facade file exists, and the loader is that facade, in sorted order."""
+    """The files under a private package directory which its __init__.py imports, when norm is that __init__.py, the package's facade file exists, and the loader is that facade."""
     if not norm.endswith("/__init__.py"):
         return ()
     private = posixpath.dirname(norm)
