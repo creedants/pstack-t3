@@ -1,0 +1,11 @@
+- kind polish
+- tests/brigade/support.py becomes a thin facade over tests/brigade/_support/
+- tests/brigade/test_admin.py becomes a thin facade over tests/brigade/executive_admin/
+- tests/brigade/test_briefs.py becomes a thin facade over tests/brigade/worker_briefs/
+- tests/brigade/test_context_cap.py becomes a thin facade over tests/brigade/context_cap/
+- tests/brigade/test_fire_layout.py becomes a thin facade over tests/brigade/fire_layout/
+- tests/brigade/test_handoff.py becomes a thin facade over tests/brigade/handoff/
+- tests/brigade/test_reports.py becomes a thin facade over tests/brigade/report_follow_ups/
+- tests/brigade/test_startable.py becomes a thin facade over tests/brigade/startable_tickets/
+- tests/brigade/test_launch.py becomes a thin facade over tests/brigade/seat_launch/
+- every split file stays under 5000 tokens and every test id stays stable
