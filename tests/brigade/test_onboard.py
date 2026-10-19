@@ -166,7 +166,7 @@ class OnboardDetectTest(BrigadeTest):
             meta_path.write_text(json.dumps(meta))
 
     def test_repository_cap_reports_recorded_cap(self):
-        # Processes: git and land build the fixture project and its cap, then a second project with no cap.
+        # Processes: git and land build the fixture project and its cap.
         self.git_project()
         self.init_landing("--cap", "3")
         self.landing_env()
