@@ -1,3 +1,4 @@
 - kind polish
-- every added or changed file is under 5000 tokens (bytes//4) at this head
+- every added or changed file except `tests/test_activity.py` is under 5000 tokens (bytes//4) at this head
 - `tests/brigade/test_loader.py` checks the expected set is non-empty instead of asserting 30 files
+- `tests/test_activity.py` asserts one `THREAD_ROLES = ` line in `brigade_lib/store.py` and `brigade_lib/_store/*.py` matches `ROLES`

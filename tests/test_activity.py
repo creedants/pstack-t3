@@ -4496,9 +4496,10 @@ class LedgerTest(OutputCase):
 
     def test_roles_match_the_store_role_tuple_or_display_order_drifs(self):
         import ast
-        text = (SCRIPT.parent / "brigade_lib" / "store.py").read_text()
-        line = next(line for line in text.split("\n") if line.startswith("THREAD_ROLES = "))
-        store_roles = ast.literal_eval(line.split("=", 1)[1].strip())
+        b = SCRIPT.parent / "brigade_lib"
+        found = [l for p in [b / "store.py", *(b / "_store").glob("*.py")] for l in p.read_text().split("\n") if l.startswith("THREAD_ROLES = ")]
+        self.assertEqual(len(found), 1)
+        store_roles = ast.literal_eval(found[0].split("=", 1)[1].strip())
         self.assertEqual(MOD["ROLES"], store_roles)
         self.assertEqual(MOD["ROLES"], ("worker", "fix worker", "reviewer", "panel member", "code delegate", "claims check", "architect runner"))
 
