@@ -114,18 +114,18 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes()
         text_bytes = fixture.stdout_bytes("--text")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (15959, 428))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (15970, 428))
         self.assertLessEqual(len(html_bytes), 16000)
         self.assertLessEqual(len(text_bytes), 16000)
         html, text = self.document(), self.out("--text")
         self.assertEqual(data_of(html)["N"], [
-            "420 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "410 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
         self.assertEqual(summary, "attempts 1-499: 499 workers, all open")
         # The byte cut drops the oldest attempt lines, so the folded payload keeps the newest of its own lines.
-        self.assertEqual(payload, [phrase(number) for number in range(421, 500)])
+        self.assertEqual(payload, [phrase(number) for number in range(411, 500)])
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
 
@@ -141,16 +141,16 @@ class LedgerTest(OutputCase):
 
         html_bytes = fixture.stdout_bytes("--max-bytes", "20000")
         text_bytes = fixture.stdout_bytes("--text", "--max-bytes", "20000")
-        self.assertEqual((len(html_bytes), len(text_bytes)), (19955, 428))
+        self.assertEqual((len(html_bytes), len(text_bytes)), (19964, 428))
         self.assertLessEqual(len(html_bytes), 20000)
         self.assertLessEqual(len(text_bytes), 20000)
         html, text = self.document("--max-bytes", "20000"), self.out("--text", "--max-bytes", "20000")
         self.assertEqual(data_of(html)["N"], [
-            "335 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
+            "325 attempt lines are not shown, because the page is at its size limit. Use a larger --max-bytes to see more.",
         ])
         self.assertEqual(html_current(html), [phrase(500)])
         summary, payload = html_fold(html)[0]
-        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(336, 500)]))
+        self.assertEqual((summary, payload), ("attempts 1-499: 499 workers, all open", [phrase(number) for number in range(326, 500)]))
         self.assertEqual(text_summary(text), ["attempts 1-499: 499 workers, all open"])
         self.assertEqual(text_current(text), [phrase(500)])
     def test_three_thousand_sparse_attempts_fit_the_byte_budget_with_the_true_count_in_both_forms(self):
