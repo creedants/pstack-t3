@@ -245,7 +245,7 @@ def _test_edges(targets, rel, base, roots):
                         label = module
                     else:
                         label = symbol
-                    return frozenset(), "unresolved import " + label + " in " + rel
+                    return frozenset(), "unproven import " + label + " in " + rel
         if shaped and len(resolved) != 1 and importer_test:
             if module and symbol and symbol != "*":
                 label = module + "." + symbol
