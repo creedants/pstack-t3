@@ -2,6 +2,10 @@
 
 Read this file when a thread settles, snoozes, or runs on a host older than the versions this file names, or before you install or locate skills.
 
+## Host version
+
+- Read `t3_environment_read` and inspect `serverVersion` before you rely on a nightly rule in this file. When the read is absent or ambiguous, use the stable 0.1.0 behavior. On T3 Code 0.1.0, use the stable fallback beside each nightly rule. On T3 Code 0.1.1-nightly.20261019.3360 or later, use the nightly rule beside it. Pre-0.1.0 nightlies keep their gates below. For other 0.1.1-nightly builds, compare `serverVersion` with each rule's named nightly and use that rule's stable fallback below its gate.
+
 ## Settle on turn end
 
 - T3 runs the first effective project action with `runOnSettle: true` each time a thread settles in its own worktree, including auto-settlement. A thread in the main checkout skips it. The effective list is the project's override, else the environment defaults. Actions in a repository `t3.json` count only once imported into project settings, and either list can replace them. `t3_project_read` returns the project's saved `scripts`, which can differ from the effective list. Before you settle a worktree thread, read T3's `settings.json` (`~/.t3/userdata/settings.json` by default). Take `projectSettingsOverrides.<projectId>.defaultProjectScripts` when present, else `defaultProjectScripts`, and name its first `runOnSettle: true` action or none. When `projectSettingsFolded` is not `true`, older saved lists still count, so treat the action as unknown. The action can run beside another terminal command. Its terminal closes on success and stays open on failure. It is a cleanup hook, not a wake, so never schedule a tick to watch for it.
@@ -10,7 +14,7 @@ If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (n
 
 ## Older hosts
 
-- An older host, or a child that needs a chosen branch or a different base, uses a worktree the parent creates before delegating with `git worktree add <path> -b <branch> <base>`. Omit `isolation`. The child's default working directory stays in the parent's checkout. The brief says "Work only in `<absolute worktree path>`. Use absolute paths under it for every read and edit, and prefix every command with `cd <absolute worktree path> &&`. Report the branch and head SHA." Check that the diff landed there and remove that worktree after integrating. A long-lived independent owner uses `t3_thread_launch` with a worktree strategy only where [Top-level threads](SKILL.md#top-level-threads) allows it.
+- An older host, or a child that needs a chosen branch or a different base, uses a worktree the parent creates before delegating with `git worktree add <path> -b <branch> <base>`. Omit `isolation`. The child's default working directory stays in the parent's checkout. The brief says "Work only in `<absolute worktree path>`. Use absolute paths under it for every read and edit, and prefix every command with `cd <absolute worktree path> &&`. Report the branch and head SHA." Check that the diff landed there and remove that worktree after integrating. On T3 Code 0.1.1-nightly.20261019.3360 or later, `delegate_task` with `isolation` `worktree` returns `invalid_request` when the parent thread runs in its own worktree and the parent commit does not resolve in the project repository. Bind the project to the actual repository before you use automatic isolation. When the checkout is foreign, use the manual worktree in this section. Never use shared concurrent writing as a fallback. Two writers never share a checkout on any host. On T3 Code 0.1.0, run the same binding preflight and use the manual worktree in this section. A long-lived independent owner uses `t3_thread_launch` with a worktree strategy only where [Top-level threads](SKILL.md#top-level-threads) allows it.
 
 ### Pre-0.1.0 nightlies
 
@@ -22,6 +26,10 @@ If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (n
 - On T3 Code 0.0.46-nightly.20261014.3093 or later, a writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
 - On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text.
 - On T3 Code 0.0.46-nightly.20261015.3145 or later, a delegated child's question wakes this thread.
+
+## Root setup
+
+- On T3 Code 0.1.1-nightly.20261019.3360 or later, a root launch runs project setup only with a worktree path. On T3 Code 0.1.0, a root launch can run setup actions. Inspect effective actions before you launch a coordinator. Reuse an existing coordinator or stop with a clear explanation when the actions are inappropriate. Never promise that a root launch has no setup side effects.
 
 ## History notes
 
@@ -64,6 +72,7 @@ Before you read Claude conversation history, read [History notes](host.md#histor
 - Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text, and paging cannot recover the discarded suffix. On older hosts, see [Older hosts](host.md#older-hosts). Read `git diff <base>...<head>` in the worker's checkout for the whole change.
 - A thread the user attached as context is readable even outside this project.
 - Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
+- Reconstruct a PR set with [Pull requests](watching.md#pull-requests). That section names the nightly array and the stable fallback.
 - `t3_thread_read` returns the thread's `worktreePath` and `branch`. `t3_thread_list` does not, so finding the threads bound to a worktree takes one read per thread. Threads from other projects are not visible.
 - Link a thread in a user-facing report as a Markdown link whose text is the thread's title and whose target is `t3-thread://v1/<threadId>`. Copy the `threadId` exactly as a tool returned it. Do not URL-encode it, decode its `%` escapes, or add an environment ID. T3 Code shows the thread's current title. List, read, and launch results carry no `link` field, so build the link from `threadId` or `childThreadId`.
 

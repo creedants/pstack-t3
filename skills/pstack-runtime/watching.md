@@ -6,6 +6,8 @@ Read this file before linking a PR or waiting on its checks.
 
 After you open a PR or start driving an existing one, call `link_pull_request` with its full URL. For a stack, link every layer. Linking attaches the PR to the calling thread. When a child opens a PR, it links it and the parent links it too. When a launched thread opens a PR, it links it and the launcher or coordinator links it too. Linking twice is safe. Before finishing PR work, call `list_thread_pull_requests` and link any missing PR. Report a link failure instead of claiming the PR is linked.
 
+- On T3 Code 0.1.1-nightly.20261019.3360 or later, prefer the optional `pullRequests` array from `t3_thread_read` or `t3_thread_list` when reconstructing an owner's PR set. Treat a null state as unknown, not closed. A legacy `linkedPullRequest` can be null while the array is nonempty. Keep the final own-thread `list_thread_pull_requests` check. On T3 Code 0.1.0, call `list_thread_pull_requests` with the explicit owner `threadId`. When that read is refused, use recorded URLs. See [Host version](host.md#host-version) for the version read.
+
 ## Pull request watching
 
 An owner that may already be settled reads [Settle on turn end](host.md#settle-on-turn-end) before calling `watch_pull_request`.
