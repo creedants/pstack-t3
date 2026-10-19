@@ -248,10 +248,11 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
 
 
 def lease_widen(store, number, paths, ttl_hours=6, owner=None):
-    """Add paths to one lease in place. A live lease keeps its expiry and an expired one is admitted again.
+    """Add paths to one lease in place, folding that holder's other active unexpired leases into it.
 
-    The holder's other active unexpired leases are orphans. Their paths join this lease and they are released in the
-    same transaction, so a claim-and-swap that stopped before releasing its old lease leaves one live lease.
+    A live lease keeps its expiry and an expired one takes the TTL. A TTL that leaves it expired is refused, so a fold
+    never releases live coverage. The holder's other active unexpired leases are released in the same transaction, and
+    the standing reservations they took name this lease before that release.
     """
     wanted = wanted_paths(paths)
     with store.tx() as db:
@@ -263,7 +264,6 @@ def lease_widen(store, number, paths, ttl_hours=6, owner=None):
             raise seam.LandError(f"L{number} is submitted; the queue holds it")
         if row["state"] == "released":
             raise seam.LandError(f"L{number} is released")
-        expired = row["expires"] <= seam.stamp()
         orphans = [lease for lease in in_flight(db)
                    if lease["holder"] == row["holder"] and lease["state"] == "active" and lease["id"] != number]
         merged = sorted({*row["paths"].split("\n"), *(path for lease in orphans for path in lease["paths"].split("\n")), *wanted})
@@ -274,17 +274,22 @@ def lease_widen(store, number, paths, ttl_hours=6, owner=None):
         if refusal:
             raise seam.LandError(refusal)
         added = [path for path in merged if path not in row["paths"].split("\n")]
-        db.execute("UPDATE lease SET paths = ? WHERE id = ?", ("\n".join(merged), number))
-        if expired:
-            db.execute("UPDATE lease SET expires = ? WHERE id = ?",
-                       (seam.stamp(seam.now() + timedelta(hours=ttl_hours)), number))
+        moment = seam.now()
+        expires = row["expires"]
+        if expires <= seam.stamp(moment):
+            expires = seam.stamp(moment + timedelta(hours=ttl_hours))
+            if expires <= seam.stamp(moment):
+                raise seam.LandError(f"L{number} expired and a TTL of {ttl_hours:g} hours keeps it expired")
+        folded = {lease["id"] for lease in orphans}
+        held = [item["id"] for item in standing(db) if folded & set(taken_ids(item["taken"]))]
+        db.execute("UPDATE lease SET paths = ?, expires = ? WHERE id = ?", ("\n".join(merged), expires, number))
+        take(store, db, sorted({*taken, *held}), number, merged)
         for orphan in orphans:
             release_lease(store, db, orphan["id"], f"folded into L{number}")
-        take(store, db, taken, number, merged)
         note = ", ".join(added)
         if orphans:
-            folded = ", ".join(f"L{orphan['id']}" for orphan in orphans)
-            note = f"{note}, folded {folded}" if note else f"folded {folded}"
+            folded_ids = ", ".join(f"L{orphan['id']}" for orphan in orphans)
+            note = f"{note}, folded {folded_ids}" if note else f"folded {folded_ids}"
         store.log(db, "lease", number, "widened", note)
     return f"L{number} widened"
 

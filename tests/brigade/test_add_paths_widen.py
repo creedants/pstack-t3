@@ -2,7 +2,7 @@ import os
 import shlex
 from unittest import mock
 
-from .support import BrigadeTest, setUpModule
+from .support import BrigadeTest, SCRIPT, _owner_words, call_in_process, run_globals, setUpModule
 
 
 class AddPathsWidenTest(BrigadeTest):
@@ -49,6 +49,42 @@ class AddPathsWidenTest(BrigadeTest):
         self.hand_edit("dishes.tsv", "D1", lease="L2", paths="README.md,src/a.py")
         self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"), "D1: L2 already covers src/a.py")
         self.assertEqual(self.lease_lines(), ["L2 active perf/D1: README.md, src/a.py"])
+
+    def test_add_paths_mismatch_keeps_the_lease_the_other_call_adopted(self):
+        self.started()
+        self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1", "--paths", "README.md,src/a.py"), "L2")
+        self.assertEqual(self.land("lease", "release", "L1"), "L1 released")
+        commands = run_globals(self, SCRIPT)["COMMANDS"]
+        dish = next(command.handle for command in commands if command.name == "dish").__globals__
+        module = dish["widen"].__globals__
+        widen_lease = module["widen_lease"]
+        paused = []
+
+        def widen_then_run_other(restaurant, lease, claim):
+            result = widen_lease(restaurant, lease, claim)
+            if not paused:
+                paused.append(lease)
+                inner = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                       *_owner_words(self.at), "dish", "D1",
+                                                       "--add-paths", "inner.py"])
+                self.assertEqual(inner.code, 0, inner.stdout_text() + inner.stderr_text())
+            return result
+
+        module["widen_lease"] = widen_then_run_other
+        try:
+            outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                     *_owner_words(self.at), "dish", "D1",
+                                                     "--add-paths", "outer.py"])
+        finally:
+            module["widen_lease"] = widen_lease
+        self.assertEqual(outcome.code, 1)
+        self.assertEqual(outcome.stderr_text().strip(),
+                         "brigade: D1 changed while widening; run dish D1 --add-paths again")
+        listed = self.land("lease", "list")
+        self.assertIn("L2 active perf/D1 until ", listed)
+        self.assertIn(": README.md, inner.py, outer.py, src/a.py", listed)
+        self.assertEqual(self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src/a.py", ok=False),
+                         "land: paths overlap L2 held by perf/D1 on README.md, inner.py, outer.py, src/a.py")
 
     def test_add_paths_claims_fresh_when_the_recorded_lease_was_released(self):
         self.init_landing("--cap", "3")

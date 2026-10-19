@@ -1,4 +1,9 @@
+from datetime import datetime, timedelta
+from unittest import mock
+
 from .support import setUpModule, LandingTest as LandingTestBase
+
+import land
 
 
 class LeaseWidenTest(LandingTestBase):
@@ -38,6 +43,47 @@ class LeaseWidenTest(LandingTestBase):
         self.assertEqual(self.land("lease", "list"), "no leases held")
         self.assertEqual(self.land("lease", "widen", "L1", "--paths", "b.txt"), "L1 widened")
         self.assertEqual(self.listed(), ["L1 active perf/D1: a.txt, b.txt"])
+
+    def test_widen_zero_ttl_refuses_instead_of_releasing_the_folded_live_lease(self):
+        self.init()
+        self.assertEqual(self.claim("docs/D1", "a.txt", "--ttl-hours", "0"), "L1")
+        self.assertEqual(self.claim("docs/D1", "a.txt,b.txt"), "L2")
+        self.assertEqual(self.land("lease", "widen", "L1", "--paths", "c.txt", "--ttl-hours", "0", ok=False),
+                         "land: L1 expired and a TTL of 0 hours keeps it expired")
+        self.assertEqual(self.listed(), ["L2 active docs/D1: a.txt, b.txt"])
+
+    def test_widen_re_admits_a_lease_that_expires_during_the_fold(self):
+        self.init()
+        self.assertEqual(self.claim("docs/D1", "a.txt"), "L1")
+        self.assertEqual(self.claim("docs/D1", "a.txt,b.txt"), "L2")
+        expires = datetime.fromisoformat(self.lease_row(1)[5])
+        clock = {"now": expires - timedelta(microseconds=1)}
+        module = land.lease_widen.__globals__
+        seam = module["seam"]
+        admit = module["admission"]
+
+        def admit_then_expire(*args, **kwargs):
+            taken = admit(*args, **kwargs)
+            clock["now"] = expires + timedelta(microseconds=1)
+            return taken
+
+        with mock.patch.object(seam, "now", lambda: clock["now"]), \
+                mock.patch.object(seam, "stamp", lambda moment=None: (moment or clock["now"]).isoformat(timespec="microseconds")), \
+                mock.patch.dict(module, {"admission": admit_then_expire}):
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(land.lease_widen(store, 1, "c.txt"), "L1 widened")
+                self.assertIn("L1 active docs/D1", land.lease_list(store))
+                self.assertIn("a.txt, b.txt, c.txt", land.lease_list(store))
+
+    def test_widen_transfers_a_folded_leases_partial_reservation_to_the_kept_lease(self):
+        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--cap", "1")
+        self.assertEqual(self.claim("docs/D1", "lib", "--ttl-hours", "0"), "L1")
+        self.assertEqual(self.reserve("docs/", "a.txt,b.txt", "R1"), "S1")
+        self.assertEqual(self.claim("docs/D1", "a.txt"), "L2")
+        self.assertIn("changes in flight: 1 of 1", self.land("status"))
+        self.assertEqual(self.land("lease", "widen", "L1", "--paths", "c.txt"), "L1 widened")
+        self.assertIn("changes in flight: 1 of 1", self.land("status"))
+        self.assertEqual(self.land("lease", "widen", "L1", "--paths", "c.txt"), "L1 widened")
 
     def test_widen_refuses_a_submitted_a_released_and_a_missing_lease(self):
         self.init()

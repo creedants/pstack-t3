@@ -312,8 +312,6 @@ def widen(restaurant, ident, add_text):
         release_lease(restaurant, kept_lease)
         raise BrigadeError(f"{ident} is {closed}; it holds no lease")
     if mismatch:
-        if mismatch == "lease":
-            release_lease(restaurant, kept_lease)
         raise BrigadeError(f"{ident} changed while widening; run dish {ident} --add-paths again")
     if replaced:
         return f"{ident}: {kept_lease} replaces {plan.old_lease}"
