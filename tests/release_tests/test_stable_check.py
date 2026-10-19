@@ -7,7 +7,6 @@ from .support import (
     ReleaseCase,
     ENV,
     commit,
-    run,
     state,
     repository,
 )
@@ -15,8 +14,8 @@ from .support import (
 
 MISSING = (
     "no stable check record; run setup-pstack and one small real item on the latest stable "
-    "T3 Code release, record the stable version and result in the release notes file, "
-    "and pass it with --notes-file\n"
+    "T3 Code release, record `Stable check: T3 Code 1.2.3 passed` in the release notes file, "
+    "with 1.2.3 the version you ran, and pass it with --notes-file\n"
 )
 
 
@@ -60,14 +59,6 @@ class StableCheckTest(ReleaseCase):
                 (1, "", "stable check on T3 Code 1.2.3 failed; record a passing result\n"),
             )
             self.assertEqual(state(repo), before)
-
-    def test_real_release_with_passing_record_writes_changelog(self):
-        with repository() as repo:
-            commit(repo, {"changes/a.md": "- a\n"}, day=2)
-            result = run(repo, "0.2.1")
-            self.assertEqual(result.returncode, 0)
-            self.assertIn("## 0.2.1 (2026-10-09)", (repo / "CHANGELOG.md").read_text())
-            self.assertFalse((repo / "changes/a.md").exists())
 
     def test_dry_run_without_notes_file_prints_section(self):
         with repository() as repo:

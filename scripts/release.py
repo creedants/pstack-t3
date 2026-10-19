@@ -311,7 +311,7 @@ def stable_check(path):
     sys.exit(f"stable check on T3 Code {match.group(1)} failed; record a passing result")
    return
  sys.exit("no stable check record; run setup-pstack and one small real item on the latest stable T3 Code release, "
-  "record the stable version and result in the release notes file, and pass it with --notes-file")
+  "record `Stable check: T3 Code 1.2.3 passed` in the release notes file, with 1.2.3 the version you ran, and pass it with --notes-file")
 def take_kind(name, lines):
  if not lines or not lines[0].startswith("- "):
   return "upkeep", lines
@@ -349,10 +349,7 @@ def plan(version_text, date_text):
    rel = entry.relative_to(ROOT).as_posix()
    if entry.is_symlink() or not entry.is_file():
     sys.exit(f"{rel} is an orphan")
-   try:
-    files[rel] = entry.read_bytes().decode("utf-8")
-   except UnicodeDecodeError:
-    sys.exit(f"{rel} is not UTF-8; fix it")
+   files[rel] = read_utf8(entry).data.decode("utf-8")
  shelf = read_shelf(files)
  versions = released(changelog)
  if version in versions:

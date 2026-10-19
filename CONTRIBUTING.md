@@ -63,14 +63,16 @@ python3 scripts/release.py --dry-run X.Y.Z
 ```
 
 2. Read the section. It is a `## X.Y.Z (YYYY-MM-DD)` heading with today's date, then one group of bullets per fragment. `--date YYYY-MM-DD` sets another date.
-3. Run it for real. The script writes that section above the latest heading in `CHANGELOG.md` and deletes the fragments. It never stages, commits, tags, pushes, or calls `gh`. It prints steps 4 and 5 when it finishes.
+3. Run the stable check. On the latest stable T3 Code release, run `setup-pstack` and one small real item. Record the result in the release notes file as `Stable check: T3 Code <version> passed`, with the version you ran. A real run refuses without that record.
+
+4. Run it for real. The script writes that section above the latest heading in `CHANGELOG.md` and deletes the fragments. It never stages, commits, tags, pushes, or calls `gh`. It prints steps 5 and 6 when it finishes.
 
 ```bash
-python3 scripts/release.py X.Y.Z
+python3 scripts/release.py X.Y.Z --notes-file <release notes file>
 ```
 
-4. Commit `CHANGELOG.md` and the deleted fragments in one commit. Tag `vX.Y.Z` on the commit that lands on main, and push the tag.
-5. Run `gh release create vX.Y.Z --notes-file <that changelog section>`.
+5. Commit `CHANGELOG.md` and the deleted fragments in one commit. Tag `vX.Y.Z` on the commit that lands on main, and push the tag.
+6. Run `gh release create vX.Y.Z --notes-file <that changelog section>`.
 
 The script orders the fragments by the commit that added each one. It reads this log with `--no-renames` added, and it orders the fragments that one commit added by name.
 
