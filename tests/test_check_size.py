@@ -31,6 +31,12 @@ def setUpModule():
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Covers the 12 split modules today.
+ROLES_MODULES = tuple(
+    f"t3/scripts/_roles/{p.name}"
+    for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py"))
+)
+
 COPIED = (
     "scripts/check.py",
     "scripts/_check/__init__.py",
@@ -47,6 +53,7 @@ COPIED = (
     "scripts/_check/wording.py",
     "scripts/size_limit.py",
     "t3/scripts/roles.py",
+    *ROLES_MODULES,
     "t3/added/landing/scripts/landing_lib/sizes.py",
     "tests/landing/support.py",
 )

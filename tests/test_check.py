@@ -160,6 +160,7 @@ def checker_checkout(root, readme):
     r=root/"t3/scripts"
     r.mkdir(parents=True)
     shutil.copy(ROOT/"t3/scripts/roles.py",r/"roles.py")
+    shutil.copytree(ROOT/"t3/scripts/_roles",r/"_roles",ignore=shutil.ignore_patterns("__pycache__"))
     k=root/"skills/demo"
     k.mkdir(parents=True)
     (k/"SKILL.md").write_text("---\nname: demo\ndescription: d\n---\n\nbody\n")

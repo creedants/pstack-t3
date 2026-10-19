@@ -17,6 +17,15 @@ import check  # noqa: E402
 import roles  # noqa: E402
 
 CATALOG = json.loads((ROOT / "tests/fixtures/catalog.json").read_text())
+
+
+def roles_source():
+    """Read the code wherever the split put it."""
+    parts = [(ROOT / "t3/scripts/roles.py").read_text()]
+    parts.extend(p.read_text() for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py")))
+    return "\n".join(parts)
+
+
 PLAYBOOK_FILES = {
     "Investigation": "playbooks/investigation.md",
     "Bug fix": "playbooks/bug-fix.md",
@@ -1856,7 +1865,7 @@ class LaunchingSkillTestDocTest(unittest.TestCase):
         self.assertIn('`roles.py show --role "skill tests" --launches-seats`', section)
         self.assertIn("That form refuses a configured seat that runs on the cursor driver", section)
         self.assertIn("A configured non-cursor seat is not limited by `--launches-seats`.", section)
-        self.assertIn(roles.HAIKU_BRIEF[0], (ROOT / "t3/scripts/roles.py").read_text())
+        self.assertIn(roles.HAIKU_BRIEF[0], roles_source())
         author = (ROOT / "t3/added/pstack-author-skill/SKILL.md").read_text()
         self.assertIn("--launches-seats", author)
 
@@ -2152,13 +2161,13 @@ class ExcludedSeatsDocTest(unittest.TestCase):
             "`inherit replaced by <provider>/<model>`",
         ):
             self.assertIn(phrase, section)
-        source = (ROOT / "t3/scripts/roles.py").read_text()
+        source = roles_source()
         self.assertIn(roles.HAIKU_BRIEF[0], source)
         self.assertIn(roles.HAIKU_BRIEF[1], source)
 
     def test_excluded_seat_notes_match_roles_py(self):
         section = runtime_doc_section("roles.md", "## Excluded seats")
-        source = (ROOT / "t3/scripts/roles.py").read_text()
+        source = roles_source()
         for phrase in ("inherit replaced by", "skipped configured seat"):
             self.assertIn(phrase, section)
             self.assertIn(phrase, source)
