@@ -27,6 +27,7 @@ Check the state that changes the answer, and mention it only when it does:
 
 - No `.pstack/t3-roles.json`, and no `~/.config/pstack-t3/roles.json` or `$XDG_CONFIG_HOME/pstack-t3/roles.json`, means `$setup-pstack` hasn't run for this user, so every role except `review backups` resolves to `inherit` and runs on the chat's model, and `review backups` stays unset. [Built-in defaults](../pstack-runtime/SKILL.md#built-in-defaults) states the rule.
 - No `verify-*` skill or other app harness in the project means agents have no scripted way to drive the app. Mention `$create-verification-skill` when the question is about proving a change works.
+- No formal verification skill in the project means agents have no project skill for formal verification. Mention `$create-formal-verification-skill` when the question is about a race, an invariant, or another case tests rarely hit.
 
 When no roles file exists and it matters, ask whether the user wants to pick a model for each role and a reasoning budget now. It matters when the user is new, the question is about setup or cost, or the answer depends on which models run. Ask at most once per chat. If the need is also unclear, ask both questions together. Offer two choices:
 
@@ -36,7 +37,7 @@ When no roles file exists and it matters, ask whether the user wants to pick a m
 ## Get set up
 
 1. `git clone https://github.com/creedants/pstack-t3.git ~/pstack-t3`, then run `python3 scripts/install.py` in that directory. Then run `python3 scripts/install.py doctor`. Each provider should show the same count on both sides of `N/N pstack-t3`.
-2. Run [`$setup-pstack`](../setup-pstack/SKILL.md). It asks for a reasoning budget, maps a model to each role, and writes `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json` when that variable is set. Every skill reads that file when it resolves roles.
+2. Run [`$setup-pstack`](../setup-pstack/SKILL.md). It asks for a reasoning budget, maps a model to each role, and writes `~/.config/pstack-t3/roles.json`, or `$XDG_CONFIG_HOME/pstack-t3/roles.json` when that variable is set. Every skill reads that file when it resolves roles. Then it offers once each to generate a verification skill and a formal verification skill for the project, unless the project already has one.
 3. Start a real task with `$poteto-mode`, a goal, and a check that can pass or fail.
 
 Typing `$name` loads a skill. Most skills can also load when the request matches their description. `$poteto-help` has a narrow description, so type it. The [README](https://github.com/creedants/pstack-t3/blob/main/README.md) and [install section](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#1-install-two-minutes) have the details. Offer to word their first prompt with them, per [`references/prompting.md`](references/prompting.md).
