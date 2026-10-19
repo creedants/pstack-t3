@@ -14,7 +14,7 @@ from unittest import mock
 from tests import in_process
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tests/release"))
+sys.path.insert(0, str(ROOT / "tests/release_tests"))
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "t3/added/brigade/scripts"))
 sys.path.insert(0, str(ROOT / "scripts"))
