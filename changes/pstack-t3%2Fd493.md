@@ -1,0 +1,3 @@
+- kind polish
+- `brigade affected` maps a file under a private package directory `<pkg>/_<name>/` with every test its facade `<pkg>/<name>.py` selects, when an import resolution lands that facade or a hop's loader is that facade.
+- That mapping follows the facade's imports directly and through `<pkg>/_<name>/__init__.py`, and a private file that already maps keeps its tests and gains the facade's.
