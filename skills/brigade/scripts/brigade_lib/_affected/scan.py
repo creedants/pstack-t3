@@ -151,7 +151,7 @@ def _init_private(norm, loader_path, root, roots):
 
 
 def _facade_private(norm, root, roots):
-    """The files under the private package directory of facade norm that norm imports directly or through that package's __init__.py, in sorted order, empty when norm has no such package."""
+    """The files under the private package directory of facade norm that norm imports directly or that package's __init__.py imports, in sorted order, empty when norm has no such package."""
     private = _private_of(norm)
     if not private:
         return ()
@@ -161,7 +161,6 @@ def _facade_private(norm, root, roots):
         inside = False
     if not inside:
         return ()
-    prefix = private + "/"
     found = _private_edges(norm, private, root, roots)
     for init in _found_files(root, [private + "/__init__.py"]):
         found |= _private_edges(init, private, root, roots)
