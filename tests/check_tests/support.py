@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
-import check
+from scripts import check
 import measure_capacity
 import size_limit
 
