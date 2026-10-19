@@ -90,6 +90,9 @@ The script exits 1, names the fix, and changes nothing when one of these holds:
 - `changes/` holds no fragments, or holds an entry that is not a `.md` file.
 - A fragment holds a line that is not a bullet or a continuation line.
 - The clone is shallow, or no commit added a fragment that sits in `changes/`.
+- A real run has no `--notes-file`.
+- A real run cannot read the notes file as UTF-8 or finds no `Stable check: T3 Code <version> passed` record in it.
+- In a real run, the first `Stable check: T3 Code <version>` record in the notes file says `failed`.
 
 The script writes `CHANGELOG.md` through a temporary file and then deletes the fragments. It holds `SIGINT`, `SIGTERM`, and `SIGHUP` for that whole step. When a write or a delete fails, or one of those signals arrives, it writes `CHANGELOG.md` back and re-creates each deleted fragment from the bytes it read first. It then checks every file against those bytes. It prints `nothing changed` and exits 1 only when the check passes. Otherwise it names each file that differs and prints the command below. A kill that cannot be caught, or power loss, can leave a partial run. The command below restores that too.
 
