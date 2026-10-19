@@ -118,7 +118,7 @@ try:
 
     from activity_lib.store import ActivityError, SourceError, GoalRecord, Goal, Unit, Store, STORE_RECORD, STORE_LOCK, UNITS_TABLE, LOG_TABLE, GOALS_TABLE, THREADS_TABLE, STORE_COLUMNS, ADDED_COLUMNS, TABLE_WORDS, RECORD_WORDS, STATE_WORDS, UNKNOWN_STATE, FINISHED_STATES, KINDS, UNGROUPED, UNNAMED, UNASSIGNED, read_table, malformed, record_text, goals_of, read_store, roots_of
 
-    from activity_lib.theme import joined_lines, squeezed, STYLE, RENDERER, STRIP_CSS, LEDGER_CSS, ATTEMPT_CSS, LEDGER_HOOK, STRIP_HOOK
+    from activity_lib.theme import joined_lines, squeezed, STYLE, STYLE_BASE, OVERFLOW_STYLE, RENDERER, COLLAPSE_SCRIPT, STRIP_CSS, LEDGER_CSS, ATTEMPT_CSS, LEDGER_HOOK, STRIP_HOOK
 
     from activity_lib.t3state import Status, T3_STATUS, OPEN, LIVE, QUIET, Window, Turn, Delegation, Agent, T3, PROJECTION, SUPPORTED_PROJECTION, THREADS, RUNS, SUBAGENTS, METADATA, T3_SHAPE, THREAD_PAYLOAD_KEY, SELECTION_KEYS, NULLABLE, STAMP, T3_DATABASE, BATCH, CHANGED, T3_KINDS, t3_database, open_t3, unreadable, check_shape, check_coordinator, parse_time, text_in, time_in, parse_status, request_name, in_scope, batches, touches, check_parents, same_project, read_t3, selection_of
 

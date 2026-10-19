@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Mapping, Optional
 from urllib.parse import quote, unquote, urlsplit
 from activity_lib.t3state import LIVE, QUIET, Status
-from activity_lib.page import LABEL_BYTES, MODEL_BYTES, NAME_BYTES, Span, agents_in, clip, count, flight_of, people, shown, span, summary
+from activity_lib.page import LABEL_BYTES, MODEL_BYTES, NAME_BYTES, Span, agents_in, clip, count, flight_of, palette_of, people, shown, span, summary
 
 
 KEPT_ITEMS = (24, 16, 12, 8, 6, 4, 2, 0)
@@ -68,13 +68,20 @@ def finished(group):
 
 
 def fold_finished_items(page):
-    groups = tuple(
-        replace(group, rows=(summary(group.rows, 0, people(group.agents, group.subagents)),)) if finished(group) and agents_in(group.rows) >= 2 else group
-        for group in page.groups)
-    return replace(page, groups=groups, fold=page.fold + 1)
+    palette = palette_of(page.legend)
+    groups = []
+    for group in page.groups:
+        if finished(group) and agents_in(group.rows) >= 2:
+            made = summary(group.rows, 0, people(group.agents, group.subagents))
+            made = replace(made, color_slot=palette.get(made.model, made.color_slot))
+            groups.append(replace(group, rows=(made,)))
+        else:
+            groups.append(group)
+    return replace(page, groups=tuple(groups), fold=page.fold + 1)
 
 
 def fold_quiet_subagents(page):
+    palette = palette_of(page.legend)
     groups = []
     for group in page.groups:
         rows = []
@@ -82,7 +89,9 @@ def fold_quiet_subagents(page):
             folds = [index > 0 and row.status in QUIET for index, row in enumerate(family)]
             folded = [row for row, fold in zip(family, folds) if fold]
             if agents_in(folded) >= 2:
-                family = [*kept_rows(family, [not fold for fold in folds]), summary(folded, 1, count(agents_in(folded), "sub-agent"))]
+                made = summary(folded, 1, count(agents_in(folded), "sub-agent"))
+                made = replace(made, color_slot=palette.get(made.model, made.color_slot))
+                family = [*kept_rows(family, [not fold for fold in folds]), made]
             rows += family
         groups.append(replace(group, rows=tuple(rows)))
     return replace(page, groups=tuple(groups), fold=page.fold + 1)

@@ -32,7 +32,7 @@ def squeezed(source):
     return "".join(part if part.startswith("'") else tight(part) for part in re.split(r"('[^']*')", source.strip()))
 
 
-STYLE = joined_lines("""
+STYLE_BASE = joined_lines("""
     #o{font:13px/1.4 var(--font-sans);color:var(--foreground)}
     #o a{color:inherit;text-decoration:none}
     h2{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;margin:18px 0 6px}
@@ -81,12 +81,6 @@ STYLE = joined_lines("""
     .p4{--c:var(--chart-4)}
     .p5{--c:var(--chart-5)}
     .p6{--c:var(--chart-6)}
-    .p7{--c:var(--chart-7)}
-    .p8{--c:var(--chart-8)}
-    .p9{--c:var(--chart-9)}
-    .p10{--c:var(--chart-10)}
-    .p11{--c:var(--chart-11)}
-    .p12{--c:var(--chart-12)}
     .f{--c:var(--destructive)}
     .foot{font-size:11px;margin-top:12px}
     .nb,.one{white-space:nowrap}
@@ -101,6 +95,18 @@ STYLE = joined_lines("""
     .d2 small{left:28px}
     }
 """)
+
+OVERFLOW_STYLE = joined_lines("""
+    .p7{--c:var(--chart-7,#c24)}
+    .p8{--c:var(--chart-8,#2a7)}
+    .p9{--c:var(--chart-9,#36b)}
+    .p10{--c:var(--chart-10,#e80)}
+    .p11{--c:var(--chart-11,#93c)}
+    .p12{--c:var(--chart-12,#0aa)}
+""")
+
+
+STYLE = STYLE_BASE + OVERFLOW_STYLE
 
 
 RENDERER = squeezed("""
@@ -203,8 +209,7 @@ RENDERER = squeezed("""
         }
       };
       if (D.k) lane('co', 0, 'coordinator', ...D.k);
-      for (const [gpos, [index, rows]] of D.G.entries()) {
-        const c = (D.C || [])[gpos];
+      for (const [index, rows] of D.G) {
         const head = add(lanes, 'div', 'grp'), item = D.I[index];
         if (index >= 0) head.id = 'g' + index;
         if (item) {
@@ -213,12 +218,6 @@ RENDERER = squeezed("""
           add(head, 'b', 'chip ' + item[3], item[2]);
         } else add(head, 'span', '', 'Not tied to a work item');
         for (const r of rows) lane('p' + r[3], r[0], r[1], r[2], r[4], r[5], r[6]);
-        if (c) {
-          head.setAttribute('data-collapsed', '1');
-          const ns = [...(lanes.children || lanes.kids)].slice(-rows.length);
-          for (const n of ns) n.style.display = 'none';
-          head.onclick = (e) => { if (e.target.closest('a')) return; for (const n of ns) n.style.display = n.style.display ? '' : 'none'; };
-        }
       }
       const strip = D.I.map((it, i) => [i, it]).filter(([, it]) => it[5]);
       if (strip.length) {
@@ -234,6 +233,29 @@ RENDERER = squeezed("""
         const line = add(foot, 'div');
         note.split(/(--[a-z-]+)/).forEach((part, i) => add(line, 'span', i % 2 ? 'nb' : '', part));
       }
+    }
+""")
+
+
+COLLAPSE_SCRIPT = squeezed("""
+    if (D && D.v === 1 && D.C && D.C.some((c) => c)) {
+      const lanes = root.querySelector('.tl'), groups = [];
+      let cur = null;
+      for (const node of [...(lanes.children || lanes.kids)]) {
+        if (node.className.split(' ').includes('grp')) { cur = {head: node, rows: []}; groups.push(cur); }
+        else if (cur && node.className.split(' ').includes('row')) cur.rows.push(node);
+      }
+      groups.forEach((group, gpos) => {
+        if (!D.C[gpos]) return;
+        const head = group.head, ns = group.rows;
+        head.setAttribute('data-collapsed', '1');
+        for (const n of ns) n.style.display = 'none';
+        head.onclick = (e) => {
+          if (e.target.closest('a,summary,details')) return;
+          const detail = head.querySelector('details'), open = detail && detail.open;
+          for (const n of ns) n.style.display = n.style.display ? '' : (n.className.includes('earlier') && !open ? 'none' : '');
+        };
+      });
     }
 """)
 
