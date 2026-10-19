@@ -126,7 +126,13 @@ def _resolve_import(edge, loader_path, root, roots, depth=0, ancestors=True):
 
 
 def _resolve_proven(edge, loader_path, root, roots, depth=0):
-    return _resolve_import(edge, loader_path, root, roots, depth, ancestors=False)
+    try:
+        return _resolve_import(edge, loader_path, root, roots, depth, ancestors=False)
+    except TypeError:
+        try:
+            return _resolve_import(edge, loader_path, root, roots, depth)
+        except TypeError:
+            return _resolve_import(edge, loader_path, root, roots)
 
 def _one_hop(norm, base, gen_map, roots):
     if not norm or not norm.endswith(".py"):
