@@ -22,7 +22,7 @@ from urllib.parse import quote, unquote, urlsplit
 from activity_lib.store import UNGROUPED
 from activity_lib.theme import ATTEMPT_CSS, LEDGER_CSS, LEDGER_HOOK, RENDERER, STRIP_CSS, STRIP_HOOK, STYLE, squeezed
 from activity_lib.t3state import Status
-from activity_lib.page import checksum, count, dur, encode, flight_of, model_slot, people, span, summary
+from activity_lib.page import checksum, count, dur, encode, flight_of, model_slot, palette_of, people, span, summary
 from activity_lib.attempts import spoken
 from activity_lib.fitting import FOLDS, count_line
 from activity_lib.sizing import FRAME_FOLDS, frame_cuts, height, items_of, notes
@@ -131,10 +131,11 @@ def wire(page):
         "w": [int(page.window.start), round(page.window.end - page.window.start), span(page.window)],
         "n": [totals.running, totals.agents, totals.subagents, totals.failed],
         "S": [status.value for status in WIRE_STATUS],
-        "P": [[name, model_slot(name), agents] for name, agents in page.legend],
+        "P": [[name, palette_of(page.legend).get(name, model_slot(name)), agents] for name, agents in page.legend],
         "k": own and [model(own.model), WIRE_STATUS.index(own.status), dur(own.seconds), bars(own.spans)],
         "I": [cells(item) for item in items],
         "G": [[items.index(group.item) if group.item else -1, [line(row) for row in group.rows]] for group in page.groups],
+        "C": [bool(getattr(group, "collapsed", False)) for group in page.groups],
         "M": models,
         "N": notes(page, items),
     }

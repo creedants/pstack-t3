@@ -244,8 +244,8 @@ def parse_status(text, ended):
 
 
 def request_name(thread_id):
-    """A delegated child's thread id holds, after URL decoding, `delegate-task:<request name>` at its end."""
-    _, marker, name = unquote(thread_id).rpartition("delegate-task:")
+    """A delegated child's thread id holds, after URL decoding twice, `delegate-task:<request name>` at its end."""
+    _, marker, name = unquote(unquote(thread_id)).rpartition("delegate-task:")
     return name if marker and name else None
 
 

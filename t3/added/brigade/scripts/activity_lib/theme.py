@@ -81,6 +81,12 @@ STYLE = joined_lines("""
     .p4{--c:var(--chart-4)}
     .p5{--c:var(--chart-5)}
     .p6{--c:var(--chart-6)}
+    .p7{--c:var(--chart-7)}
+    .p8{--c:var(--chart-8)}
+    .p9{--c:var(--chart-9)}
+    .p10{--c:var(--chart-10)}
+    .p11{--c:var(--chart-11)}
+    .p12{--c:var(--chart-12)}
     .f{--c:var(--destructive)}
     .foot{font-size:11px;margin-top:12px}
     .nb,.one{white-space:nowrap}
@@ -197,7 +203,8 @@ RENDERER = squeezed("""
         }
       };
       if (D.k) lane('co', 0, 'coordinator', ...D.k);
-      for (const [index, rows] of D.G) {
+      for (const [gpos, [index, rows]] of D.G.entries()) {
+        const c = (D.C || [])[gpos];
         const head = add(lanes, 'div', 'grp'), item = D.I[index];
         if (index >= 0) head.id = 'g' + index;
         if (item) {
@@ -206,6 +213,12 @@ RENDERER = squeezed("""
           add(head, 'b', 'chip ' + item[3], item[2]);
         } else add(head, 'span', '', 'Not tied to a work item');
         for (const r of rows) lane('p' + r[3], r[0], r[1], r[2], r[4], r[5], r[6]);
+        if (c) {
+          head.setAttribute('data-collapsed', '1');
+          const ns = [...(lanes.children || lanes.kids)].slice(-rows.length);
+          for (const n of ns) n.style.display = 'none';
+          head.onclick = (e) => { if (e.target.closest('a')) return; for (const n of ns) n.style.display = n.style.display ? '' : 'none'; };
+        }
       }
       const strip = D.I.map((it, i) => [i, it]).filter(([, it]) => it[5]);
       if (strip.length) {

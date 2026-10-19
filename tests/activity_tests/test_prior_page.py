@@ -50,8 +50,8 @@ class PriorPageTest(OutputCase):
         self.assertEqual([[index, [line[:3] + line[4:] for line in lines]] for index, lines in current["G"]],
                          [[index, [line[:3] + line[4:] for line in lines]] for index, lines in prior["G"]])
         self.assertEqual([line[3] for _, lines in current["G"] for line in lines], [MOD["model_slot"]("model-a")])
-        self.assertEqual({key: current[key] for key in current if key not in ("P", "G")},
-                         {key: prior[key] for key in prior if key not in ("P", "G")})
+        self.assertEqual({key: current[key] for key in current if key not in ("P", "G", "C")},
+                         {key: prior[key] for key in prior if key not in ("P", "G", "C")})
 
         second = one_running(Fixture(self.root / "outside")).write()
         (second.store / "goals.tsv").write_text(
@@ -68,8 +68,8 @@ class PriorPageTest(OutputCase):
         self.assertEqual([[index, [line[:3] + line[4:] for line in lines]] for index, lines in current["G"]],
                          [[index, [line[:3] + line[4:] for line in lines]] for index, lines in prior["G"]])
         self.assertEqual([line[3] for _, lines in current["G"] for line in lines], [MOD["model_slot"]("model-a")])
-        self.assertEqual({key: current[key] for key in current if key not in ("P", "G")},
-                         {key: prior[key] for key in prior if key not in ("P", "G")})
+        self.assertEqual({key: current[key] for key in current if key not in ("P", "G", "C")},
+                         {key: prior[key] for key in prior if key not in ("P", "G", "C")})
         for output in (html, text):
             self.assertNotIn(b"Unassigned", output)
             self.assertNotIn(b"Unused goal name", output)

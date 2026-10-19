@@ -21,7 +21,7 @@ from typing import Mapping, Optional
 from urllib.parse import quote, unquote, urlsplit
 from activity_lib.store import FINISHED_STATES, Goal, KINDS, STATE_WORDS, UNKNOWN_STATE, UNNAMED
 from activity_lib.t3state import LIVE, Status
-from activity_lib.page import AttemptFold, Evidence, Group, Hidden, ID_BYTES, Item, LABEL_BYTES, LedgerLine, Page, ROLES, RoleCount, Row, SUMMARY_BYTES, Totals, assign, clip, count, flight_of, is_open, label_of, open_turn, seconds_of, shown, span, spans_of, status_of, stretches, summary, tree, with_parents
+from activity_lib.page import AttemptFold, Evidence, Group, Hidden, ID_BYTES, Item, LABEL_BYTES, LedgerLine, Page, ROLES, RoleCount, Row, SUMMARY_BYTES, Totals, assign, clip, count, flight_of, is_open, label_of, open_turn, palette_of, seconds_of, shown, span, spans_of, status_of, stretches, summary, tree, with_parents
 
 
 def attempt_rank(cell):
@@ -82,12 +82,6 @@ def brief_attempt(ranks, counts):
 
 def partition_attempts(dish_rows, rows, is_finished, privacy, threads=(), parents=()):
     """Split one work item into current lines and a fold of earlier attempts."""
-    if is_finished:
-        current = tuple(
-            LedgerLine(privacy.field(row["attempt"]), privacy.field(row["role"]), privacy.field(row["seat"]), is_open(row))
-            for _, row in sorted(enumerate(dish_rows), key=lambda pair: (attempt_rank(pair[1]["attempt"]), pair[0])))
-        marked = tuple(replace(row, earlier=False) for row in rows)
-        return current, AttemptFold(), marked
     matched = tuple(threads) if len(threads) == len(rows) else ()
     parent_threads = tuple(parents) if len(parents) == len(rows) else ()
     family, inside = set(), False
@@ -258,14 +252,16 @@ def build_page(store, t3, window, privacy):
             current, fold, marked = partition_attempts(raw, rows, (not in_flight and not live), privacy, tuple(agent.thread for agent, _ in ordered), tuple(agent.parent for agent, _ in ordered))
             folded_by_unit[unit] = (current, fold)
             item = item_of(units[unit], privacy, keys[unit], goal_ids, current, fold)
-            groups.append(Group(item, marked, len(active) - subagents, subagents))
+            groups.append(Group(item, marked, len(active) - subagents, subagents, units[unit].state in FINISHED_STATES))
         else:
-            groups.append(Group(None, tuple(replace(entry, earlier=False) for entry in rows), len(active) - subagents, subagents))
+            groups.append(Group(None, tuple(replace(entry, earlier=False) for entry in rows), len(active) - subagents, subagents, False))
     everyone = [row for group in groups for row in group.rows if row.stands_for]
     subagents = sum(group.subagents for group in groups)
     totals = Totals(sum(row.status is Status.RUNNING for row in everyone), len(everyone) - subagents, subagents, sum(row.status is Status.FAILED for row in everyone))
     models = [row.model for row in everyone]
     legend = tuple(sorted(((name, models.count(name)) for name in set(models)), key=lambda entry: (-entry[1], entry[0])))
+    palette = palette_of(legend)
+    groups = tuple(replace(group, rows=tuple(replace(row, color_slot=palette.get(row.model, row.color_slot)) for row in group.rows)) for group in groups)
     own = None
     coordinators = [t3.agents[thread] for thread in store.coordinators if thread in t3.agents]
     if coordinators:
