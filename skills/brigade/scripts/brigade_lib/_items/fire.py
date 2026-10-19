@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import posixpath
 import sys
@@ -272,8 +274,19 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                         print(f"fire: {stale} is not in the checkout; a stale ticket path leases nothing real",
                               file=sys.stderr)
                     fired = [row for row in rows if row["id"] in ids]
-                    for line in broad_path_lines(fired, paths, tracked_paths(restaurant.meta.get("projectRoot", ""))):
-                        print(line, file=sys.stderr)
+                    try:
+                        with contextlib.ExitStack() as output:
+                            try:
+                                advisory = output.enter_context(open(
+                                    sys.stderr.fileno(), "w", encoding=sys.stderr.encoding,
+                                    errors="backslashreplace", closefd=False))
+                            except (AttributeError, io.UnsupportedOperation):
+                                advisory = sys.stderr
+                            for line in broad_path_lines(fired, paths, tracked_paths(restaurant.meta.get("projectRoot", ""))):
+                                if advisory is not None:
+                                    print(line, file=advisory)
+                    except (OSError, ValueError):
+                        pass
                 return fired_line(dish, lease, holder(restaurant, dish), added)
             if full and not refusal:
                 record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
