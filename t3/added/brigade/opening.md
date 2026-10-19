@@ -20,6 +20,49 @@ Run from any thread.
 
 Opening a restaurant is the user's request for top-level threads: the head chef, and one worktree thread per worker.
 
+## Onboard
+
+Onboard detects what the repository and the store already configure. Run this section in place of Open a restaurant step 3. For a first opening, complete Open a restaurant step 4 once during step 3 below, keep its opened or exists result for step 6, and continue at step 5 afterward. A settings check uses the existing store and launches no coordinator.
+
+1. Use the name from the request or current store. Otherwise use the project directory name as a candidate for round one. Run `python3 <skills>/brigade/scripts/brigade.py onboard --project-root <root> --name "<restaurant>" --detect`. It prints facts and missing as JSON and writes no brigade files. Each store setting names its state and its fix. Every other row carries a fix, and only repository cap, trunk, remote, required checks, PR ability, and contract checks carry None. Missing lists the settings to ask about plus restaurant when no restaurant file exists, in table order.
+2. Build one HTML page with a flow chart of intake, tickets, fire, worker, review, landing queue, merge, and report. Pin each missing setting to its step and include the question details below. Check it with html_preview, then publish it with html_render before asking. If either tool is unavailable, print the same flow and question details as plain text.
+3. Use answers already in the request. Ask only the remaining missing settings and confirm the detected repository facts with the host question tool in at most two rounds. When the tool is unavailable, print the questions as a plain text list and read the answers as a reply. Include setup-pstack model choices in these rounds. For a first opening, run Open a restaurant step 4 once with the answers, then apply remaining answers with set, land.py, or setup-pstack. For an existing store, use set for changed store settings. Record confirmed detected build and check commands with set --build-command and set --check-command even when detection did not list them as missing.
+4. Run the same command with `--summary` in place of `--detect`. It writes `onboarding.txt` in the restaurant directory, one `name: value` line per fact. A rerun prints only the change lines, as `name: old -> new`, plus `added` and `removed` lines. Identical bytes print `no change to onboarding.txt` and leave the file untouched. Before `open` it prints the lines it would write, then `not saved`, and writes nothing.
+
+### The flow in words
+
+Intake collects requests from the sources the restaurant owns. The intake question decides which sources this restaurant reads. Tickets wait on the rail. Per [Run a service](SKILL.md#run-a-service) step 3, the coordinator groups waiting tickets before firing. Fire records the ticket ids the caller passes. Fire checks the worker cap before the lease claim for its paths and again after it. The brief command writes a brief. The workers question caps parallel dishes. The mode question picks the playbook depth for the brief. Per [Run a service](SKILL.md#run-a-service) step 4, the worker runs one playbook in its own worktree thread. Review records a verdict from another model family, or the same family with --same-family, after [Run a service](SKILL.md#run-a-service) step 6 reads the report and diff. The landing queue records the lease id, runs the contract setup and checks, and merges, polls, or pushes the change, or records a lane ref. The landing question picks the queue mode. The queue reads the generated path list, the rebuild command, and the contract setup and checks. It never reads the map. The map guides brigade claims and affected paths. Only the recorded build and check commands guide edits verify and affected reports. Detected values guide nothing until set records them. The change note directory names a queue path through its fragment. The generated map adds its expansions to the lease. Merge and push modes put the reviewed change on trunk. Human mode leaves the PR for the user to merge. Local mode records a lane ref. The required checks reading lists the detected trunk's required names. A non GitHub remote gives unknown. The PR ability reading gives unknown for a non GitHub remote. The contract checks reading lists the recorded contract checks. Per [Run a service](SKILL.md#run-a-service) step 9, report tells the user what landed. The reporting question picks how often.
+
+### The questions
+
+Which restaurant to open. This names the store directory. Record it with open. Before open creates it the summary prints the lines and a not saved line and writes nothing.
+
+Who lands work. Options are `merge`, `human`, `push`, and `local`. For a repository with a remote, choose `merge`. Record it with `land.py init --mode` or `land.py mode`. When the repository already has a landing contract, its mode applies and onboard reports it as configured.
+
+How often the coordinator replies. Options are `milestones`, `every-turn`, and `digest`. Recommend `milestones`. Record it with `open --reporting` or `set --reporting`. A missing key reads as `milestones` and is never missing.
+
+Which mode the workers use. Options are `light` and `full`. For a project with routine dishes, choose `light`. Record it with `open --mode` or `set --mode`. A missing key leaves the choice to the roles files, so onboard lists it as missing until it is recorded.
+
+Which models the workers use. This is missing when neither the user roles file nor the project roles file exists. Record it with setup-pstack.
+
+How many dishes run at once. This is a whole number of 1 or more. Recommend 2. Record it with `open --workers` or `set --workers`. A missing key reads as 2 and is never missing.
+
+Which sources this restaurant owns. This is a comma separated list such as `github`. Record it with `set --intake`. An empty list is missing until at least one source is recorded. A source a sibling already owns stays with that sibling.
+
+Which commands verify edits. Onboard reads `package.json` scripts, `Makefile` targets, `Cargo.toml`, `go.mod`, `pyproject.toml` or `tox.ini`, and `scripts/run_tests.py` and `scripts/build.py`, in that order. Only a `buildCommand` or `checkCommand` the store records guides edits verify and affected reports. A detected value guides nothing until `set --build-command` or `set --check-command` records it. Each is missing until either the store or the repository names it.
+
+Where change notes go. This is a repository relative directory such as `changes`. For a repository that tracks doc changes, choose `changes`. Record it with `set --change-note-dir`. An unset key leases no fragment and is missing until it is recorded.
+
+The rest need no question. Onboard shows their effective values in the summary and never lists them as missing. Their defaults are autofire `normal`, low reserve 1, round budget 3, the liveness default for the reporting level, context cap 300000, and provider `claude`. When the provider reads as `claude`, creation without `--context-cap` adopts an integer `autoCompactWindow` the settings file already holds. Change any of them later with the matching `set` flag. The file size limit question waits until the size ticket lands.
+
+### The two rounds
+
+Round one asks only unanswered choices for missing restaurant, landing mode, models, and mode settings. Confirm a candidate restaurant name here. If the name changes, rerun --detect for that name before writing. Round two asks any remaining missing settings and confirms detected repository facts. Two rounds are the maximum. Never re-ask a configured setting. When the host question tool is unavailable, print both rounds as one plain text list.
+
+### The summary file
+
+`onboarding.txt` holds one `name: value` line per fact, in table order. Rerun `--summary` after any `open`, `set`, `land.py init`, `land.py mode`, or `roles.py write` change. The rerun prints `added`, `removed`, and `old -> new` lines for changes to the parsed summary values. Treat that output as the checklist for the reply. When the rerun prints `no change to onboarding.txt` the bytes matched and the file stays untouched. When it prints `normalized onboarding.txt with no fact changes` the parsed facts matched despite different bytes and the rerun rewrote the file. Say so and move on.
+
 ## First service
 
 1. `t3_thread_organize` with `action: "pin"` and no `threadId`, acting on the caller on purpose.

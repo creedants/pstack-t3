@@ -25,6 +25,7 @@ from brigade_lib.commands import admin as _admin
 from brigade_lib.commands import items as _items
 from brigade_lib.commands import liveness as _liveness
 from brigade_lib.commands import next as _next
+from brigade_lib.commands import onboard as _onboard
 from brigade_lib.commands import rail as _rail
 from brigade_lib.commands import report as _report
 from brigade_lib.commands import reviews as _reviews
@@ -55,6 +56,7 @@ COMMANDS = (
     Command("fire", _items.register_fire, _items.handle_fire, None),
     Command("brief", _items.register_brief, _items.handle_brief, None),
     Command("affected", _items.register_affected, _items.handle_affected, None, needs_store=False),
+    Command("onboard", _onboard.register, _onboard.handle, None, needs_store=False),
     Command("contract", _items.register_contract, _items.handle, _items.handle_locked),
     Command("watch", _liveness.register_watch, _liveness.handle, None),
     Command("startable", _liveness.register_startable, _liveness.handle, None),
