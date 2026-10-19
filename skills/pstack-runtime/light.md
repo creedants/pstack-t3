@@ -1,4 +1,4 @@
-# Light behavior
+# Light mode reference
 
 Read this file before every spawn and run the row for that spawn.
 

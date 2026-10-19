@@ -68,7 +68,7 @@ The permission modes live in [delegation.md](delegation.md).
 - A child fails or returns nothing usable: proceed with N-1 and record the dropout. Respawn once with a fresh child for a required slice. Never resume a failed child to fix its own work. When the failure carries a provider error, follow the next bullet before that respawn. A failure that reads `Killed: out of memory.` is an out-of-memory kill that T3 reports. Lower the load before you respawn that child. Run fewer children at once, or run builds through the slot in [Local command capacity](#local-command-capacity). Report a second kill as a blocker.
 - Check a usage limit only for a failed child that did not return the brief's result. When a failed child's error names a usage limit, follow [failures.md](failures.md#usage-limit) before you respawn it.
 - `hasPendingChildRuns` on `task_status` does not mean the child is still running. It reports later turns on the child's thread, even after the task ended, and it does not reopen the task, including a turn you start with `t3_thread_send`. Decide completion by `workState` alone. On older hosts, see [Older hosts](host.md#older-hosts).
-- A stalled child (see [Delegation](#delegation) step 5): first call `t3_pending_request_list` with the child's `childThreadId` as `threadId`. On older hosts, see [Older hosts](host.md#older-hosts). A child with a question that blocks it waits on an answer and is not stalled. Answer it per [Pending requests](#pending-requests), and count its 10 minutes again from the answer. Otherwise read its last items. When its last assistant message holds the result the brief asked for, use that message as the result and call `task_cancel` on the task. When its last item is an approval request that is still waiting, call `task_cancel` and respawn once with no `runtimeMode`. Otherwise call `task_cancel` and respawn once for a required slice.
+- A stalled child (see [Delegation](delegation.md#spawn-and-collect) step 5): first call `t3_pending_request_list` with the child's `childThreadId` as `threadId`. On older hosts, see [Older hosts](host.md#older-hosts). A child with a question that blocks it waits on an answer and is not stalled. Answer it per [Pending requests](#pending-requests), and count its 10 minutes again from the answer. Otherwise read its last items. When its last assistant message holds the result the brief asked for, use that message as the result and call `task_cancel` on the task. When its last item is an approval request that is still waiting, call `task_cancel` and respawn once with no `runtimeMode`. Otherwise call `task_cancel` and respawn once for a required slice.
 
 ### Fresh children by default
 
@@ -167,9 +167,6 @@ The slot rules live in [isolation.md](isolation.md#local-command-capacity).
 ## Top-level threads
 
 Create top-level threads only when the user asked for separate threads or invoked a playbook or skill that names them (Orchestrate, Autopilot-full, Autopilot-stack, brigade). Invoking those is that request. Everything else uses child tasks.
-
-- Follow a thread with `t3_thread_wait` and read it with `t3_thread_read` (use `afterPosition` to read only what is new). Send follow-ups with `t3_thread_send`, interrupt with `t3_thread_interrupt`.
-- A thread launched with `t3_thread_launch` has no parent. Its finished turn does not wake the launcher. A launcher that needs a report names the message the launched thread sends with `t3_thread_send`.
 
 The launch shape and the other fields live in [threads.md](threads.md#top-level-threads).
 

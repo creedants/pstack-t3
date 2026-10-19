@@ -60,7 +60,7 @@ Before you use a saved transcript file from another environment, read [History n
 Before you read Claude conversation history, read [History notes](host.md#history-notes).
 
 - Find prior work: `t3_thread_search` with a topic, branch, or PR number. It covers the current project.
-- Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per Delegation step 5.
+- Read it: `t3_thread_read` with `view: "messages"` for the conversation, `view: "activity"` for tool activity. Page with `afterPosition`. Read the worker's explicit report and the result its brief required before treating narration as a decision or completion. Use the activity view to check the turn's order, and collect a child task with `task_status` per [Delegation](delegation.md#spawn-and-collect) step 5.
 - Page long stored items with `itemId` and `textOffset`. On T3 Code 0.0.46-nightly.20261014.3105 or later, new file-change items keep only a bounded prefix of their edit text, and paging cannot recover the discarded suffix. On older hosts, see [Older hosts](host.md#older-hosts). Read `git diff <base>...<head>` in the worker's checkout for the whole change.
 - A thread the user attached as context is readable even outside this project.
 - Child tasks are threads too. A `childThreadId` from `delegate_task` is readable with `t3_thread_read`.
