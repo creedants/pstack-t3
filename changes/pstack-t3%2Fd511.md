@@ -1,0 +1,2 @@
+- kind polish
+- `CONTRIBUTING.md` lists the three stable check refusals in `scripts/release.py` that a real run makes
