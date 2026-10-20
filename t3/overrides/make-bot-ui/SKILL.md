@@ -13,6 +13,14 @@ Build a page the user clicks. A server on this computer POSTs JSON to a webhook 
 
 The bot is a separate service. T3 runs this agent and cannot create a routine in the bot's service. A T3 webhook trigger is a `schedule_task` run with a `{"type": "webhook"}` schedule, and it wakes a T3 thread, not this bot. The user owns the routine. You build the UI, the local server, and the tailnet exposure.
 
+## Choose the route
+
+Ask whether the bot should be a T3 thread. If yes, read [Webhook schedules](../pstack-runtime/webhooks.md) and offer the native route.
+
+- The user enters the signing key in the `request_secret` card. The one-use `secretRef` goes to `schedule_task`.
+- The local server still needs the same key on disk to sign each POST to `webhookUrl`. A `secretRef` is not exportable, so the key-file steps below apply.
+- If the user wants the external bot service, or the `schedule_task` result has no `webhookUrl`, follow the external route below unchanged.
+
 ## Get the webhook routine
 
 Ask the user which bot service and routine the UI should wake. If the routine does not exist yet, give the user this prompt to paste into the bot service's routine editor, with a webhook trigger:
