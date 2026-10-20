@@ -5,6 +5,8 @@ Read this file when the orchestrate playbook links to it.
 ## Owner reporting
 
 - Spawn, resume, drain, and follow agents per the runtime's [Delegation](../../pstack-runtime/SKILL.md#delegation) and [Top-level threads](../../pstack-runtime/SKILL.md#top-level-threads).
+- Agents are spawned only through `delegate_task` and `t3_thread_launch`, and resumed only through `t3_thread_send`.
+- T3 children run on this machine, so every worker can reach the preview tools, T3 threads, simulators, local IDE state, local auth, and the store by its absolute path.
 - Carry the coordinator's thread ID in each owner brief.
 - A report is a queue event even when it steers into a turn. Push it to the inbox with `orch inbox push` and return to what you were doing.
 - Drain only `delegate_task` children from their completion notifications. A launched owner's finished turn does not wake the coordinator, so follow it with `t3_thread_read`. The owner reports with a one-line `t3_thread_send` and `mode: "auto"`, per [Top-level threads](../../pstack-runtime/SKILL.md#top-level-threads).
@@ -25,7 +27,7 @@ Read this file when the orchestrate playbook links to it.
 After a T3 restart or provider switch:
 
 - Treat a child as dead unless `task_status` shows `workState` `working` or `waiting_for_children`. A sub-coordinator waiting on its children is alive. Do not respawn its track.
-- Pushed branches and launched threads persist, and a worktree persists unless storage cleanup removed it, per [the runtime's Local state](../../pstack-runtime/SKILL.md#local-state).
+- Pushed branches and launched threads persist, and a worktree persists unless storage cleanup removed it, per [the runtime's Isolation section](../../pstack-runtime/SKILL.md#isolation).
 - Re-read the standing orders and `units.tsv`, and recompute the frontier.
 - Reattach work by PR and branch rather than task id, and use `t3_thread_list` for launched threads.
 - Respawn a sub-coordinator from its stored brief plus current state only for a track whose sub-coordinator is not alive.
