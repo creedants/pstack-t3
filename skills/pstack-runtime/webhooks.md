@@ -11,7 +11,7 @@ Read this file before you create a webhook schedule, ask for a signing secret, o
 
 ## Create the schedule
 
-- A webhook beats an interval or fixed-time schedule when the event source can send an HTTP POST to a URL the user controls, such as a repository webhook or a CI job.
+- A webhook beats an interval or fixed-time schedule when the event source can send an HTTP POST to the task's `webhookUrl`, such as a repository webhook or a CI job.
 - Call `request_secret` only when the sender signs its requests. Never ask for the secret in chat.
 - Then call `schedule_task` with a self-contained `prompt`, `{"type": "webhook"}` as `schedule`, and a `signature` built from the returned `secretRef`.
 - A run posts into this thread by default. Set `bindToCurrentThread: false` only when the user wants a fresh top-level thread for each request.
