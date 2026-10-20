@@ -75,6 +75,39 @@ class LeaseWidenTest(LandingTestBase):
                 self.assertIn("L1 active docs/D1", land.lease_list(store))
                 self.assertIn("a.txt, b.txt, c.txt", land.lease_list(store))
 
+    def test_widen_keeps_folded_coverage_when_the_clock_crosses_the_kept_expiry_after_the_decision(self):
+        self.init()
+        self.assertEqual(self.claim("docs/D1", "a.txt", "--ttl-hours", "1"), "L1")
+        self.assertEqual(self.claim("docs/D1", "a.txt,b.txt"), "L2")
+        first = datetime.fromisoformat(self.lease_row(1)[5])
+        clock = {"now": first - timedelta(microseconds=1)}
+        module = land.lease_widen.__globals__
+        seam = module["seam"]
+        take = module["take"]
+
+        def take_then_expire(*args, **kwargs):
+            clock["now"] = first + timedelta(microseconds=1)
+            return take(*args, **kwargs)
+
+        with mock.patch.object(seam, "now", lambda: clock["now"]), \
+                mock.patch.object(seam, "stamp", lambda moment=None: (moment or clock["now"]).isoformat(timespec="microseconds")), \
+                mock.patch.dict(module, {"take": take_then_expire}):
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(land.lease_widen(store, 1, "c.txt"), "L1 widened")
+                listed = land.lease_list(store)
+                self.assertIn("L1 active docs/D1", listed)
+                self.assertIn("a.txt, b.txt, c.txt", listed)
+        self.assertEqual(self.lease_row(1)[5], self.lease_row(2)[5])
+
+    def test_widen_tiny_positive_ttl_does_not_release_the_folded_leases_coverage(self):
+        self.init()
+        self.assertEqual(self.claim("docs/D1", "a.txt", "--ttl-hours", "0"), "L1")
+        self.assertEqual(self.claim("docs/D1", "a.txt,b.txt"), "L2")
+        self.assertEqual(self.land("lease", "widen", "L1", "--paths", "c.txt", "--ttl-hours", "0.000000001"), "L1 widened")
+        self.assertEqual(self.listed(), ["L1 active docs/D1: a.txt, b.txt, c.txt"])
+        self.assertEqual(self.claim("engine/D2", "a.txt,b.txt", ok=False),
+                         "land: paths overlap L1 held by docs/D1 on a.txt, b.txt, c.txt")
+
     def test_widen_transfers_a_folded_leases_partial_reservation_to_the_kept_lease(self):
         self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--cap", "1")
         self.assertEqual(self.claim("docs/D1", "lib", "--ttl-hours", "0"), "L1")

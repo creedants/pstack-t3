@@ -250,9 +250,9 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
 def lease_widen(store, number, paths, ttl_hours=6, owner=None):
     """Add paths to one lease in place, folding that holder's other active unexpired leases into it.
 
-    A live lease keeps its expiry and an expired one takes the TTL. A TTL that leaves it expired is refused, so a fold
-    never releases live coverage. The holder's other active unexpired leases are released in the same transaction, and
-    the standing reservations they took name this lease before that release.
+    A live lease keeps its expiry and an expired one takes the TTL, or a later folded expiry. The widen refuses if the
+    new expiry is at or before the clock reading after admission. The holder's other active unexpired leases are
+    released in the same transaction, and the standing reservations they took name this lease before that release.
     """
     wanted = wanted_paths(paths)
     with store.tx() as db:
@@ -280,6 +280,7 @@ def lease_widen(store, number, paths, ttl_hours=6, owner=None):
             expires = seam.stamp(moment + timedelta(hours=ttl_hours))
             if expires <= seam.stamp(moment):
                 raise seam.LandError(f"L{number} expired and a TTL of {ttl_hours:g} hours keeps it expired")
+        expires = max([expires, *(lease["expires"] for lease in orphans)])
         folded = {lease["id"] for lease in orphans}
         held = [item["id"] for item in standing(db) if folded & set(taken_ids(item["taken"]))]
         db.execute("UPDATE lease SET paths = ?, expires = ? WHERE id = ?", ("\n".join(merged), expires, number))

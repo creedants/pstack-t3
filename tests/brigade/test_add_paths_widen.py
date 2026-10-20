@@ -86,6 +86,46 @@ class AddPathsWidenTest(BrigadeTest):
         self.assertEqual(self.land("lease", "claim", "--holder", "engine/D1", "--paths", "src/a.py", ok=False),
                          "land: paths overlap L2 held by perf/D1 on README.md, inner.py, outer.py, src/a.py")
 
+    def test_drop_after_a_mismatch_releases_the_lease_the_widen_left_unrecorded(self):
+        self.started()
+        self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1", "--paths", "README.md,src/a.py"), "L2")
+        self.assertEqual(self.land("lease", "release", "L1"), "L1 released")
+        commands = run_globals(self, SCRIPT)["COMMANDS"]
+        dish = next(command.handle for command in commands if command.name == "dish").__globals__
+        module = dish["widen"].__globals__
+        widen_lease = module["widen_lease"]
+        paused = []
+
+        def widen_then_claim(restaurant, lease, claim):
+            result = widen_lease(restaurant, lease, claim)
+            if not paused:
+                paused.append(lease)
+                self.assertEqual(self.land("lease", "claim", "--holder", "perf/D1",
+                                            "--paths", "README.md,src/a.py"), "L3")
+                inner = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                       *_owner_words(self.at), "dish", "D1",
+                                                       "--lease", "L3", "--paths", "README.md,src/a.py"])
+                self.assertEqual(inner.code, 0, inner.stdout_text() + inner.stderr_text())
+            return result
+
+        module["widen_lease"] = widen_then_claim
+        try:
+            outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                     *_owner_words(self.at), "dish", "D1",
+                                                     "--add-paths", "outer.py"])
+        finally:
+            module["widen_lease"] = widen_lease
+        self.assertEqual(outcome.code, 1)
+        self.assertEqual(outcome.stderr_text().strip(),
+                         "brigade: D1 changed while widening; run dish D1 --add-paths again")
+        listed = self.land("lease", "list")
+        self.assertIn("L2 active perf/D1 until ", listed)
+        self.assertIn("L3 active perf/D1 until ", listed)
+        self.assertEqual(self.brigade("dish", "D1", "--state", "dropped"), "D1 dropped; T1 waiting again")
+        self.assertEqual(self.land("lease", "list"), "no leases held")
+        self.assertEqual(self.brigade("dish", "D1", "--add-paths", "outer.py", ok=False),
+                         "brigade: D1 is dropped; it holds no lease")
+
     def test_add_paths_claims_fresh_when_the_recorded_lease_was_released(self):
         self.init_landing("--cap", "3")
         with mock.patch.dict(os.environ, self.land_env()):
