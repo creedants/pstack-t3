@@ -7,6 +7,6 @@
 - a fold keeps the widened lease's expiry no earlier than the latest expiry among the live leases it folds
 - an expired lease is widened by re-admitting it on the merged paths with the requested ttl, and a ttl that sets its expiry at or before the post-admission clock reading refuses the widen and changes no row
 - `dish --add-paths` leaves the widened lease live when the dish row records a different lease, so the lease another widen recorded keeps its coverage
-- `dish --state dropped` releases every active lease of the item's exact holder, including one an interrupted widen left unrecorded, and leaves submitted leases to the queue
+- `dish --state dropped` releases every live active lease of the item's exact holder, including one an interrupted widen left unrecorded, and leaves submitted leases to the queue
 - `dish --add-paths` calls `land.py lease widen` and records the same lease id while the recorded lease is live or expired; a released or missing lease records the holder's newest live lease, or a fresh claim when it holds none
 - `watch` keeps renewing the recorded lease and does not fold another lease into it

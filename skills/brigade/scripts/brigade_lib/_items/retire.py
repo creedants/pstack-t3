@@ -85,7 +85,7 @@ def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only
 
 
 def drop(restaurant, ident, stopped):
-    """Drop a dish and release every active lease of its holder, only after its worker stopped. A requested interrupt is not a stop."""
+    """Drop a dish and release every live active lease of its holder, only after its worker stopped. A requested interrupt is not a stop."""
     swept = holder_leases(restaurant.meta["projectRoot"], holder(restaurant, ident))
     with restaurant.checked():
         restaurant.fence()
