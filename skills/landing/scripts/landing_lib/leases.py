@@ -1,7 +1,7 @@
 import re
 from datetime import timedelta
 from landing_lib import seam
-"""Re-exports names from _leases. Patch a name in the _leases module that reads it. Patching it here does not reach callers."""
+"""Re-exports names from _leases. Patch a name in the _leases module that reads it. Patching it here reaches callers defined in leases.py. It does not reach callers inside _leases or names land.py already copied."""
 from ._leases.store import (in_flight, holders_of, lease_paths, held_on, standing, taken_ids, add_taken, counts, under, reserved_for, arm_reservations, admission, take, wanted_paths)
 from ._leases.owner import (parse_owner, check_owner, check_ruling_owner, holder_prefix, raise_floor)
 
