@@ -45,6 +45,16 @@ class LandingAreasTest(unittest.TestCase):
             for name in names:
                 self.assertTrue(hasattr(module, name), f"{area}.{name}")
 
+    def test_leases_area_missing_public_callable(self):
+        import landing_lib.leases as leases
+        expected = {
+            name for name, value in vars(leases).items()
+            if not name.startswith("_") and callable(value)
+            and (getattr(value, "__module__", "") == "landing_lib.leases"
+                 or getattr(value, "__module__", "").startswith("landing_lib._leases"))
+        }
+        self.assertEqual(set(landing_lib.AREAS["leases"]), expected)
+
 
 if __name__ == "__main__":
     unittest.main()
