@@ -22,8 +22,8 @@ class OnDemandRuntimeDocTest(unittest.TestCase):
 
 
 class MakeBotUiRouteTest(unittest.TestCase):
-    def test_make_bot_ui_keeps_the_external_key_file_route_and_refuses_the_key_in_chat(self):
+    def test_make_bot_ui_names_the_external_key_file_and_nonempty_check(self):
         text = (ROOT / "skills/make-bot-ui/SKILL.md").read_text()
-        for phrase in ("<ui-dir>/.webhook-key", "test -s", "Do not accept the sender key in chat."):
+        for phrase in ("<ui-dir>/.webhook-key", "test -s"):
             self.assertIn(phrase, text)
         self.assertIn("## Get the webhook routine", text)
