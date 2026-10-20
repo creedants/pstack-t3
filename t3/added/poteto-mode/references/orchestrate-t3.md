@@ -5,9 +5,10 @@ Read this file when the orchestrate playbook links to it.
 ## Owner reporting
 
 - Spawn, resume, drain, and follow agents per the runtime's [Delegation](../../pstack-runtime/SKILL.md#delegation) and [Top-level threads](../../pstack-runtime/SKILL.md#top-level-threads).
-- Agents are spawned only through `delegate_task` and `t3_thread_launch`, and resumed only through `t3_thread_send`.
-- T3 children run on this machine, so every worker can reach the preview tools, T3 threads, simulators, local IDE state, local auth, and the store by its absolute path.
+- Spawn a worker only through `delegate_task`, a long-lived owner only through `t3_thread_launch`, and resume either only through `t3_thread_send`.
+- A worker runs on this machine, so it reaches local files, browsers, and auth, and the store by its absolute path, per [the runtime's Vocabulary](../../pstack-runtime/SKILL.md#vocabulary) and [Local state](../../pstack-runtime/SKILL.md#local-state).
 - Carry the coordinator's thread ID in each owner brief.
+- Follow [the Subagents section](../SKILL.md#subagents) for the poteto-agent persona and the `roles.py mode` brief lines.
 - A report is a queue event even when it steers into a turn. Push it to the inbox with `orch inbox push` and return to what you were doing.
 - Drain only `delegate_task` children from their completion notifications. A launched owner's finished turn does not wake the coordinator, so follow it with `t3_thread_read`. The owner reports with a one-line `t3_thread_send` and `mode: "auto"`, per [Top-level threads](../../pstack-runtime/SKILL.md#top-level-threads).
 
