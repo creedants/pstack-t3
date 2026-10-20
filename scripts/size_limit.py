@@ -175,5 +175,5 @@ def findings(root):
         current = _walk_sizes(root)
     except OSError as error:
         return [f"size limit: worktree cannot be read: {error}"]
-    verdict = sizes.judge(current, limit)
+    verdict = sizes.judge(current, limit, current.get)
     return [f"size limit: {sizes.format_over(item)}" for item in verdict.over]
