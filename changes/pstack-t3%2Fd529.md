@@ -1,0 +1,7 @@
+- kind upkeep
+- Move `vendor/pstack` to upstream commit 88d47514b8 at version 0.15.29.
+- Refresh `upstream.json` and the README badge to that commit and version.
+- Ship the restored `sharpen` skill through the build with no override.
+- Reapply the `$` prefix to the two upstream `poteto-help` sharpen lines.
+- Refresh `t3/overrides.lock.json` after review of both re-ports.
+- `python3 scripts/check.py` reports no Cursor leftovers.
