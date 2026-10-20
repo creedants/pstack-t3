@@ -178,8 +178,26 @@ def format_over(item):
             f"plus margin {item.relative.margin} for {item.kind.value}; {SPLIT_STEPS[item.kind]}")
 
 
+def _is_canonical_key(path):
+    """True when a files key is a canonical repo-relative path."""
+    if not isinstance(path, str) or not path:
+        return False
+    if "\\" in path:
+        return False
+    if path.startswith("/"):
+        return False
+    if posixpath.normpath(path) != path:
+        return False
+    for part in path.split("/"):
+        if part in ("", ".", ".."):
+            return False
+    return True
+
+
 def _entry(path, value):
     """A parsed files entry: a token count or a Relative."""
+    if not _is_canonical_key(path):
+        raise ValueError("files must map paths to token counts or relative allowances")
     if isinstance(value, Relative):
         return value
     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
@@ -191,7 +209,7 @@ def _entry(path, value):
                 and ".." not in reference.split("/")
                 and isinstance(margin, int) and not isinstance(margin, bool) and margin >= 0):
             normalized = posixpath.normpath(reference)
-            if normalized != path:
+            if normalized != posixpath.normpath(path):
                 return Relative(normalized, margin)
     raise ValueError("files must map paths to token counts or relative allowances")
 
@@ -290,6 +308,19 @@ def refused_policy_change(base_raw, cand_raw, ceiling=None):
         return None
     if not isinstance(cand_raw, dict):
         return "size baseline cannot be read"
+    cand_skip_check = cand_raw.get("skip", [])
+    if not isinstance(cand_skip_check, list) or any(not isinstance(entry, str) for entry in cand_skip_check):
+        return "size baseline cannot be read"
+    cand_files_check = cand_raw.get("files", {})
+    if not isinstance(cand_files_check, dict):
+        return "size baseline cannot be read"
+    for check_name, check_value in cand_files_check.items():
+        if not _is_canonical_key(check_name):
+            return "size baseline cannot be read"
+        try:
+            _entry(check_name, check_value)
+        except ValueError:
+            return "size baseline cannot be read"
     if base_raw.get("enabled") is True and cand_raw.get("enabled") is not True:
         return "size baseline removes enabled policy; a person merges that raise outside the queue"
     base_max = base_raw.get("maxFileTokens", DEFAULT_MAX_TOKENS)
