@@ -56,6 +56,63 @@ def _commit_sizes(repo, commit, names, skip):
             continue
     return sizes
 
+def _worktree_reference(root):
+    """Reader of worktree reference sizes. A missing path or a non-file reads as None, and a symlinked file reads as the file it points to."""
+    def read(path):
+        try:
+            kind = os.stat(Path(root) / path)
+        except OSError:
+            return None
+        return kind.st_size if stat.S_ISREG(kind.st_mode) else None
+    return read
+
+def _index_reference(repo):
+    """Reader of staged reference sizes. A path that is not a regular file at stage 0 reads as None."""
+    def read(path):
+        listed = seam.git("ls-files", "-s", "-z", "--", f":(literal){path}", cwd=repo, check=False, exact=True)
+        if listed.returncode != 0:
+            return None
+        records = [record for record in listed.stdout.split("\0") if record]
+        if len(records) != 1:
+            return None
+        meta, _, name = records[0].partition("\t")
+        fields = meta.split()
+        if name != path or len(fields) != 3:
+            return None
+        mode, _, stage = fields
+        if mode not in ("100644", "100755") or stage != "0":
+            return None
+        sized = seam.git("cat-file", "-s", f":0:{path}", cwd=repo, check=False)
+        if sized.returncode != 0:
+            return None
+        try:
+            return int(sized.stdout.strip())
+        except ValueError:
+            return None
+    return read
+
+def _commit_reference(repo, commit):
+    """Reader of reference sizes as stored in one commit. A path that is not a regular file reads as None."""
+    def read(path):
+        listed = seam.git("ls-tree", "-l", "-z", commit, "--", f":(literal){path}", cwd=repo, check=False, exact=True)
+        if listed.returncode != 0:
+            return None
+        records = [record for record in listed.stdout.split("\0") if record]
+        if len(records) != 1:
+            return None
+        meta, _, name = records[0].partition("\t")
+        fields = meta.split()
+        if name != path or len(fields) != 4:
+            return None
+        mode, kind, _, size = fields
+        if mode not in ("100644", "100755") or kind != "blob":
+            return None
+        try:
+            return int(size)
+        except ValueError:
+            return None
+    return read
+
 def _write_baseline(path, maximum, skip, files, enabled=None):
     payload = {"maxFileTokens": maximum, "skip": list(skip), "files": dict(files)}
     if enabled is True:
@@ -88,18 +145,22 @@ def seed_baseline(path, maximum, sizes, skip=None):
     _write_baseline(path, maximum, skip, over)
 
 def shrink_baseline(path, sizes, maximum=None):
-    """Lower stored allowances that fell. Never raises one. Drops entries whose stored allowance sat above the maximum once the file fits."""
+    """Lower stored allowances that fell. Never raises one. Drops entries whose stored allowance sat above the maximum once the file fits. A relative entry is left as it is."""
     stored = seam.load_baseline_file(str(path))
     raw = _read_worktree_baseline_raw(path)
     kept = raw.get("enabled") is True if isinstance(raw, dict) else None
-    files = dict(stored.files)
+    raw_files = raw.get("files") if isinstance(raw, dict) else None
+    files = dict(raw_files) if isinstance(raw_files, dict) else dict(stored.files)
     effective = maximum if isinstance(maximum, int) and not isinstance(maximum, bool) and maximum >= 1 else stored.max_tokens
     for name in list(files):
+        stored_tokens = files[name]
+        if isinstance(stored_tokens, bool) or not isinstance(stored_tokens, int):
+            continue
         if name not in sizes:
             continue
         tokens = seam.tokens_for(sizes[name])
-        if tokens < files[name]:
-            if files[name] > effective and tokens <= effective:
+        if tokens < stored_tokens:
+            if stored_tokens > effective and tokens <= effective:
                 del files[name]
             else:
                 files[name] = tokens
@@ -237,7 +298,7 @@ def size_report(path, staged, all_files, shrink, baseline):
         else:
             names = _diff_names(repo, "HEAD") + _tracked_names(repo, "--others", "--exclude-standard")
             sizes = _worktree_sizes(repo, names)
-    verdict = seam.judge(sizes, limit)
+    verdict = seam.judge(sizes, limit, _index_reference(repo) if staged else _worktree_reference(repo))
     if verdict.over:
         raise seam.LandError(seam.format_verdict(verdict))
     return f"size ok: checked {len(sizes)} paths via {baseline_rel}"
@@ -288,7 +349,7 @@ def check_candidate_size(store, base, candidate):
     limit = seam.Limit(limit.max_tokens, tuple(seam.DEFAULT_SKIP) + tuple(limit.skip) + tuple(generated) + (baseline_rel,), limit.files)
     changed = seam.changed_paths(repo, base, candidate)
     sizes = _commit_sizes(repo, candidate, changed, limit.skip)
-    verdict = seam.judge(sizes, limit)
+    verdict = seam.judge(sizes, limit, _commit_reference(repo, candidate))
     if verdict.over:
         return seam.format_verdict(verdict)
     return None

@@ -6,6 +6,7 @@ size-baseline.json names the allowance of each larger file. The contract points 
 
 import fnmatch
 import json
+import posixpath
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -53,6 +54,13 @@ class Read(Enum):
 
 
 @dataclass(frozen=True)
+class Relative:
+    """An allowance measured from another file: its tokens plus this margin."""
+    relative_to: str
+    margin: int
+
+
+@dataclass(frozen=True)
 class Limit:
     max_tokens: int
     skip: tuple = ()
@@ -71,8 +79,10 @@ class TrustedPolicy:
 class Over:
     path: str
     tokens: int
-    allowed: int
+    allowed: object
     kind: Kind
+    relative: object = None
+    reference_tokens: object = None
 
 
 @dataclass(frozen=True)
@@ -115,28 +125,75 @@ def skipped(path, skip):
     return False
 
 
-def allowed_for(path, limit):
-    """Allowance of one path under this limit."""
-    return limit.files.get(path, limit.max_tokens)
+def _reference_tokens(entry, reference_bytes):
+    """Tokens of a relative entry's reference, or None when the reference is missing."""
+    if reference_bytes is None:
+        return None
+    size = reference_bytes(entry.relative_to)
+    return None if size is None else tokens_for(size)
 
 
-def judge(sizes, limit):
+def allowed_for(path, limit, reference_bytes=None):
+    """Allowance of one path under this limit, or None when its reference is missing."""
+    entry = limit.files.get(path, limit.max_tokens)
+    if isinstance(entry, Relative):
+        reference = _reference_tokens(entry, reference_bytes)
+        return None if reference is None else reference + entry.margin
+    return entry
+
+
+def judge(sizes, limit, reference_bytes):
     """Verdict for a path to byte count mapping under this limit."""
     over = []
     for path in sorted(sizes):
         if skipped(path, limit.skip):
             continue
         tokens = tokens_for(sizes[path])
-        allowed = allowed_for(path, limit)
-        if tokens > allowed:
+        entry = limit.files.get(path)
+        allowed = allowed_for(path, limit, reference_bytes)
+        if allowed is None:
+            over.append(Over(path, tokens, None, kind_for(path), entry, None))
+            continue
+        if tokens <= allowed:
+            continue
+        if isinstance(entry, Relative):
+            over.append(Over(path, tokens, allowed, kind_for(path), entry,
+                             _reference_tokens(entry, reference_bytes)))
+        else:
             over.append(Over(path, tokens, allowed, kind_for(path)))
     return Verdict(tuple(over))
 
 
 def format_over(item):
     """One error line naming path, tokens, and allowance, then the split step."""
+    if item.relative is None:
+        return (f"{item.path}: {item.tokens} tokens over allowance {item.allowed} "
+                f"for {item.kind.value}; {SPLIT_STEPS[item.kind]}")
+    if item.allowed is None:
+        return (f"{item.path}: {item.tokens} tokens over a relative allowance "
+                f"for {item.kind.value}; reference {item.relative.relative_to} is missing; "
+                f"{SPLIT_STEPS[item.kind]}")
     return (f"{item.path}: {item.tokens} tokens over allowance {item.allowed} "
-            f"for {item.kind.value}; {SPLIT_STEPS[item.kind]}")
+            f"from reference {item.relative.relative_to} at {item.reference_tokens} tokens "
+            f"plus margin {item.relative.margin} for {item.kind.value}; {SPLIT_STEPS[item.kind]}")
+
+
+def _entry(path, value):
+    """A parsed files entry: a token count or a Relative."""
+    if isinstance(value, Relative):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    if isinstance(value, dict) and set(value) == {"relativeTo", "margin"}:
+        reference = value["relativeTo"]
+        margin = value["margin"]
+        if (isinstance(reference, str) and reference and not reference.startswith("/")
+                and ".." not in reference.split("/")
+                and isinstance(margin, int) and not isinstance(margin, bool) and margin >= 0):
+            normalized = posixpath.normpath(reference)
+            if normalized != path:
+                return Relative(normalized, margin)
+    raise ValueError("files must map paths to token counts or relative allowances")
 
 
 def format_verdict(verdict):
@@ -155,11 +212,9 @@ def parse_limit(obj):
     if not isinstance(skip, list) or any(not isinstance(entry, str) for entry in skip):
         raise ValueError("skip must be a list of strings")
     files = obj.get("files", {})
-    if (not isinstance(files, dict) or
-            any(not isinstance(path, str) for path in files) or
-            any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in files.values())):
-        raise ValueError("files must map paths to token counts at or above 0")
-    return Limit(maximum, tuple(skip), dict(files))
+    if not isinstance(files, dict) or any(not isinstance(path, str) for path in files):
+        raise ValueError("files must map paths to token counts or relative allowances")
+    return Limit(maximum, tuple(skip), {path: _entry(path, value) for path, value in files.items()})
 
 
 def baseline_enabled(obj):
@@ -257,20 +312,45 @@ def refused_policy_change(base_raw, cand_raw, ceiling=None):
     else:
         base_ceiling = DEFAULT_MAX_TOKENS
     for name, value in cand_files.items():
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        if not isinstance(name, str):
+            return "size baseline cannot be read"
+        try:
+            new = _entry(name, value)
+        except ValueError:
             return "size baseline cannot be read"
         old = base_files.get(name)
+        if old is not None:
+            try:
+                old = _entry(name, old)
+            except ValueError:
+                old = None
         if old is None:
-            if value <= base_ceiling:
+            if isinstance(new, Relative):
+                return f"size baseline adds a relative allowance for {name}; a person merges that raise outside the queue"
+            if new <= base_ceiling:
                 continue
             return f"size baseline adds a grandfathered file {name}; a person merges that raise outside the queue"
-        if isinstance(old, int) and not isinstance(old, bool) and value > old:
+        if isinstance(old, Relative):
+            if isinstance(new, int):
+                return f"size baseline changes the relative allowance for {name} to a fixed one; a person merges that raise outside the queue"
+            if new.relative_to != old.relative_to:
+                return f"size baseline changes the reference for {name}; a person merges that raise outside the queue"
+            if new.margin > old.margin:
+                return f"size baseline raises the margin for {name}; a person merges that raise outside the queue"
+            continue
+        if isinstance(new, Relative):
+            return f"size baseline changes the allowance for {name} to a relative one; a person merges that raise outside the queue"
+        if new > old:
             return f"size baseline raises the allowance for {name}; a person merges that raise outside the queue"
-    for name, old in base_files.items():
-        if name in cand_files:
+    for name, value in base_files.items():
+        if name in cand_files or not isinstance(name, str):
             continue
-        if isinstance(old, bool) or not isinstance(old, int) or old < 0:
+        try:
+            old = _entry(name, value)
+        except ValueError:
             continue
+        if isinstance(old, Relative):
+            return f"size baseline removes the relative allowance for {name}; a person merges that raise outside the queue"
         if base_ceiling > old:
             return f"size baseline raises the allowance for {name}; a person merges that raise outside the queue"
     base_skip = base_raw.get("skip", [])
