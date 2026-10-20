@@ -1,0 +1,3 @@
+- kind polish
+- `AREAS["leases"]` lists `lease_widen`.
+- `tests/test_landing_areas.py` fails when a public `leases` callable is missing from `AREAS`.
