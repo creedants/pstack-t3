@@ -57,7 +57,7 @@ def _commit_sizes(repo, commit, names, skip):
     return sizes
 
 def _worktree_reference(root):
-    """Reader of worktree reference sizes. A path that is not a regular file reads as None."""
+    """Reader of worktree reference sizes. A missing path or a non-file reads as None, and a symlinked file reads as the file it points to."""
     def read(path):
         try:
             kind = os.stat(Path(root) / path)

@@ -6,6 +6,7 @@ size-baseline.json names the allowance of each larger file. The contract points 
 
 import fnmatch
 import json
+import posixpath
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -187,9 +188,11 @@ def _entry(path, value):
         reference = value["relativeTo"]
         margin = value["margin"]
         if (isinstance(reference, str) and reference and not reference.startswith("/")
-                and ".." not in reference.split("/") and reference != path
+                and ".." not in reference.split("/")
                 and isinstance(margin, int) and not isinstance(margin, bool) and margin >= 0):
-            return Relative(reference, margin)
+            normalized = posixpath.normpath(reference)
+            if normalized != path:
+                return Relative(normalized, margin)
     raise ValueError("files must map paths to token counts or relative allowances")
 
 

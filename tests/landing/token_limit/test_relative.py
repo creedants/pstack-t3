@@ -17,6 +17,7 @@ FORMS = (
     {"relativeTo": "/ref.md", "margin": 1},
     {"relativeTo": "a/../ref.md", "margin": 1},
     {"relativeTo": "big.py", "margin": 1},
+    {"relativeTo": "./big.py", "margin": 1},
 )
 
 

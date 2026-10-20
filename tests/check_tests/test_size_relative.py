@@ -17,6 +17,7 @@ FORMS = (
     {"relativeTo": "/ref.md", "margin": 1},
     {"relativeTo": "a/../ref.md", "margin": 1},
     {"relativeTo": "big.py", "margin": 1},
+    {"relativeTo": "./big.py", "margin": 1},
 )
 
 RAISE = "a person merges that raise outside the queue"
@@ -109,6 +110,18 @@ class RelativeBridgeTest(unittest.TestCase):
         (root / "big.py").write_bytes(b"x" * 1600)
         (root / "vendor/ref.md").write_bytes(b"x" * 1600)
         self.assertEqual(size_limit.findings(root), [])
+
+    def test_a_dot_prefixed_reference_reads_the_same_file(self):
+        root = self._git_repo(
+            self._enabled({"big.py": {"relativeTo": "./vendor/ref.md", "margin": 300}}),
+            [("vendor/ref.md", 400), ("big.py", 400)])
+        self.assertEqual(size_limit.findings(root), [])
+        (root / "big.py").write_bytes(b"x" * 2000)
+        findings = size_limit.findings(root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("vendor/ref.md", findings[0])
+        self.assertNotIn("./vendor/ref.md", findings[0])
+        self.assertIn("at 100 tokens", findings[0])
 
     def test_a_missing_reference_is_named_in_the_worktree(self):
         root = self._git_repo(
