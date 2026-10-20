@@ -280,7 +280,7 @@ class BaselineSchemaLandingTest(LandingTestBase):
         with land.Store.for_repo(self.work) as store:
             self.assertIn(CANNOT_BE_READ, land.check_candidate_size(store, base, sha))
 
-    def test_invalid_key_fails_closed_for_all_paths(self):
+    def test_invalid_key_fails_closed_with_all_flag(self):
         self.seed()
         baseline = {"maxFileTokens": 5000, "skip": [], "files": {"./big.py": 100}, "enabled": True}
         (self.work / "size-baseline.json").write_text(json.dumps(baseline))
