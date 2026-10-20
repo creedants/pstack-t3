@@ -1,0 +1,3 @@
+- kind fix
+- `scripts/build.py` builds from a copy of the repository whose files are read-only, such as an installed copy. Each built file gets its source's mode plus owner write. Before, the vendor layer copied a read-only mode onto its file, so the overrides layer failed with `PermissionError` when it replaced that file, and the build could not rewrite any `SKILL.md`.
+- `tests/test_build.py` `test_a_read_only_copy_builds_the_same_files_and_modes_as_a_writable_one` builds one copy of the repository writable and then read-only, and checks both builds give the same files with the same modes.
