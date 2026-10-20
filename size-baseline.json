@@ -1,8 +1,8 @@
 {
   "enabled": true,
   "files": {
-    "t3/overrides/poteto-mode/SKILL.md": 5362,
-    "t3/overrides/poteto-mode/playbooks/orchestrate.md": 5265,
+    "t3/overrides/poteto-mode/SKILL.md": {"relativeTo": "vendor/pstack/skills/poteto-mode/SKILL.md", "margin": 300},
+    "t3/overrides/poteto-mode/playbooks/orchestrate.md": {"relativeTo": "vendor/pstack/skills/poteto-mode/playbooks/orchestrate.md", "margin": 500},
     "tests/fixtures/land_before_e_rename.py": 14795
   },
   "maxFileTokens": 5000,
