@@ -33,4 +33,3 @@ After a T3 restart or provider switch:
 - Reattach work by PR and branch rather than task id, and use `t3_thread_list` for launched threads.
 - Respawn a sub-coordinator from its stored brief plus current state only for a track whose sub-coordinator is not alive.
 - Drain, then resume.
-- The dead session's store lock clears itself on the next write. `orch` replaces a lock whose holder pid is gone.
