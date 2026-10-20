@@ -105,11 +105,14 @@ def drop(restaurant, ident, stopped):
             item = stored("threads.tsv", "thread", item)
             if item:
                 observed.add(item)
+    released = []
     for item in releases:
         result = seam.land_result(restaurant.meta["projectRoot"], "lease", "release", item, *restaurant.land_owner())
         error = result.stderr.strip().removeprefix("land: ")
         if result.returncode != 0 and not error.startswith(f"{item} is not active"):
             raise BrigadeError(f"{ident} not dropped: could not release {item}: {error}")
+        if result.returncode == 0:
+            released.append(item)
     with restaurant.checked():
         _, dish = restaurant.find("dishes.tsv", ident)
         later = {item for _, _, item in worker_bindings(restaurant, ident) - bindings}
@@ -117,7 +120,7 @@ def drop(restaurant, ident, stopped):
         if cell and cell != current:
             later.add(cell)
         evidence = [f"stopped {stopped}"] if stopped else []
-        evidence += [f"released {', '.join(releases)}"] if releases else []
+        evidence += [f"released {', '.join(released)}"] if released else []
         note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
         restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
         write_threads(restaurant, ident, (), closing=True)
