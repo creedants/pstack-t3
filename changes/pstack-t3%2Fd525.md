@@ -1,0 +1,6 @@
+- kind fix
+- Canonical keys are required for integer and relative entries and self reference compares canonical paths.
+- A skip value that is not a list of strings makes the baseline invalid.
+- The bridge and queue surfaces fail closed with the existing message.
+- The doc now states the symlinked directory limit.
+- No committed baseline in this repo is affected.
