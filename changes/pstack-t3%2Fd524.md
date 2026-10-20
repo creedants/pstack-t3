@@ -1,0 +1,4 @@
+- kind polish
+- Shrink `t3/overrides/poteto-mode/playbooks/orchestrate.md` from 21061 to 18824 bytes and keep it at or under 19200.
+- Move T3-only owner reporting, liveness probe, stack safety, and restart recovery detail into `t3/added/poteto-mode/references/orchestrate-t3.md`.
+- Replace T3 restatements in the override with relative links to the runtime sections that state the same rule.
