@@ -1,5 +1,6 @@
 import sys
 from brigade_lib import seam
+from brigade_lib._leases.claims import holder, holder_leases
 from brigade_lib.reviews import thread_binding, write_threads
 from brigade_lib.shared import BrigadeError, clean, stored
 from brigade_lib.store import IN_FLIGHT_STATES, WORKER_ROLES
@@ -84,13 +85,15 @@ def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only
 
 
 def drop(restaurant, ident, stopped):
-    """Drop a dish and release its lease, only after its worker stopped. A requested interrupt is not a stop."""
+    """Drop a dish and release the lease its row records, unless it is submitted, plus every live active lease of its exact holder, only after its worker stopped. A requested interrupt is not a stop."""
+    swept = holder_leases(restaurant.meta["projectRoot"], holder(restaurant, ident))
     with restaurant.checked():
         restaurant.fence()
         _, dish = restaurant.find("dishes.tsv", ident)
         lease = dish["lease"] if dish["state"] not in ("merged", "dropped") else ""
-        if lease and dish["thread"] and not stopped:
-            raise BrigadeError(f"{ident} holds {lease} and its worker may still be running; "
+        releases = list(dict.fromkeys(item for item in [lease, *swept] if item))
+        if releases and dish["thread"] and not stopped:
+            raise BrigadeError(f"{ident} holds {', '.join(releases)} and its worker may still be running; "
                                "wait for its run with t3_thread_wait, then pass --stopped <run id>")
         observed = set()
         current = stored("dishes.tsv", "thread", dish["thread"])
@@ -102,11 +105,14 @@ def drop(restaurant, ident, stopped):
             item = stored("threads.tsv", "thread", item)
             if item:
                 observed.add(item)
-    if lease:
-        result = seam.land_result(restaurant.meta["projectRoot"], "lease", "release", lease, *restaurant.land_owner())
+    released = []
+    for item in releases:
+        result = seam.land_result(restaurant.meta["projectRoot"], "lease", "release", item, *restaurant.land_owner())
         error = result.stderr.strip().removeprefix("land: ")
-        if result.returncode != 0 and not error.startswith(f"{lease} is not active"):
-            raise BrigadeError(f"{ident} not dropped: could not release {lease}: {error}")
+        if result.returncode != 0 and not error.startswith(f"{item} is not active"):
+            raise BrigadeError(f"{ident} not dropped: could not release {item}: {error}")
+        if result.returncode == 0:
+            released.append(item)
     with restaurant.checked():
         _, dish = restaurant.find("dishes.tsv", ident)
         later = {item for _, _, item in worker_bindings(restaurant, ident) - bindings}
@@ -114,7 +120,7 @@ def drop(restaurant, ident, stopped):
         if cell and cell != current:
             later.add(cell)
         evidence = [f"stopped {stopped}"] if stopped else []
-        evidence += [f"released {lease}"] if lease else []
+        evidence += [f"released {', '.join(released)}"] if released else []
         note = f"{dish['summary']} ({'; '.join(evidence)})" if evidence else None
         restaurant.update("dishes.tsv", ident, "dish", note=note, state="dropped")
         write_threads(restaurant, ident, (), closing=True)

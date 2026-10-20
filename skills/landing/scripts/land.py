@@ -130,6 +130,8 @@ def run(argv):
                 return lease_reserve(store, args.prefix, args.paths, args.ruling, args.ttl_hours, args.owner), 0
             if args.action == "unreserve":
                 return lease_unreserve(store, reservation_id(args.id), args.owner), 0
+            if args.action == "widen":
+                return lease_widen(store, lease_id(args.id), args.paths, args.ttl_hours, args.owner), 0
             number = lease_id(args.id)
             if args.action == "renew":
                 return lease_renew(store, number, args.ttl_hours, args.if_live, args.owner), 0

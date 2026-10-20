@@ -8,10 +8,10 @@ class GateParityTest(BrigadeTest):
 
     def test_gate_agrees_with_submit_for_whole_repo_widen(self):
         self.started()
-        self.assertEqual(self.brigade("dish", "D1", "--add-paths", "."), "D1: L2 replaces L1")
+        self.assertEqual(self.brigade("dish", "D1", "--add-paths", "."), "D1: L1 now covers .")
         sha = self.worker_commit("perf/d1", {"README.md": "changed\n", "outside.py": "x\n"})
         self.assertEqual(self.brigade("dish", "D1", "--state", "in-review", "--sha", sha), "D1 in-review")
-        self.assertEqual(self.submit_entry(sha, "L2"), "E1")
+        self.assertEqual(self.submit_entry(sha, "L1"), "E1")
 
     def test_gate_agrees_with_submit_for_generated_copy(self):
         self.started("--generated", "gen.txt", "--generated-map", "src/gen-src.txt=gen.txt", "--rebuild", "make gen")

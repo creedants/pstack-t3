@@ -2,12 +2,12 @@ from .support import BrigadeTest, setUpModule, SCRIPT, _owner_words, call_in_pro
 
 
 class WidenTest(BrigadeTest):
-    def test_widen_claims_new_and_releases_old_fails_when_old_lease_stays_active(self):
+    def test_widen_keeps_the_recorded_lease_fails_when_a_second_lease_is_claimed(self):
         self.started()
-        self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"), "D1: L2 replaces L1")
+        self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"), "D1: L1 now covers src/a.py")
         row = self.table_row(self.at, "dishes.tsv", "D1")
-        self.assertEqual((row["lease"], row["paths"]), ("L2", "README.md,src/a.py"))
-        self.assertEqual(self.lease_lines(), ["L2 active perf/D1: README.md, src/a.py"])
+        self.assertEqual((row["lease"], row["paths"]), ("L1", "README.md,src/a.py"))
+        self.assertEqual(self.lease_lines(), ["L1 active perf/D1: README.md, src/a.py"])
 
     def test_widen_refused_by_other_holder_changes_nothing_fails_when_dish_moves_on_refusal(self):
         self.started()
@@ -27,13 +27,13 @@ class WidenTest(BrigadeTest):
 
     def test_widen_rerun_is_noop_fails_when_second_claim_leaks_a_lease(self):
         self.started()
-        self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"), "D1: L2 replaces L1")
+        self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"), "D1: L1 now covers src/a.py")
         before = self.land("lease", "list")
         self.assertEqual(self.brigade("dish", "D1", "--add-paths", "src/a.py"),
-                         "D1: L2 already covers src/a.py")
+                         "D1: L1 already covers src/a.py")
         self.assertEqual(self.land("lease", "list"), before)
         row = self.table_row(self.at, "dishes.tsv", "D1")
-        self.assertEqual((row["lease"], row["paths"]), ("L2", "README.md,src/a.py"))
+        self.assertEqual((row["lease"], row["paths"]), ("L1", "README.md,src/a.py"))
 
     def test_widen_released_ancestor_cover_fails_when_printed_command_leaves_no_active_lease(self):
         import os
@@ -81,13 +81,13 @@ class WidenTest(BrigadeTest):
             self.assertIn("$B dish D1 --add-paths changes/perf%2Fd1-r2.md", out)
             printed = [line.strip() for line in out.splitlines() if "dish D1 --add-paths" in line][0]
             args = shlex.split(printed.removeprefix("$B ").strip())
-            self.assertEqual(self.brigade(*args), "D1: L2 replaces L1")
+            self.assertEqual(self.brigade(*args), "D1: L1 now covers changes/perf%2Fd1-r2.md")
             row = self.table_row(self.at, "dishes.tsv", "D1")
-            self.assertEqual(row["lease"], "L2")
+            self.assertEqual(row["lease"], "L1")
             self.assertIn("changes/perf%2Fd1-r2.md", row["paths"])
             lines = self.lease_lines()
             self.assertEqual(len(lines), 1)
-            self.assertTrue(lines[0].startswith("L2 active perf/D1: "))
+            self.assertTrue(lines[0].startswith("L1 active perf/D1: "))
             for part in ("src", "changes", "changes/perf%2Fd1.md", "changes/perf%2Fd1-r2.md"):
                 self.assertIn(part, lines[0])
 

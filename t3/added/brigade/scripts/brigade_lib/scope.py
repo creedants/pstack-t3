@@ -6,17 +6,19 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from brigade_lib import generated, seam
-from brigade_lib.leases import Claim, claim_lease, claim_paths, holder, land_result, lease_states, release_lease
+from brigade_lib._leases.claims import LeaseReleased, holder_leases, widen_lease
+from brigade_lib.leases import Claim, ClaimError, claim_lease, claim_paths, holder, land_result, lease_states, release_lease
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import HELD_LOCKS
 
 
 @dataclass(frozen=True)
 class WidenPlan:
-    """Old lease id and old paths cell plus new claim text from claim_paths on old union new."""
+    """Old lease id, old paths cell, requested paths, and new claim text from claim_paths on their union."""
 
     old_lease: str
     old_paths: str
+    requested: str
     claim: str
 
 
@@ -229,7 +231,10 @@ def read_lease_list(project_root):
 
 
 def widen(restaurant, ident, add_text):
-    """Widen one dish lease. Claim new then record then release old."""
+    """Widen one dish lease in place, folding that holder's other active unexpired leases into it.
+
+    A released recorded lease adopts the holder's newest live lease, or claims a fresh one when there is none.
+    """
     wanted_raw = split_add(add_text)
     if not wanted_raw:
         raise BrigadeError("--add-paths takes comma-separated paths")
@@ -246,53 +251,72 @@ def widen(restaurant, ident, add_text):
         branch = dish.get("branch", "")
         doc_item = dish_doc_item(restaurant, ident)
         meta = restaurant.meta
-        old_canonical = canonical_list(old_paths)
-        new_canonical = []
+        seen = set(canonical_list(old_paths))
+        added = []
         for raw in wanted_raw:
             try:
                 made = canonical(raw)
             except BrigadeError:
                 made = raw.strip().replace("\\", "/").lstrip("/")
-            if made not in new_canonical:
-                new_canonical.append(made)
-        already = bool(new_canonical and all(covered(path, old_canonical) for path in new_canonical))
-        union = old_paths + "," + ",".join(wanted_raw) if old_paths else ",".join(wanted_raw)
+            if made in seen:
+                continue
+            seen.add(made)
+            added.append(raw)
+        already = not added
+        union = ",".join([part for part in old_paths.split(",") if part] + added)
         claim = claim_paths(meta, union, branch, doc_item)
-        plan = WidenPlan(old_lease, old_paths, claim.text)
-    states = lease_states(meta.get("projectRoot", ""))
+        plan = WidenPlan(old_lease, old_paths, ",".join(wanted_raw), claim.text)
+    project_root = meta.get("projectRoot", "")
+    states = lease_states(project_root)
     if states.get(plan.old_lease) == "submitted":
         raise BrigadeError(
-            f"{ident}: {plan.old_lease} is submitted, so it cannot take {','.join(wanted_raw)}; "
+            f"{ident}: {plan.old_lease} is submitted, so it cannot take {plan.requested}; "
             "the submitted commit lands as it is"
         )
-    if already and states.get(plan.old_lease) == "active":
-        return f"{ident}: {plan.old_lease} already covers {','.join(wanted_raw)}"
     if not plan.claim:
         raise BrigadeError(f"{ident}: widen claims nothing")
+    kept_lease = plan.old_lease
+    replaced = False
     try:
-        new_lease = claim_lease(restaurant, ident, plan.claim)
-    except Exception as error:
+        widen_lease(restaurant, plan.old_lease, plan.claim)
+    except LeaseReleased:
+        live = holder_leases(project_root, holder(restaurant, ident))
+        if live:
+            kept_lease = live[0]
+            try:
+                widen_lease(restaurant, kept_lease, plan.claim)
+            except ClaimError as error:
+                raise BrigadeError(f"nothing widened: {error}") from error
+        else:
+            try:
+                kept_lease = claim_lease(restaurant, ident, plan.claim)
+            except Exception as error:
+                raise BrigadeError(f"nothing widened: {error}") from error
+            replaced = True
+            release_lease(restaurant, plan.old_lease)
+    except ClaimError as error:
         raise BrigadeError(f"nothing widened: {error}") from error
-    mismatch = False
-    merged_now = False
-    merged_state = ""
+    closed = ""
+    mismatch = ""
     with restaurant.checked():
         _, dish = restaurant.find("dishes.tsv", ident)
-        if dish["lease"] != plan.old_lease or dish["paths"] != plan.old_paths:
-            mismatch = True
-        elif dish["state"] in ("merged", "dropped"):
-            merged_now = True
-            merged_state = dish["state"]
+        if dish["state"] in ("merged", "dropped"):
+            closed = dish["state"]
+        elif dish["lease"] != plan.old_lease:
+            mismatch = "lease"
+        elif dish["paths"] != plan.old_paths:
+            mismatch = "paths"
         else:
-            restaurant.update("dishes.tsv", ident, "dish", lease=new_lease, paths=plan.claim)
+            restaurant.update("dishes.tsv", ident, "dish", lease=kept_lease, paths=plan.claim)
+    if closed:
+        release_lease(restaurant, kept_lease)
+        raise BrigadeError(f"{ident} is {closed}; it holds no lease")
     if mismatch:
-        release_lease(restaurant, new_lease)
         raise BrigadeError(f"{ident} changed while widening; run dish {ident} --add-paths again")
-    if merged_now:
-        release_lease(restaurant, new_lease)
-        raise BrigadeError(f"{ident} is {merged_state}; it holds no lease")
-    release_lease(restaurant, plan.old_lease)
-    return f"{ident}: {new_lease} replaces {plan.old_lease}"
+    if replaced:
+        return f"{ident}: {kept_lease} replaces {plan.old_lease}"
+    wording = "already covers" if already else "now covers"
+    return f"{ident}: {kept_lease} {wording} {plan.requested}"
 
 
 def gate_outside(restaurant, ident, sha):

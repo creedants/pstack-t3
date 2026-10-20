@@ -17,6 +17,10 @@ class ClaimError(BrigadeError):
     """land.py refused a lease claim. fire records the block and adds its own prefix."""
 
 
+class LeaseReleased(ClaimError):
+    """land.py refused a widen because the recorded lease is released or missing."""
+
+
 @dataclass(frozen=True)
 class Claim:
     text: str
@@ -173,6 +177,18 @@ def claim_lease(restaurant, dish, paths):
     return result.stdout.strip()
 
 
+def widen_lease(restaurant, lease, paths):
+    """Add paths to one live or expired lease. Raise LeaseReleased for a released or missing lease."""
+    result = seam.land_result(restaurant.meta["projectRoot"], "lease", "widen", lease,
+                              "--paths", paths, "--ttl-hours", "6", *restaurant.land_owner())
+    if result.returncode != 0:
+        message = result.stderr.strip().removeprefix("land: ")
+        if message.endswith("is released") or message.startswith("no L"):
+            raise LeaseReleased(message)
+        raise ClaimError(message)
+    return result.stdout.strip()
+
+
 def release_lease(restaurant, lease):
     result = seam.land_result(restaurant.meta["projectRoot"], "lease", "release", lease, *restaurant.land_owner())
     if result.returncode != 0:
@@ -190,6 +206,19 @@ def lease_states(project_root):
     """Each held lease's state in the landing queue, active or submitted, by id."""
     result = seam.land_result(project_root, "lease", "list")
     return dict(line.split()[:2] for line in result.stdout.splitlines() if line.startswith("L"))
+
+
+def holder_leases(project_root, holder_name):
+    """This holder's live active lease ids, newest first. Empty when the list fails."""
+    result = seam.land_result(project_root, "lease", "list")
+    if result.returncode != 0:
+        return []
+    found = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0].startswith("L") and parts[1] == "active" and parts[2] == holder_name:
+            found.append(parts[0])
+    return sorted(found, key=lambda lease: int(lease.lstrip("L")), reverse=True)
 
 
 def renew_line(restaurant, dish):
