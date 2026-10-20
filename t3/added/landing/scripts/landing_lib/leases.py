@@ -250,8 +250,8 @@ def lease_renew(store, number, ttl_hours, if_live, owner=None):
 def lease_widen(store, number, paths, ttl_hours=6, owner=None):
     """Add paths to one lease in place, folding that holder's other active unexpired leases into it.
 
-    A live lease keeps its expiry and an expired one takes the TTL, or a later folded expiry. The widen refuses if the
-    new expiry is at or before the clock reading after admission. The holder's other active unexpired leases are
+    The kept expiry is the latest of its own expiry, the TTL when expired, and every folded expiry. An expired lease
+    whose TTL expiry is at or before the post-admission clock reading is refused. The holder's other live leases are
     released in the same transaction, and the standing reservations they took name this lease before that release.
     """
     wanted = wanted_paths(paths)
