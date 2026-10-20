@@ -17,6 +17,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | [waiting.md](waiting.md) | before collecting child results or waiting on children |
 | [host.md](host.md) | when a thread settles, snoozes, or runs on an older host, before you install or locate skills, before interpreting `hasPendingChildRuns`, `hasPendingQuestion`, or a `mode: "wait"` return, when a child's question wakes this thread, or for history notes |
 | [threads.md](threads.md) | before `t3_thread_configure`, `t3_queue_promote_to_steer`, `t3_thread_fork`, `t3_thread_merge_back`, `run_scheduled_task_now`, or pausing a finite program's schedule |
+| [webhooks.md](webhooks.md) | before creating a webhook schedule, asking for a signing secret, or choosing between a webhook and a polling schedule |
 | [light.md](light.md) | before every spawn in light mode |
 | [gate-review.md](gate-review.md) | before reusing a gate verdict |
 | [failures.md](failures.md) | on usage limit or after restart |

@@ -1,0 +1,3 @@
+- kind feature
+- `skills/pstack-runtime/webhooks.md` documents the native T3 webhook schedule, and `make-bot-ui` offers that route beside the external bot route.
+- `threads.md` links the new file under Scheduling, and the runtime's on-demand table lists it.
