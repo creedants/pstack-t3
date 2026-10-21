@@ -19,6 +19,7 @@ import hashlib
 import json
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -165,9 +166,13 @@ def check_lock(update):
 
 
 def copy_file(source, target):
+    """Copy source to target with source's mode plus owner write.
+
+    A later layer and normalize_skill rewrite the target, which a mode copied from a read-only tree would refuse.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
-    shutil.copymode(source, target)
+    target.chmod(stat.S_IMODE(source.stat().st_mode) | stat.S_IWUSR)
 
 
 BRIGADE_LIB = ("__init__", "seam", "shared", "store", "reports", "tickets", "leases", "edits", "reviews", "items",
