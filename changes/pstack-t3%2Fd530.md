@@ -1,0 +1,2 @@
+- kind fix
+- `scripts/build.py` `copy_file` gives each target its source mode plus owner write. A source tree with read-only files builds to an outside `--out`.

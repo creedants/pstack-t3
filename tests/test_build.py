@@ -94,10 +94,53 @@ class BuildModeTest(unittest.TestCase):
                     self.assertTrue(built.is_file(), output_rel)
                     source_mode = stat.S_IMODE(source.stat().st_mode)
                     built_mode = stat.S_IMODE(built.stat().st_mode)
-                    self.assertEqual(built_mode, source_mode, output_rel)
+                    self.assertEqual(built_mode, source_mode | stat.S_IWUSR, output_rel)
                     if expected is not None:
-                        self.assertEqual(source_mode, expected, source_rel)
+                        self.assertEqual(source_mode | stat.S_IWUSR, expected, source_rel)
                         self.assertEqual(built_mode, expected, output_rel)
+
+    def test_a_read_only_copy_builds_the_same_files_and_modes_as_a_writable_one(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("read-only modes do not stop root writes")
+        # The override layer copies architect/SKILL.md over the file the vendor layer wrote.
+        for rel in ("vendor/pstack/skills/architect/SKILL.md", "t3/overrides/architect/SKILL.md"):
+            self.assertTrue((ROOT / rel).is_file(), rel)
+
+        def set_owner_write(root, writable):
+            for path in root.rglob("*"):
+                if path.is_file():
+                    mode = stat.S_IMODE(path.stat().st_mode)
+                    path.chmod(mode | stat.S_IWUSR if writable else mode & ~0o222)
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            copy = base / "copy"
+            for rel in tree_files(ROOT):
+                if (ROOT / rel).is_file():
+                    (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / rel, copy / rel)
+            built = {}
+            try:
+                for label, writable in (("writable", True), ("read-only", False)):
+                    set_owner_write(copy, writable)
+                    out = base / label / "skills"
+                    result = subprocess.run(
+                        [sys.executable, str(copy / "scripts/build.py"), "--out", str(out)],
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, f"{label}: {result.stdout}{result.stderr}")
+                    built[label] = {
+                        path.relative_to(out).as_posix(): (
+                            hashlib.sha256(path.read_bytes()).hexdigest(),
+                            stat.S_IMODE(path.stat().st_mode),
+                        )
+                        for path in out.rglob("*")
+                        if path.is_file()
+                    }
+            finally:
+                set_owner_write(copy, True)
+            self.assertEqual(built["read-only"], built["writable"])
 
     def test_build_fails_when_the_repository_badge_is_stale(self):
         with tempfile.TemporaryDirectory() as directory:
