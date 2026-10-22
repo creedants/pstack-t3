@@ -29,7 +29,7 @@ python3 scripts/install.py
 
 > **T3 action:** Run `$setup-pstack` in a new T3 thread. It reads the live catalog and writes your roles.
 
-The smoke runs the same command against a fixture catalog it writes. On your machine, `$setup-pstack` writes the snapshot to `~/.config/pstack-t3/catalog.json`. Replace `grok/grok-4.7` with a provider and model you run.
+The smoke runs the roles command below against a fixture catalog it writes. On your machine, a user-level `$setup-pstack` run writes the snapshot to `~/.config/pstack-t3/catalog.json`, or under `$XDG_CONFIG_HOME` when you set it. Replace `grok/grok-4.7` with a provider and model you run.
 
 ```sh
 python3 scripts/install.py doctor
