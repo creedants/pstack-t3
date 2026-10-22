@@ -54,8 +54,35 @@ class LandingFlows:
         run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 
 
+    def gh_stub(self):
+        """A gh directory first on the PATH the land calls get.
+
+        It answers the merge-method probe the way the landing tests' stub does and refuses every other call.
+        The directory sits under this case's temporary root, which is where the host-gh guard lets a test's own stub run.
+        """
+        bindir = Path(self.temporary.name) / "landing-gh"
+        if not bindir.exists():
+            bindir.mkdir()
+            script = bindir / "gh"
+            script.write_text(
+                f"#!{sys.executable}\n"
+                "import json, sys\n"
+                "args = sys.argv[1:]\n"
+                'if args[:2] == ["repo", "view"] and "--json" in args:\n'
+                '    wanted = args[args.index("--json") + 1].split(",")\n'
+                '    if "mergeCommitAllowed" in wanted:\n'
+                "        print(json.dumps({'mergeCommitAllowed': True, 'squashMergeAllowed': True, "
+                "'rebaseMergeAllowed': True}))\n"
+                "        sys.exit(0)\n"
+                'print(f"landing gh stub: no answer for {args}", file=sys.stderr)\n'
+                "sys.exit(1)\n")
+            script.chmod(0o755)
+        return bindir
+
+
     def land_env(self):
-        return dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"))
+        return dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"),
+                    PATH=str(self.gh_stub()) + os.pathsep + os.environ.get("PATH", ""))
 
 
     def land_repo(self, repo, *args, ok=True):
