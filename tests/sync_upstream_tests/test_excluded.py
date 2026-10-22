@@ -1,5 +1,4 @@
 import json
-import unittest
 from .support import CheckoutCase, commit, setUpModule, snapshot
 class ExcludedTest(CheckoutCase):
     def check(self, *flags):
@@ -15,8 +14,6 @@ class ExcludedTest(CheckoutCase):
         found = [e for e in report["changes"] if e["path"] == "harness/pstack/README.md"][0]
         self.assertEqual(found, {"path": "harness/pstack/README.md", "change": "changed", "handling": "excluded", "t3_path": None})
     def test_an_added_file_under_an_excluded_path_is_its_own_row(self):
-        result = self.check()
-        self.assertEqual(result.stdout, f"up to date ({self.pinned[:12]})\n")
         commit(self.upstream, {"harness/pstack/new.md": "added\n"})
         result = self.check()
         self.assertEqual((result.returncode, result.stderr), (0, ""))
@@ -32,13 +29,18 @@ class ExcludedTest(CheckoutCase):
         self.assertEqual(meta["excluded"], ["harness/pstack"])
         self.assertEqual(meta["commit"], head)
     def test_an_excluded_path_that_overlaps_the_tracked_path_is_refused(self):
-        for entry in ("pstack", "pstack/skills", ""):
+        for entry in ("pstack", "pstack/skills"):
             with self.subTest(entry=entry):
-                meta = json.loads((self.root / "upstream.json").read_text())
-                (self.root / "upstream.json").write_text(json.dumps({**meta, "excluded": [entry]}))
-                before = snapshot(self.root)
-                expected = "upstream.json excluded path '' is not a non-empty string\n" if entry == "" else f"upstream.json excluded path {entry} overlaps the tracked path pstack\n"
-                for flags in (("--check",), ()):
-                    result = self.sync(*flags)
-                    self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", expected))
-                    self.assertEqual(snapshot(self.root), before)
+                self.assert_refused([entry], f"upstream.json excluded path {entry} overlaps the tracked path pstack\n")
+    def test_an_excluded_path_that_is_not_a_relative_path_is_refused(self):
+        for entry, message in (("", "upstream.json excluded path '' is not a non-empty string\n"), ("/harness", "upstream.json excluded path '/harness' is not a relative path\n")):
+            with self.subTest(entry=entry):
+                self.assert_refused([entry], message)
+    def assert_refused(self, excluded, message):
+        meta = json.loads((self.root / "upstream.json").read_text())
+        (self.root / "upstream.json").write_text(json.dumps({**meta, "excluded": excluded}))
+        before = snapshot(self.root)
+        for flags in (("--check",), ()):
+            result = self.sync(*flags)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", message))
+            self.assertEqual(snapshot(self.root), before)

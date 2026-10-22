@@ -1,2 +1,2 @@
 - kind upkeep
-- upstream sync reports excluded upstream paths as excluded by upstream.json
+- `scripts/sync_upstream.py --check` prints each change under an excluded upstream path on its own row as `excluded by upstream.json`, and `upstream.json` lists `harness/pstack` as excluded

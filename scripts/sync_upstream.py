@@ -25,7 +25,10 @@ so the url and the alt text carry the new version. When the badge line is
 missing or not in the expected form, the sync prints one line naming README.md
 and exits with status 1 before it writes upstream.json or replaces vendor/pstack.
 
-With --check, a change under a path in upstream.json's excluded list gets its own row marked excluded by upstream.json; an excluded path must sit outside the pinned path; a sync copies the pinned path only, so it never copies an excluded one.
+With --check, a change under a path in upstream.json's excluded list gets its own
+row marked excluded by upstream.json. An excluded path must sit outside the
+pinned path. A sync copies the pinned path only, so it never copies an excluded
+one.
 """
 
 import argparse
@@ -147,18 +150,18 @@ def load_layers():
 
 def excluded_paths(meta: Mapping) -> tuple[str, ...]:
     paths = tuple(meta.get("excluded", ()))
+    tracked = meta["path"]
     for entry in paths:
         if not isinstance(entry, str) or not entry:
             raise ValueError(f"upstream.json excluded path {entry!r} is not a non-empty string")
         if entry.startswith("/") or any(part in ("", ".", "..") for part in entry.split("/")):
             raise ValueError(f"upstream.json excluded path {entry!r} is not a relative path")
-        tracked = meta["path"]
         if entry == tracked or entry.startswith(tracked + "/") or tracked.startswith(entry + "/"):
             raise ValueError(f"upstream.json excluded path {entry} overlaps the tracked path {tracked}")
     return paths
 
 
-def classify(path, prefix, layers, excluded=()):
+def classify(path, prefix, layers, excluded):
     for entry in excluded:
         if path == entry or path.startswith(entry + "/"):
             return "excluded", None
@@ -179,7 +182,7 @@ def classify(path, prefix, layers, excluded=()):
     return "unchanged", None
 
 
-def upstream_changes(repository, ref, pinned, prefix, excluded=()):
+def upstream_changes(repository, ref, pinned, prefix, excluded):
     with tempfile.TemporaryDirectory(prefix="pstack-upstream-") as temporary:
         clone = Path(temporary) / "upstream.git"
 
