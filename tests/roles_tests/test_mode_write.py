@@ -272,13 +272,17 @@ class ModeCliTest(ModeCliCase):
             head.index("- `light` (recommended)"),
             head.index("- `full`"),
         )
+        self.assertIn("**/migrations/**", head)
+        self.assertIn(
+            "Suggest `**/migrations/**` plus the lock, install, and deploy scripts the repository keeps.",
+            head,
+        )
         for path in (
-            "**/migrations/**",
             "t3/added/landing/scripts/land.py",
             "t3/added/brigade/scripts/brigade.py",
             "scripts/install.py",
         ):
-            self.assertIn(path, head)
+            self.assertNotIn(path, head)
         self.assertNotIn("AskQuestion", text)
         self.assertEqual(re.findall(r'--set "([^"]+)"', text), SET_EXAMPLES)
         self.assertIn("--budget large --mode full", text)
