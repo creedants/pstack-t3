@@ -1,0 +1,2 @@
+- kind feature
+- a real run of `scripts/release.py` refuses unless the release notes file passed with `--notes-file` has `## New`, `## Fixed`, and `## Before you upgrade`, each with a non-empty line under it with a deeper heading not ending its section, and the refusal names every missing section; a dry run with that file prints the same sentence on stderr when a section is missing and changes nothing

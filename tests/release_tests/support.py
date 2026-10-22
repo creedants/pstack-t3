@@ -30,6 +30,7 @@ ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
     "LC_ALL": "C",
+    "PYTHONDONTWRITEBYTECODE": "1",
 }
 CHANGELOG = "# Changelog\n\n## 0.2.0 (2026-10-06)\n\n- old\n\n## 0.1.0\n\nFirst.\n"
 HEADING = "## 0.2.1 (2026-10-09)\n\n"
@@ -110,7 +111,10 @@ def commit(repo, files, day=1, second=0):
 
 def run(repo, *args, env=ENV, date="2026-10-09"):
     notes = repo.parent / "stable-notes.md"
-    notes.write_text("Stable check: T3 Code 0.1.0 passed\n")
+    notes.write_text(
+        "Stable check: T3 Code 0.1.0 passed\n\n"
+        "## New\n\nNone.\n\n## Fixed\n\nNone.\n\n## Before you upgrade\n\nNone.\n"
+    )
     return in_process.invoke(in_process.Invocation(
         program=repo / "scripts/release.py",
         argv=(*args, "--notes-file", str(notes), "--date", date),
@@ -136,7 +140,8 @@ def repository(changelog=CHANGELOG):
         repo.mkdir()
         git(repo, "init", "-q", "-b", "main")
         (repo / "scripts").mkdir()
-        shutil.copy(ROOT / "scripts/release.py", repo / "scripts/release.py")
+        for name in ("release.py", "release_notes.py"):
+            shutil.copy(ROOT / "scripts" / name, repo / "scripts" / name)
         commit(repo, {"CHANGELOG.md": changelog})
         yield repo
 

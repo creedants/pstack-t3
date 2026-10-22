@@ -6,7 +6,9 @@ under a new `## X.Y.Z (YYYY-MM-DD)` heading, and deletes the fragments. It
 never stages, commits, tags, pushes, or calls gh. It prints those steps.
 
 A real run needs a stable check record in the release notes file passed with
---notes-file. Past 5000 tokens it moves older versions into docs/changelog/.
+--notes-file. That file also needs ## New, ## Fixed, and ## Before you upgrade,
+each with a non-empty line under it. Past 5000 tokens it moves older versions
+into docs/changelog/.
 """
 import argparse
 import datetime
@@ -20,6 +22,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+# This import must not write bytecode before validation.
+sys.dont_write_bytecode = True
+import release_notes
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 HEADING = re.compile(r"## ([0-9]+)\.([0-9]+)\.([0-9]+)(?:\s.*)?")
 KINDS = ("feature", "fix", "polish", "upkeep", "study")
@@ -27,7 +33,6 @@ GROUPS = (("### New", ("feature",)), ("### Fixed", ("fix",)), ("### Changed", ("
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 LINK_RE = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)([^)]*\))")
 TICKS = re.compile(r"`+")
-STABLE = re.compile(r"Stable check: T3 Code (\d+\.\d+\.\d+) (passed|failed)")
 UNDO = "git restore --staged --worktree CHANGELOG.md changes/"
 LIMIT_TOKENS = 5000
 ARCHIVE = "docs/changelog"
@@ -297,21 +302,6 @@ def refuse_unfinished_release():
   scope = "CHANGELOG.md, changes/, or docs/changelog/" if ARCHIVE in dirty else "CHANGELOG.md or changes/"
   sys.exit(f"{scope} has uncommitted changes; commit them, "
    f"or run {undo} to undo an unfinished release:\n{dirty.rstrip()}")
-def stable_check(path):
- text = ""
- if path:
-  try:
-   text = Path(path).read_text(encoding="utf-8")
-  except (OSError, UnicodeDecodeError):
-   pass
- for line in text.splitlines():
-  match = STABLE.match(line.strip().removeprefix("- "))
-  if match:
-   if match.group(2) != "passed":
-    sys.exit(f"stable check on T3 Code {match.group(1)} failed; record a passing result")
-   return
- sys.exit("no stable check record; run setup-pstack and one small real item on the latest stable T3 Code release, "
-  "record `Stable check: T3 Code 1.2.3 passed` in the release notes file, with 1.2.3 the version you ran, and pass it with --notes-file")
 def take_kind(name, lines):
  if not lines or not lines[0].startswith("- "):
   return "upkeep", lines
@@ -483,8 +473,17 @@ def main(argv=None):
  parser.add_argument("--notes-file", help="the release notes file that holds the stable check record")
  args = parser.parse_args(argv)
  cut = plan(args.version, args.date)
- if not args.dry_run:
-  stable_check(args.notes_file)
+ notes = release_notes.text(args.notes_file)
+ if args.dry_run:
+  if args.notes_file:
+   gap = release_notes.section_gap(notes)
+   if gap:
+    print(gap, file=sys.stderr)
+ else:
+  release_notes.stable(notes)
+  gap = release_notes.section_gap(notes)
+  if gap:
+   sys.exit(gap)
  sys.stdout.write(cut.section)
  sys.stdout.flush()
  if not args.dry_run:

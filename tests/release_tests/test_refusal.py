@@ -47,6 +47,7 @@ class RefusalTest(ReleaseCase):
             repo = Path(directory) / "repo"
             (repo / "scripts").mkdir(parents=True)
             shutil.copy(ROOT / "scripts/release.py", repo / "scripts/release.py")
+            shutil.copy(ROOT / "scripts/release_notes.py", repo / "scripts/release_notes.py")
             (repo / "CHANGELOG.md").write_text(CHANGELOG)
             (repo / "changes").mkdir()
             (repo / "changes/a.md").write_text("- a\n")

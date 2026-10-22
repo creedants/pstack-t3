@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -19,6 +18,7 @@ from tests.brigade.support import BrigadeTest, ProcessReason, SCRIPT, real_proce
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "scripts/release.py"
+NOTES = ROOT / "scripts/release_notes.py"
 CHANGELOG = "# Changelog\n\n## 0.4.1 (2026-10-07)\n\n- old\n"
 FRAGMENTS = {"changes/one.md": "- kind feature\n- one\n  one continued\n",
              "changes/two.md": "- kind fix\n- two\n",
@@ -34,6 +34,7 @@ ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
     "LC_ALL": "C",
+    "PYTHONDONTWRITEBYTECODE": "1",
 }
 
 
@@ -183,6 +184,7 @@ class ReleaseSectionsTest(unittest.TestCase):
             git(repo, "init", "-q", "-b", "main")
             (repo / "scripts").mkdir()
             shutil.copy(RELEASE, repo / "scripts/release.py")
+            shutil.copy(NOTES, repo / "scripts/release_notes.py")
             yield repo
 
     def run_release(self, repo, *args):
