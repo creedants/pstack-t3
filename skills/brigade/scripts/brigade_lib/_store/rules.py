@@ -1,6 +1,6 @@
 import re
 from brigade_lib.compact import refuse_setting
-from brigade_lib.shared import plural
+from brigade_lib.shared import BrigadeError, plural
 
 ROLES = ("worker", "reviewer", "coordinator")
 CAP_KEY = "houseRulesCap"
@@ -39,6 +39,13 @@ def _by_role(text):
 def for_role(role, text):
     """The house rules a brief for role carries."""
     return _by_role(text)[role]
+
+
+def house_rules(path):
+    """The house rules the file holds. A path that is not a file is refused by name, and no brief is written."""
+    if not path.is_file():
+        raise BrigadeError(f"{path} is missing; no brief was written")
+    return path.read_text()
 
 
 def role_sizes(text):
