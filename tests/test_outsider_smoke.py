@@ -367,6 +367,10 @@ class OutsiderSmokeTest(unittest.TestCase):
     def test_page_binds_with_thread_and_writes_except_close_carry_owner(self):
         text = PAGE.read_text(encoding="utf-8")
         pages = _page_lists(text)
+        for tokens in pages:
+            if "skills/brigade/scripts/brigade.py" in tokens and any(verb in tokens for verb in ("ticket", "fire", "dish", "pass")):
+                self.assertIn("--owner", tokens)
+                self.assertEqual(tokens[tokens.index("--owner") + 1], "$THREAD@1")
         self.assertTrue(any("set" in tokens and "--thread" in tokens for tokens in pages))
         owners = [tokens[index + 1] for tokens in pages for index, token in enumerate(tokens) if token == "--owner" and index + 1 < len(tokens)]
         self.assertIn("$THREAD@1", owners)
