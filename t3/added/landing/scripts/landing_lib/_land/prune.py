@@ -32,7 +32,7 @@ def prune(store, dry_run=False):
     """Close the open PR and delete the remote branch of every settled entry whose landing branch still exists.
 
     A branch outside landing/e<n> and landing/q<n>, a branch whose entry is missing, and a branch whose entry is
-    still in flight are left alone. Each line names one action, and --dry-run prints one line per branch and acts on none.
+    still in flight are left alone. Each line names one action, and --dry-run prints one line per settled branch and acts on none.
     A failed close or delete prints a warning line and leaves the entry's state alone."""
     remote, repo = store.contract["remote"], store.repo
     listed = seam.git("ls-remote", "--heads", remote, "refs/heads/landing/*", cwd=repo, check=False)

@@ -17,8 +17,9 @@ class LandingTest(QueueBase, LandingTestBase):
         return path.read_text().splitlines() if path.exists() else []
 
     def settled_and_in_flight_branches(self):
-        """E1 bounced and left its branch behind, E2 landed, E3 waits on checks, and two branches are not the queue's.
+        """E1 bounced, E2 landed, E3 waits on checks, and the run then plants four branches by hand.
 
+        landing/e1 stands for a branch an earlier queue left behind and landing/q2 for a landed entry's older name.
         landing/e99 has no entry row, and feature/x is outside landing/."""
         with self.fake_gh():
             (self.base / "checks").write_text("failed")

@@ -288,7 +288,7 @@ close the open PR and delete the remote branch of every landed or bounced entry 
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--dry-run` |  |  |  | print one line per branch and change nothing |
+| `--dry-run` |  |  |  | print one line per settled branch and change nothing |
 
 ## land.py status
 
