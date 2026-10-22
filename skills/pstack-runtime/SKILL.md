@@ -149,7 +149,7 @@ Light behavior lives in [light.md](light.md#light-behavior).
 
 - Tests and the build. The worker runs the project's test command and build before every gate review, and the landing queue reruns them.
 - The landing queue's checks.
-- One review by another model family at every head SHA before merge, per [Gate review](#gate-review).
+- One review at every head SHA before merge, per [Gate review](#gate-review), cross-family unless its same-family fallback applies.
 - A review reads the whole diff against its base on round one. A later round reads the fix diff since the last reviewed SHA, per [Rounds after the first](../brigade/verdict-protocol.md#rounds-after-the-first).
 - Owner fences. Leases, `--owner` generations, worktrees, and the pass-at-head gate.
 - A fresh worker for every send-back, per [Fresh children by default](#fresh-children-by-default).
