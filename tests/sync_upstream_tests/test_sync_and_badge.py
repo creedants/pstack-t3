@@ -18,7 +18,7 @@ class SyncTest(CheckoutCase):
         self.assertIn("override drift", result.stdout)
         meta = json.loads((self.root / "upstream.json").read_text())
         self.assertEqual(
-            meta, {"repository": str(self.upstream), "commit": head, "path": "pstack", "version": "1.1.0"}
+            meta, {"repository": str(self.upstream), "commit": head, "path": "pstack", "excluded": ["harness/pstack"], "version": "1.1.0"}
         )
         expected = {name[len("pstack/") :]: text for name, text in PINNED_TREE.items() if name.startswith("pstack/")}
         expected[".cursor-plugin/plugin.json"] = '{"name": "pstack", "version": "1.1.0"}\n'
@@ -49,7 +49,7 @@ class BadgeSyncTest(CheckoutCase):
                     self.assertEqual((self.root / "README.md").read_bytes(), after.encode())
                     self.assertEqual(
                         json.loads((self.root / "upstream.json").read_text()),
-                        {"repository": str(self.upstream), "commit": head, "path": "pstack", "version": "1.1.0"},
+                        {"repository": str(self.upstream), "commit": head, "path": "pstack", "excluded": ["harness/pstack"], "version": "1.1.0"},
                     )
 
     def test_a_missing_badge_exits_before_the_pin_write(self):

@@ -1,0 +1,2 @@
+- kind upkeep
+- upstream sync reports excluded upstream paths as excluded by upstream.json
