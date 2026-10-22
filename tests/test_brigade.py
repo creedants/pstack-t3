@@ -181,11 +181,12 @@ class SetContextCapHelpTest(BrigadeTest):
                 'when the provider is claude; "" clears it to 300000')
 
     def test_set_help_states_the_window_path_and_the_empty_value_that_clears_to_300000(self):
-        # -h output
+        # --help output
         result = real_process(ProcessReason.HELP, SCRIPT, ["set", "--help"])
         self.assertEqual(result.returncode, 0, result.stderr)
         words = " ".join(result.stdout.split())
-        self.assertIn(self.CAP_HELP, words)
+        cap_help = words.split("--context-cap CONTEXT_CAP ", 1)[1].split(" --coordinator-provider ", 1)[0]
+        self.assertEqual(self.CAP_HELP, "--context-cap CONTEXT_CAP " + cap_help)
 
 
 class ReleaseSectionsTest(unittest.TestCase):
