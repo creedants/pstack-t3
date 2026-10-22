@@ -22,8 +22,8 @@ SMALL_FIX = ("the applied change counts {count} lines, and a small code fix coun
              "review. The count is each line the edits add or delete from the file at the reviewed commit to that file "
              "with the edits applied, so a replaced line counts two, and a last line with no newline differs from that "
              "line with a newline. A path ending in .md is not counted, and neither is a .py path whose AST is the same "
-             "once its docstrings are removed, so a change to a comment, a docstring, or formatting alone is not counted. "
-             "A change to a printed message or to code on a test line changes that AST and is counted")
+             "once its docstrings are removed, so in a .py path a change to a comment, a docstring, or formatting alone "
+             "is not counted. A change to a printed message or to code on a test line changes that AST and is counted")
 # Why an edit cannot apply to the reviewed commit.
 EDIT_FAILS = {
     "missing": "FAIL {path}: no regular file at {sha}",
