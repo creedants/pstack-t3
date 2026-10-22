@@ -1,0 +1,2 @@
+- kind fix
+- The affected picker `Layout` docstring states that env values print in front of the affected-module command and the full-suite command and their second interpreter copies when `python` is set.
