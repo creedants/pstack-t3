@@ -43,7 +43,7 @@ A send-back in light mode is a fix attempt with a fresh worker. Its brief carrie
 
 ## Gate review
 
-Light mode removes the panels that give full mode its model diversity. The gate review puts one read by another model family back before merge. Full mode keeps each playbook's own review steps.
+Light mode removes the panels that give full mode its model diversity. The gate review puts one read by another model family back before merge, or a same-family read when the catalog holds no runnable seat of another family. Full mode keeps each playbook's own review steps.
 
 Every child that acts as the gate review runs steps 1 to 4. That includes the audit lane, the Shipping verifier, a cheap Orchestrate unit's gate, and a trail reviewer that runs with no gate at its head. Its step 2 brief adds that child's own verification tasks below the contract. Launch no second child for the same gate.
 
