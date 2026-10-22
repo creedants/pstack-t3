@@ -110,7 +110,7 @@ class RolesConfigTest(unittest.TestCase):
     def test_setup_stops_before_writing_when_watch_is_absent(self):
         text = (ROOT / "t3/setup.md").read_text()
         self.assertIn(
-            'Say "Setup cannot finish. T3 Code 0.1.0 or later is required because this host does not expose watch_pull_request."',
+            'Say "Setup cannot finish. T3 Code 0.1.2 or later is required because this host does not expose watch_pull_request."',
             text,
         )
         self.assertIn("stop setup before writing roles or a saved catalog", text)
@@ -168,7 +168,7 @@ class FixedContextWindowTest(unittest.TestCase):
         self.assertEqual(entry["notes"], ["dropped unknown options contextWindow"])
         setup = (ROOT / "t3/setup.md").read_text()
         self.assertIn("`dropped unknown options contextWindow`", setup)
-        self.assertIn("0.0.46-nightly.20261008.2801", setup)
+        self.assertIn("because T3 Code fixes those models at 1M context", setup)
 
     def test_keeps_context_window_when_the_catalog_offers_it(self):
         saved = {"effort": "xhigh", "contextWindow": "1m"}

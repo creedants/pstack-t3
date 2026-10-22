@@ -15,9 +15,9 @@ Write `~/.config/pstack-t3/roles.json`, the per-role seat table that every pstac
 
 Check the host's tool list for `watch_pull_request`. Accept the T3 harness prefixes described in [the runtime](../pstack-runtime/SKILL.md). A tool listed by name counts as present, including a harness prefix. A deferred `watch_pull_request` counts as present and does not fail this gate. If tools load lazily, use the host's tool discovery and make one bounded `orchestrator_capabilities` call before checking again. A provider catalog does not prove that the watch tool exists. Do not call `watch_pull_request` with a dummy PR to test it.
 
-If `watch_pull_request` is absent, stop setup before writing roles or a saved catalog. Say "Setup cannot finish. T3 Code 0.1.0 or later is required because this host does not expose watch_pull_request." Ask the user to update T3 Code and rerun setup. Do not report setup complete.
+If `watch_pull_request` is absent, stop setup before writing roles or a saved catalog. Say "Setup cannot finish. T3 Code 0.1.2 or later is required because this host does not expose watch_pull_request." Ask the user to update T3 Code and rerun setup. Do not report setup complete.
 
-The runtime host notes distinguish stable 0.1.0 from 0.1.1-nightly behavior. See [host notes](../pstack-runtime/host.md).
+The runtime host notes state the T3 Code version floor. See [host notes](../pstack-runtime/host.md).
 
 When an expected model is missing, enable Provider update checks in T3's Maintenance settings and refresh provider status. This setting also controls model catalog updates. Read `orchestrator_capabilities` again after the refresh before replacing a seat. Call `orchestrator_capabilities`. Save its JSON result verbatim to a temporary file, for example `/tmp/pstack-t3-catalog.json`. That file is the only source of valid providers, models, and options. Never write a seat that is not in it. Keep the file for the commands in this skill. `show` and `write` both read it, and a user-level `write` saves a copy as the snapshot. A skill that only resolves a role from a tool result uses the quoted heredoc in [Where roles live](../pstack-runtime/SKILL.md#where-roles-live) instead of a file.
 
@@ -29,7 +29,7 @@ List the runnable providers (`canRunChildTask: true`) with their first three mod
 python3 <runtime>/scripts/roles.py show --cwd "$PWD" --catalog /tmp/pstack-t3-catalog.json
 ```
 
-This prints every role with its seats and `source` (`default`, the user file, or the project file), already resolved against the catalog. It also prints `mode`, `modeSource`, and `escalate`. `notes` name seats that no longer match, such as a model T3 dropped. A saved `contextWindow` on a native Claude 5 seat shows as `dropped unknown options contextWindow`, because T3 Code 0.0.46-nightly.20261008.2801 fixed those models at 1M context. Rewrite that seat without it in step 4.
+This prints every role with its seats and `source` (`default`, the user file, or the project file), already resolved against the catalog. It also prints `mode`, `modeSource`, and `escalate`. `notes` name seats that no longer match, such as a model T3 dropped. A saved `contextWindow` on a native Claude 5 seat shows as `dropped unknown options contextWindow`, because T3 Code fixes those models at 1M context. Rewrite that seat without it in step 4.
 
 When a configured `claude-opus-5-5`, `claude-sonnet-5-5`, or `claude-haiku-5-5` seat is missing on a native Claude provider, look at T3's model picker for an update notice that names the Claude Code version that model needs. If the notice is there, tell the user to update Claude Code in T3's provider settings and rerun setup. Do not seat a replacement family without saying so.
 
