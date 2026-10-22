@@ -109,6 +109,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | [`in-your-own-words`](../skills/in-your-own-words/SKILL.md) | Restate in your own words what you think the user's goals are and what problem they're trying to solve. Use for /in-your-own-words. |
 | [`maintain-formal-verification-skill`](../skills/maintain-formal-verification-skill/SKILL.md) | Bring a project's formal verification back in line with the code after the code changes: find the commits that touched verified code, update the model, harness, or properties to describe the code as it is now, rerun, and say whether each failure is drift in the verification or a bug in the code. Use for /maintain-formal-verification-skill, "is the model still true to the code", or after merges and refactors that touched verified code without rechecking it. |
 | [`sharpen`](../skills/sharpen/SKILL.md) | Make a task deeper, not bigger, then rewrite the prompt. Use for /sharpen. |
+| [`statechart`](../skills/statechart/SKILL.md) | Draw what an app's user sees as a Mermaid statechart from a TLA+ model. States are gray if they work, red if still wrong, and green if fixed. Invariant bugs are drawn as numbered paths. Use for /statechart, "show the PM the bug", or to turn an agreed chart into a TLA+ skeleton. |
 
 ## poteto-mode playbooks
 

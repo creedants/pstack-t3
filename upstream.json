@@ -1,9 +1,11 @@
 {
   "repository": "https://github.com/cursor/plugins.git",
-  "commit": "88d47514b82e7c44f00f2b2a72ff6dd12158038c",
+  "commit": "4ec7ffa173eaa70d3d9467a627baf0954645a353",
   "path": "pstack",
-  "excluded": ["harness/pstack"],
-  "version": "0.15.29",
+  "excluded": [
+    "harness/pstack"
+  ],
+  "version": "0.15.30",
   "license": "MIT",
   "author": "Lauren Tan"
 }
