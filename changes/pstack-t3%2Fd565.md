@@ -1,0 +1,2 @@
+- kind polish
+- `CONTRIBUTING.md` now says `scripts/release.py` skips a `git log` line that is empty after it removes one leading newline, and refuses any other line that comes before the first commit marker or is neither a marker nor a path under `changes/`.
