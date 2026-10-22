@@ -24,9 +24,9 @@ class StandingRulesMixin:
             self.assertIn(part, text)
         orders = text.split("STANDING ORDERS:\n", 1)[1]
         numbered = orders.split("\n\n")[-1].splitlines()
-        self.assertEqual(len(numbered), 10)
-        self.assertEqual(numbered[0], "1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.")
-        self.assertEqual(numbered[-1], "10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?")
+        self.assertEqual(len(numbered), 2)
+        self.assertEqual(numbered[0], "1. Write in plain engineering prose. brigade's kitchen terms name its files and commands only. Never use them in replies, reports, commits, or PRs.")
+        self.assertEqual(numbered[-1], "2. Work lands only through the repository's landing queue (the landing skill). Workers never merge, rebase shared branches, or push trunk.")
         verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
         for part in ("While working, run only the affected test modules.",
                      "Run all builds and tests through",
@@ -72,7 +72,8 @@ class StandingRulesMixin:
         one = self.brigade(*dropped, "--verify", f"Save the full output under {reports}/ after a failed test run, before you rerun it")
         self.assertNotIn("- Save the full output of any failed test run", one)
         self.assertNotIn("STANDING RULES:", one)
-        self.assertIn("- You may write the change yourself", one)
+        self.assertIn("1. Write in plain engineering prose. brigade's kitchen terms name its files and commands only. Never use them in replies, reports, commits, or PRs.", one)
+        self.assertIn("2. Work lands only through the repository's landing queue (the landing skill). Workers never merge, rebase shared branches, or push trunk.", one)
 
     def test_a_pointer_to_a_failed_run_output_is_not_the_rule_and_the_line_stays(self):
         self.coordinator()
@@ -101,12 +102,13 @@ class StandingRulesMixin:
         self.assertNotIn("python3 -m unittest", verify)
         self.assertNotIn("An affected-module run stays one slot.", verify)
 
-    def test_a_new_store_house_rules_hold_the_self_write_rule_and_the_test_standard(self):
+    def test_a_new_store_house_rules_hold_the_two_rule_template(self):
         self.open()
         text = (self.at / "house-rules.md").read_text()
-        self.assertIn("- You may write the change yourself when it changes one file outside tests", text)
-        self.assertIn("1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.", text)
-        self.assertIn("10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?", text)
+        self.assertIn("1. Write in plain engineering prose. brigade's kitchen terms name its files and commands only. Never use them in replies, reports, commits, or PRs.", text)
+        self.assertIn("2. Work lands only through the repository's landing queue (the landing skill). Workers never merge, rebase shared branches, or push trunk.", text)
+        self.assertNotIn("A test earns its place", text)
+        self.assertNotIn("You may write the change yourself", text)
 
     def test_a_store_whose_house_rules_lack_the_moved_rules_gets_neither_in_its_brief(self):
         self.coordinator()
