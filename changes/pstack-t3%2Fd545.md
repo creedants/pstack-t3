@@ -1,0 +1,2 @@
+- kind fix
+- `CONTRIBUTING.md` says a real run refuses unless the file passed with `--notes-file` has `## New`, `## Fixed`, and `## Before you upgrade`, each with a non-empty line under it, and the `--notes-file` help in `scripts/release.py` names those three sections
