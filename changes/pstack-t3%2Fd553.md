@@ -1,0 +1,5 @@
+- kind feature
+- `restaurant.json` `houseRulesCap` caps one role's house rules by bytes, and an absent key changes nothing
+- `brief` exits 1 and writes no brief, contract, or table when a role is over the cap, naming each over-cap role, its size, and the cap
+- `next` prints one line per over-cap role on standard error and adds no line to its sheet
+- `_store/rules.py` holds the tag rule, each role's byte size, and the `houseRulesCap` reader that `brief` and `next` use

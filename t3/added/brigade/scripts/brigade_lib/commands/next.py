@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib.briefs import house_rules_cap_lines
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import UNSENT, VERDICTS
 from brigade_lib.wake import next_text
@@ -68,7 +69,10 @@ def register(sub):
 
 def handle(restaurant, args):
     if args.command == "next":
-        return next_text(restaurant, args)
+        text = next_text(restaurant, args)
+        for line in house_rules_cap_lines(restaurant):
+            restaurant.warn(line)
+        return text
     return None
 
 
