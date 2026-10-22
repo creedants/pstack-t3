@@ -4,7 +4,7 @@ import time
 from collections import namedtuple
 from landing_lib import seam
 from . import required
-from .forge import delete_queue_branch, remote_branch_is_gone
+from .forge import _CLIENT_ABSENT_REF, delete_queue_branch, remote_branch_is_gone
 from .rollup import OBJECT_ID, PR_STATES, merge_blocker, merge_requested
 
 Line = namedtuple("Line", "entries stale tip")
@@ -89,12 +89,17 @@ def close_pr_with_reason(store, url, reason, state=""):
     return True, ""
 
 def delete_landing_branch(store, branch, entry):
-    """Delete branch from the contract remote and drop its local copies. Returns (deleted, warning). A push that succeeds counts as deleted. A push that fails counts as deleted only when remote_branch_is_gone says the branch is gone. An empty listing alone is not proof. A local branch git cannot delete is named in warning."""
+    """Delete branch from the contract remote and drop its local copies. Returns (deleted, warning). A push that succeeds counts as deleted. A push that fails counts as deleted only when remote_branch_is_gone says the branch is gone. An empty listing alone is not proof. An entry with no pull request never asks the forge. A local branch git cannot delete is named in warning."""
     remote = store.contract["remote"]
     pushed = seam.git_push(remote, "--delete", branch, cwd=store.repo)
     if pushed.returncode == 0:
         return True, seam.forget_local_branch(store, branch)
-    if not remote_branch_is_gone(store, entry, branch, pushed.stderr or ""):
+    stderr = pushed.stderr or ""
+    if not entry["pr"]:
+        if _CLIENT_ABSENT_REF.search(stderr) is not None:
+            return True, seam.forget_local_branch(store, branch)
+        return False, f"could not delete {branch} from {remote}: {seam.git_reason(pushed.stderr)}"
+    if not remote_branch_is_gone(store, entry, branch, stderr):
         return False, f"could not delete {branch} from {remote}: {seam.git_reason(pushed.stderr)}"
     return True, seam.forget_local_branch(store, branch)
 
