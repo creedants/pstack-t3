@@ -8,6 +8,10 @@ on:
 env:
   PSTACK_TEST_REAL_PROCESS: '1'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   part_310_1:
     name: part (3.10, 1/4)
