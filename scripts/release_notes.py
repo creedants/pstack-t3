@@ -39,8 +39,7 @@ def section_gap(notes):
             continue
         body = []
         for line in lines[at + 1:]:
-            hashes = len(line) - len(line.lstrip("#"))
-            if 1 <= hashes <= 2:
+            if re.match(r"#{1,2}(?:\s|$)", line):
                 break
             body.append(line)
         if not any(line.strip(" \t") for line in body):
