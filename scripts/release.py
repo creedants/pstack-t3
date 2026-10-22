@@ -470,7 +470,7 @@ def main(argv=None):
  parser.add_argument("version", help="the version to cut, as X.Y.Z")
  parser.add_argument("--dry-run", action="store_true", help="print the section and change nothing")
  parser.add_argument("--date", help="the date in the heading, as YYYY-MM-DD (default: today)")
- parser.add_argument("--notes-file", help="the release notes file that holds the stable check record")
+ parser.add_argument("--notes-file", help="the release notes file that holds the stable check record and the sections ## New, ## Fixed, and ## Before you upgrade")
  args = parser.parse_args(argv)
  cut = plan(args.version, args.date)
  notes = release_notes.text(args.notes_file)
