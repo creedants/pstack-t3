@@ -1,2 +1,2 @@
 - kind fix
-- The affected verify paragraph now prints the environment the layout records in front of every test command, and `scripts/check.py` reports a `/home/<name>/` path in any file of the checkout except `vendor/`, `.git`, `__pycache__`, and seven test files that hold one as fixture data.
+- The affected verify paragraph now prints the environment the layout records in front of every test command, and a bare `python3 scripts/check.py` run reports a `/home/<name>/` path in any file of the checkout except `vendor/`, `.git`, `__pycache__`, and seven test files that hold one as fixture data.

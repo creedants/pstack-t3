@@ -12,7 +12,7 @@ Issues and pull requests are welcome.
 
 ## For an outside contributor
 
-The full suite takes about 16 minutes in one process and about 14 minutes with `python3 scripts/run_tests.py`. A run at `-j 8` took 842 s for 3441 tests. While you work, run the module you changed, then `python3 -m unittest tests.test_pstack_t3`, `python3 scripts/build.py`, and `python3 scripts/check.py`.
+The full suite takes about 16 minutes in one process. A run at `-j 8` took 842 s for 3441 tests, and the four parts CI runs took 338 s to 635 s each with `PSTACK_TEST_REAL_PROCESS=1`. While you work, run the module you changed, then `python3 -m unittest tests.test_pstack_t3`, `python3 scripts/build.py`, and `python3 scripts/check.py`.
 
 An outside pull request is ported into a reviewed branch. That branch credits the author with a `Co-authored-by` trailer. The original pull request is then closed rather than merged.
 
