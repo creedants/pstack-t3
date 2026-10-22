@@ -39,7 +39,7 @@ class ContextCapTest(BrigadeTest, CapOpenMixin, CapSetMixin, TrackedSettingsMixi
         return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, ok=ok, code=code)
 
     def open_cap(self, *extra, ok=True, code=None):
-        """A creation that passes the cap, for a test whose point is the settings write."""
+        """A creation that passes and records the 300000 cap."""
         return self.open("--context-cap", "300000", *extra, ok=ok, code=code)
 
     def edits_store_with_settings(self, settings):

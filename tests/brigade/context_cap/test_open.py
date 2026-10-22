@@ -35,7 +35,7 @@ class CapOpenMixin:
                 self.assertEqual(self.settings().read_bytes(), settings_before)
                 self.assertEqual(self.store_files(), store_before)
 
-    def test_open_takes_the_default_cap_when_context_cap_is_missing(self):
+    def test_clearing_the_cap_leaves_open_with_no_drift_line(self):
         self.open()
         self.brigade("set", "--context-cap", "90000")
         self.brigade("set", "--context-cap", "")
