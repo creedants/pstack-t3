@@ -68,6 +68,16 @@ class BrigadeHostGhGuardTest(unittest.TestCase):
         self.assertEqual(len(result.failures), 1)
         self.assertIn("this brigade gh stub had no answer for ['pr', 'list']", self.failure_text(result))
 
+    def test_a_landing_case_with_a_missing_json_value_fails_at_cleanup(self):
+        def body(case):
+            result = subprocess.run(["gh", "repo", "view", "--json"], capture_output=True, text=True, env=case.land_env())
+            self.assertEqual(result.returncode, 1)
+
+        result = run_case(body, (CaseBase, LandingFlows))
+        self.assertEqual(result.errors, [])
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("this brigade gh stub had no answer for ['repo', 'view', '--json']", self.failure_text(result))
+
 
 if __name__ == "__main__":
     unittest.main()

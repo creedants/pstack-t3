@@ -69,7 +69,7 @@ class LandingFlows:
                 "import json, sys\n"
                 f"log = {str(self.gh_guard.unanswered)!r}\n"
                 "args = sys.argv[1:]\n"
-                'if args[:2] == ["repo", "view"] and "--json" in args:\n'
+                'if args[:2] == ["repo", "view"] and "--json" in args and args.index("--json") + 1 < len(args):\n'
                 '    wanted = args[args.index("--json") + 1].split(",")\n'
                 '    if "mergeCommitAllowed" in wanted:\n'
                 "        print(json.dumps({'mergeCommitAllowed': True, 'squashMergeAllowed': True, "
