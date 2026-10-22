@@ -1,0 +1,3 @@
+- kind fix
+- `macos_312_1` through `macos_312_4` in `.github/workflows/ci.yml` carry `if: github.event_name == 'push'`, so they run only on a push, and the `test (3.12)` gate requires `success` for each on a push and `skipped` for each on a `pull_request`
+- `tests/runner_tests/test_ci_jobs.py` asserts that `.github/workflows/ci.yml` has a top-level `concurrency` group of `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true`

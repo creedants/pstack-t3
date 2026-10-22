@@ -167,20 +167,26 @@ jobs:
           test "${{ needs.part_312_2.result }}" = success
           test "${{ needs.part_312_3.result }}" = success
           test "${{ needs.part_312_4.result }}" = success
-          test "${{ needs.macos_312_1.result }}" = success
-          test "${{ needs.macos_312_2.result }}" = success
-          test "${{ needs.macos_312_3.result }}" = success
-          test "${{ needs.macos_312_4.result }}" = success
+          case "$GITHUB_EVENT_NAME" in
+            push) expected=success ;;
+            pull_request) expected=skipped ;;
+            *) exit 1 ;;
+          esac
+          test "${{ needs.macos_312_1.result }}" = "$expected"
+          test "${{ needs.macos_312_2.result }}" = "$expected"
+          test "${{ needs.macos_312_3.result }}" = "$expected"
+          test "${{ needs.macos_312_4.result }}" = "$expected"
       - name: Generated skills match the sources
         run: |
           python3 scripts/build.py
           git diff --exit-code -- skills docs/skills.md docs/cli
           test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
 
-  # Part 1 of 4. A step failure fails this job. test (3.12) lists macos_312_1 in needs and requires result success.
+  # Part 1 of 4. Runs on a push only. A step failure fails this job. test (3.12) lists macos_312_1 in needs and requires success on push and skipped on pull_request.
   macos_312_1:
     name: macOS (3.12, 1/4)
     runs-on: macos-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -207,10 +213,11 @@ jobs:
           git diff --exit-code -- skills docs/skills.md docs/cli
           test -z "$(git status --porcelain -- skills docs/skills.md docs/cli)"
 
-  # Part 2 of 4. A step failure fails this job. test (3.12) lists macos_312_2 in needs and requires result success.
+  # Part 2 of 4. Runs on a push only. A step failure fails this job. test (3.12) lists macos_312_2 in needs and requires success on push and skipped on pull_request.
   macos_312_2:
     name: macOS (3.12, 2/4)
     runs-on: macos-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -232,10 +239,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-  # Part 3 of 4. A step failure fails this job. test (3.12) lists macos_312_3 in needs and requires result success.
+  # Part 3 of 4. Runs on a push only. A step failure fails this job. test (3.12) lists macos_312_3 in needs and requires success on push and skipped on pull_request.
   macos_312_3:
     name: macOS (3.12, 3/4)
     runs-on: macos-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -257,10 +265,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
-  # Part 4 of 4. A step failure fails this job. test (3.12) lists macos_312_4 in needs and requires result success.
+  # Part 4 of 4. Runs on a push only. A step failure fails this job. test (3.12) lists macos_312_4 in needs and requires success on push and skipped on pull_request.
   macos_312_4:
     name: macOS (3.12, 4/4)
     runs-on: macos-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
