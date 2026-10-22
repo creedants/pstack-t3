@@ -1,0 +1,3 @@
+- kind fix
+- With one runnable model family, the gate review takes a same-family seat and records the verdict as `same-family` instead of `blocked`. With two families it behaves as before.
+- `setup-pstack` states the one-family case and names no pstack-t3 script as an escalation example.
