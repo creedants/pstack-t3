@@ -29,23 +29,27 @@ from tests import in_process
 from tests import test_activity
 from tests.activity_tests.support import ActivityCase, CHANGED, COORDINATOR, ELSEWHERE, Fixture, FROZEN, GUIDE, LOG_COLUMNS, MARKERS, MOD, NOW, OutputCase, PROJECT, PR6, PR7, ROOT, SCHEMA, SCRIPT, SKILL, UNIT_COLUMNS, VIEWS, busy, day, delegated, empty, extreme, failed_child, forms, frozen_bytes, live_listing, listing, native, one_running, populate, put, queued_only, setUpModule, tree, typical, widen_items, worker, write_goal_names, write_goals, write_threads
 from tests.activity_tests.pages import BARE, CLEAN, DATA, FilterCase, HOSTILE, HOSTILE_DRAWN, HOSTILE_WRITTEN, NEEDLES, NodeRender, ODD, ORDINARY, PROGRAM, REPORT, REQUEST, ROW_FIELDS, LINK_FIELDS, ADDRESS, STORE_WORDS, STUB, UUID_TEXT, WORDS, agent, agents_shown, data_of, declarations, drawn, group, hostile, item, labels, named, ordinary, page, page_of, painted, row, same, skill_section, store_of, strings, tagged, T3_REFUSAL, STORE_REFUSAL
-from tests.activity_tests.browser import BUDGET, FRAME, MACOS, PINNED, RENDER_TIMEOUT, TITLE, busy_page, confined_run, measure, select_browser, wide_page
+from tests.activity_tests.browser import BUDGET, FRAME, MACOS, PINNED, PROBE_TIMEOUT, RENDER_TIMEOUT, TITLE, busy_page, confined_run, measure, select_browser, wide_page
+DARWIN_PROBE_TIMEOUT = 120
 class BrowserCase(unittest.TestCase):
-    pass
-class RenderHeightTest(BrowserCase):
     def setUp(self):
-        required = os.environ.get("CI") == "true" or MACOS
+        """Find a headless browser, or skip outside CI when none starts.
+
+        The first probe allows DARWIN_PROBE_TIMEOUT seconds on Darwin, where a first launch can take more than PROBE_TIMEOUT seconds.
+        """
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        self.browser, unavailable = select_browser(self.root)
+        required = os.environ.get("CI") == "true" or MACOS
+        self.browser, unavailable = select_browser(self.root, timeout=DARWIN_PROBE_TIMEOUT if MACOS else PROBE_TIMEOUT)
         if self.browser is None and required:
-            self.browser, unavailable = select_browser(self.root)
+            self.browser, unavailable = select_browser(self.root, timeout=60)
         if self.browser is None:
             reason = f"no working headless browser: {'; '.join(unavailable)}"
             if required:
                 self.fail(reason)
             self.skipTest(reason)
+class RenderHeightTest(BrowserCase):
     def test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame(self):
         # The four pages the reviewer of pull request 192 measured, each with the reserved height, the timeline rows, and the flight groups the fit leaves on it.
         cases = (
@@ -64,19 +68,6 @@ class RenderHeightTest(BrowserCase):
                 self.assertLessEqual(height, reserved)
                 self.assertLessEqual(height, MOD["FRAME_HEIGHT"])
 class LiveAttemptFoldTest(BrowserCase):
-    def setUp(self):
-        required = os.environ.get("CI") == "true" or MACOS
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
-        self.browser, unavailable = select_browser(self.root)
-        if self.browser is None and required:
-            self.browser, unavailable = select_browser(self.root)
-        if self.browser is None:
-            reason = f"no working headless browser: {'; '.join(unavailable)}"
-            if required:
-                self.fail(reason)
-            self.skipTest(reason)
     def document_with_earlier_fold(self):
         fixture = Fixture(str(self.root / "live"))
         fixture.coordinator()
@@ -219,14 +210,14 @@ class LiveAttemptFoldTest(BrowserCase):
         self.assertTrue(len(seen["second"]) > 0 and any(each != "none" for each in seen["second"]))
         self.assertEqual(seen["open"], [True, True])
 class ProbeSkipTest(unittest.TestCase):
-    def test_a_missed_probe_skips_once_locally_and_retries_and_fails_under_ci_or_on_macos(self):
+    def test_a_missed_probe_skips_once_locally_on_every_os_and_retries_and_fails_under_ci(self):
         calls = []
-        miss = lambda _directory: calls.append(os.environ.get("CI", "")) or (None, ["stub missed"])
+        miss = lambda _directory, timeout=None: calls.append(os.environ.get("CI", "")) or (None, ["stub missed"])
         subjects = (
             (RenderHeightTest, "test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame"),
             (LiveAttemptFoldTest, "test_live_fold_script_on_the_static_document_shows_earlier_rows_when_attempt_details_open_and_hides_them_on_close"),
         )
-        cases = (("", False, 1, False), ("true", False, 2, True), ("", True, 2, True))
+        cases = (("", False, 1, False), ("true", False, 2, True), ("", True, 1, False), ("true", True, 2, True))
         with mock.patch(f"{__name__}.select_browser", miss):
             for subject, method in subjects:
                 for ci, macos, tries, failed in cases:
