@@ -1,0 +1,2 @@
+- kind polish
+- `CONTRIBUTING.md` now describes the skip and refusal rules for the release parser's NUL-separated `git log` tokens.
