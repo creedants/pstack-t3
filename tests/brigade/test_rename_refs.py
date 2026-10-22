@@ -2,7 +2,7 @@ from .support import BrigadeTest, Path, SCRIPT, call_in_process, json, mock, run
 
 
 class RenameReferenceTest(BrigadeTest):
-    """A rename is refused while it reports to the executive admin, while an executive admin request or a handoff names the store, or while --project-root is not the root the store records."""
+    """A rename is refused while it reports to the executive admin, while an executive admin request or a handoff names the store, or while --project-root is not the root the store records. A failed rewrite keeps the old store, and a rerun moves a store that already records the new name."""
 
     def rename(self, new="Speed", project_root=None, **kwargs):
         return self.brigade("open", "--project-root", str(project_root or self.project), "--name", "Perf",

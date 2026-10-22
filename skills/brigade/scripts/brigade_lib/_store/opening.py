@@ -264,7 +264,7 @@ def _reference_blocks(directory, project_root):
 
     The admin's log.tsv records a request as a row of kind request whose note starts `to <directory name>: `,
     and publishes `inbox/A<n>.line` into this directory. A sibling's rail.tsv names this store in a row whose
-    dish is `to:<directory name>`, or whose source ends with `(from <store path>/<ticket>)`.
+    dish is `to:<directory name>`, or whose source contains `(from <store path>/`.
     No process holds two stores' locks, so the siblings are read before this store's lock is taken.
     """
     name = directory.name
