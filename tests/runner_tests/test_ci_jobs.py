@@ -139,21 +139,22 @@ class CiJobsMixin:
             self.assertNotIn("needs", macos)
             self.assertNotIn("env", macos)
             steps = macos["steps"]
-            self.assertEqual(len(steps), 5 if index == 1 else 4)
+            self.assertEqual(len(steps), 6 if index == 1 else 5)
             self.assertEqual(steps[0].get("uses"), "actions/checkout@v7")
             self.assertEqual(steps[1].get("uses"), "actions/setup-python@v7")
             self.assertEqual(steps[1]["with"]["python-version"], "3.12")
             self.assertIsInstance(steps[1]["with"]["python-version"], str)
             self.assertEqual(steps[2].get("run"), "pip install pyyaml")
-            self.assertEqual(steps[3].get("name"), f"Test part {index}/4")
-            self.assertEqual(steps[3]["run"], macos_part_run(index))
-            self.assertNotIn("--real-process-share", steps[3]["run"])
+            self.assertIn("select_browser", steps[3]["run"])
+            self.assertEqual(steps[4].get("name"), f"Test part {index}/4")
+            self.assertEqual(steps[4]["run"], macos_part_run(index))
+            self.assertNotIn("--real-process-share", steps[4]["run"])
             if index == 1:
-                self.assertEqual(steps[4].get("name"), "Generated skills match the sources")
-                self.assertNotIn("if", steps[4])
+                self.assertEqual(steps[5].get("name"), "Generated skills match the sources")
+                self.assertNotIn("if", steps[5])
                 gate_skill = next(step for step in jobs["test_312"]["steps"]
                                   if step.get("name") == "Generated skills match the sources")
-                self.assertEqual(steps[4]["run"], gate_skill["run"])
+                self.assertEqual(steps[5]["run"], gate_skill["run"])
 
     def test_the_browser_step_creates_its_temporary_directory_with_ignore_cleanup_errors(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
