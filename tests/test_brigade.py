@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -176,10 +175,6 @@ class OpenFlagHelpTest(BrigadeTest):
 
 class ReleaseSectionsTest(unittest.TestCase):
     """The release bump and the changelog sections a store of fragments of every kind gives."""
-
-    def setUp(self):
-        self.addCleanup(setattr, sys, "dont_write_bytecode", sys.dont_write_bytecode)
-        sys.dont_write_bytecode = True
 
     @contextmanager
     def repository(self):
