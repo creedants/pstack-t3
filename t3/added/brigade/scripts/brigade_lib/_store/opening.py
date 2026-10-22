@@ -2,10 +2,10 @@ import json
 import re
 from pathlib import Path
 from brigade_lib import seam
-from brigade_lib._store.restaurant import Restaurant
-from brigade_lib._store.vocab import ADMIN_DIR, ADMIN_NAME, TABLES
+from brigade_lib._store.restaurant import Restaurant, holder_prefix
+from brigade_lib._store.vocab import ADMIN_DIR, ADMIN_NAME, COUNTED_STATES, TABLES
 from brigade_lib.compact import effective_provider, sync_meta
-from brigade_lib.shared import BrigadeError, slug
+from brigade_lib.shared import BrigadeError, clean, slug
 
 MENU = """# Menu: {restaurant}
 
@@ -171,3 +171,119 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         seam.write_atomic(directory / table, "\t".join(header) + "\n")
     seam.write_atomic(directory / "restaurant.json", json.dumps(meta, indent=2) + "\n")
     return Restaurant(directory), True
+
+
+NO_QUEUE = ("has no landing contract", "not a git repository")
+
+SETTLED_ENTRIES = ("landed", "bounced")
+
+
+def _rename_request(args):
+    """The project root, old name, new name, and owner one open --rename works from, or a refusal.
+
+    It refuses the executive admin, a missing --name, and every flag a rename cannot honor.
+    """
+    if args.admin:
+        raise BrigadeError("open --rename renames a coordinator; the executive admin keeps its directory")
+    if not args.name:
+        raise BrigadeError("open --rename needs --name, the restaurant's current name")
+    for flag, value in (("--intake", args.intake), ("--workers", args.workers), ("--mode", args.mode),
+                        ("--context-cap", args.context_cap), ("--coordinator-provider", args.coordinator_provider)):
+        if value not in (None, ""):
+            raise BrigadeError(f"open --rename takes no {flag}")
+    new_name = clean(args.rename)
+    # A new name with no letter or digit refuses here, in slug's own sentence.
+    slug(args.rename)
+    if slug(new_name) == slug(args.name):
+        raise BrigadeError(f"open --rename {new_name} keeps the directory {slug(args.name)}; "
+                           "pick a name with another slug")
+    return Path(args.project_root).resolve(), clean(args.name), new_name, args.owner
+
+
+def _lease_lines(text, prefix):
+    """The lease and reservation lines of land.py lease list whose prefix or holder sits under prefix."""
+    lines = []
+    for line in text.splitlines():
+        words = line.split()
+        if len(words) >= 3 and words[0][:1] in ("L", "S") and words[2].startswith(prefix):
+            lines.append(f"{words[0]} {words[1]} {words[2]}")
+    return lines
+
+
+def _entry_lines(text):
+    """The land.py status lines for entries that have not landed or bounced."""
+    lines = []
+    for line in text.splitlines():
+        words = line.split()
+        if len(words) >= 2 and words[0][:1] == "E" and words[1] not in SETTLED_ENTRIES:
+            lines.append(line.strip())
+    return lines
+
+
+def _held_lines(project_root, prefix):
+    """The landing leases, reservations, and queue entries held under a holder prefix, one line each.
+
+    A repository with no landing contract holds nothing. A read that fails another way refuses the rename.
+    """
+    lines = []
+    for read in (("lease", "list"), ("status", "--holder", prefix)):
+        result = seam.land_result(project_root, *read)
+        if result.returncode != 0:
+            error = (result.stderr or "").replace("land: ", "").strip()
+            if any(text in error for text in NO_QUEUE):
+                return []
+            raise BrigadeError(f"could not read the landing queue: {error}")
+        if read[0] == "lease":
+            lines.extend(_lease_lines(result.stdout, prefix))
+        else:
+            lines.extend(_entry_lines(result.stdout))
+    return lines
+
+
+def rename_restaurant(root, args):
+    """Rename the --name restaurant to --rename, move its store, and return the lines open prints."""
+    project_root, name, new_name, owner = _rename_request(args)
+    parent = root / slug(project_root.name)
+    directory = parent / slug(name)
+    target = parent / slug(new_name)
+    store = Restaurant(directory, owner)
+    # A landing read never runs under the store lock, so the blocks below are gathered first.
+    with store.locked():
+        store.fence()
+        blocks = [f"{row['id']} is {row['state']}; finish or drop it first"
+                  for row in store.rows("dishes.tsv") if row["state"] in COUNTED_STATES]
+        prefix = holder_prefix(store.meta)
+    blocks.extend(_held_lines(project_root, prefix))
+    refused = "open --rename refused, nothing renamed: "
+    if blocks:
+        raise BrigadeError(refused + "; ".join(blocks))
+    with store.guarded():
+        if target.exists():
+            blocks.append(f"{target} already holds a coordinator; pick another --rename")
+        if blocks:
+            raise BrigadeError(refused + "; ".join(blocks))
+        try:
+            target.mkdir()
+        except FileExistsError:
+            raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename") from None
+        try:
+            directory.rename(target)
+        except OSError:
+            target.rmdir()
+            raise
+    renamed = Restaurant(target, owner)
+    before = renamed.meta["restaurant"]
+    meta = renamed.change_meta(restaurant=new_name)
+    for filename, heading in (("menu.md", "# Menu:"), ("house-rules.md", "# House rules:")):
+        path = target / filename
+        stated = path.read_text().split("\n", 1) if path.is_file() else []
+        if stated and stated[0] == f"{heading} {before}":
+            renamed.write(filename, "\n".join([f"{heading} {new_name}"] + stated[1:]))
+    lines = [f"renamed {directory} to {target}",
+             f"holder prefix {prefix} is now {holder_prefix(meta)}"]
+    if meta.get("schedules"):
+        lines.append("recreate schedules " + ", ".join(meta["schedules"])
+                     + f" against {target}, then record each new id with set --schedule")
+    else:
+        lines.append("no schedules recorded")
+    return "\n".join(lines)

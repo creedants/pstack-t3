@@ -23,7 +23,7 @@ Bookkeeping for brigade restaurants.
 ## brigade.py open
 
 ```text
-brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--rename NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
 create a restaurant, or print an existing one
@@ -32,6 +32,7 @@ create a restaurant, or print an existing one
 | --- | --- | --- | --- | --- |
 | `--project-root PROJECT_ROOT` | yes |  |  |  |
 | `--name NAME` |  |  |  |  |
+| `--rename NAME` |  |  |  | rename the --name restaurant and move its store; refused while landing work or an item is held |
 | `--admin` |  |  |  | open the repository's executive admin at \<project>/.admin; takes no --name |
 | `--reporting REPORTING` |  | `every-turn`, `milestones`, `digest` | `milestones` | how often the coordinator replies (default: milestones) |
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns, such as github |
