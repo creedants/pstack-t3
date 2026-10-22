@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 from brigade_lib import seam
@@ -312,6 +313,73 @@ def _restore(directory, prior):
             (directory / name).write_bytes(data)
 
 
+def _drop_marker(marker):
+    """Remove a reservation marker, if it is still there."""
+    try:
+        marker.unlink()
+    except OSError:
+        pass
+
+
+def _release_target(target, marker):
+    """Remove a failed rename's reservation: the target while it is an empty directory, then its marker."""
+    try:
+        if target.is_dir() and not any(target.iterdir()):
+            target.rmdir()
+    except OSError:
+        pass
+    _drop_marker(marker)
+
+
+def _left_reservation(directory, target, marker):
+    """Whether the marker and the target are the empty reservation an interrupted rename of this directory left."""
+    try:
+        recorded = json.loads(marker.read_text())
+        return (recorded.get("from") == directory.name
+                and recorded.get("inode") == target.stat().st_ino
+                and not any(target.iterdir()))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
+def _reserve_target(directory, target, refused):
+    """Create target as an empty directory only this rename may fill, or refuse, and return the marker beside it.
+
+    The marker names the store that reserved the target and the inode of the empty directory it created. A rerun
+    reuses a reservation an interrupted run left and refuses every other directory at the target.
+    """
+    marker = target.parent / f".rename-{target.name}.json"
+    try:
+        os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644))
+    except FileExistsError:
+        try:
+            recorded = json.loads(marker.read_text()).get("from")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            recorded = None
+        if recorded == directory.name and _left_reservation(directory, target, marker):
+            return marker
+        if recorded == directory.name and not target.exists():
+            try:
+                target.mkdir()
+                marker.write_text(json.dumps({"from": directory.name, "inode": target.stat().st_ino}))
+            except BaseException:
+                _release_target(target, marker)
+                raise
+            return marker
+        raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
+    try:
+        marker.write_text(json.dumps({"from": directory.name}))
+        target.mkdir()
+        marker.write_text(json.dumps({"from": directory.name, "inode": target.stat().st_ino}))
+    except FileExistsError:
+        _drop_marker(marker)
+        raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
+    except BaseException:
+        _release_target(target, marker)
+        raise
+    return marker
+
+
 def rename_restaurant(root, args):
     """Rename the --name restaurant to --rename, move its store, and return the lines open prints."""
     project_root, name, new_name, owner = _rename_request(args)
@@ -341,24 +409,20 @@ def rename_restaurant(root, args):
         raise BrigadeError(refused + "; ".join(blocks))
     before = meta["restaurant"]
     with store.guarded():
-        if target.exists():
-            raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename")
+        marker = _reserve_target(directory, target, refused)
         prior = _prior_bytes(directory)
         try:
             if before != new_name:
                 meta = store.change_meta(restaurant=new_name)
             _restate_headings(store, (before, name), new_name)
-            try:
-                directory.rename(target)
-            except OSError:
-                if target.exists():
-                    raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename") from None
-                raise
+            directory.rename(target)
         except BaseException as error:
             _restore(directory, prior)
+            _release_target(target, marker)
             if isinstance(error, OSError):
                 raise BrigadeError(refused + str(error)) from None
             raise
+        _drop_marker(marker)
     lines = [f"renamed {directory} to {target}",
              f"holder prefix {prefix} is now {holder_prefix(meta)}"]
     if meta.get("schedules"):

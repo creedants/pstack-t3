@@ -1,4 +1,47 @@
-from .support import BrigadeTest, Path, SCRIPT, call_in_process, json, mock, run_globals, setUpModule
+from .support import (BrigadeTest, Path, ProcessReason, SCRIPT, _wait_for_path, call_in_process, json,
+                      mock, os, real_popen, run_globals, setUpModule, sys, time)
+
+
+CHILD = """
+import os, runpy, sys, time
+from pathlib import Path
+
+case = Path(os.environ["D554_CASE"])
+mode = os.environ["D554_MODE"]
+
+
+def wait(name, timeout=60):
+    end = time.monotonic() + timeout
+    while not (case / name).exists():
+        if time.monotonic() > end:
+            print(f"timed out waiting for {name}", file=sys.stderr)
+            sys.exit(2)
+        time.sleep(0.005)
+
+
+module = runpy.run_path(os.environ["D554_SCRIPT"])
+if mode == "rename":
+    real = os.rename
+
+    def paused(source, target):
+        (case / "before-move").touch()
+        wait("move-proceed")
+        return real(source, target)
+
+    os.rename = paused
+else:
+    loaded = module["run"].__globals__
+    real = loaded["write_atomic"]
+
+    def paused_write(path, text):
+        if Path(path).parent.name == "speed":
+            (case / "initializing").touch()
+            wait("open-proceed")
+        return real(path, text)
+
+    loaded["write_atomic"] = paused_write
+sys.exit(module["main"](sys.argv[1:]))
+"""
 
 
 class RenameReferenceTest(BrigadeTest):
@@ -137,6 +180,7 @@ class RenameReferenceTest(BrigadeTest):
         self.assertIn("simulated write failure", outcome.stderr_text())
         self.assertEqual(self.store_files(), store)
         self.assertFalse((self.at.parent / "speed").exists())
+        self.assertEqual(sorted(path.name for path in self.at.parent.iterdir()), ["perf"])
 
     def test_a_failed_heading_rewrite_leaves_the_old_store_and_no_target(self):
         self.open()
@@ -157,6 +201,88 @@ class RenameReferenceTest(BrigadeTest):
         self.assertIn("simulated heading write failure", outcome.stderr_text())
         self.assertEqual(self.store_files(), store)
         self.assertFalse((self.at.parent / "speed").exists())
+
+    def test_a_second_open_paused_before_its_first_write_cannot_replace_the_moved_store(self):
+        """D554 review 2 blocker 1: an open that lost the target reservation never initializes over the moved store."""
+        self.open()
+        self.brigade("set", "--thread", "coordinator")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        rail = (self.at / "rail.tsv").read_bytes()
+        case = Path(self.temporary.name) / "case"
+        case.mkdir()
+        moving = opening = None
+        try:
+            moving = real_popen(
+                ProcessReason.RACE,
+                [sys.executable, "-c", CHILD, "--store", str(self.store), "--at", str(self.at),
+                 "--owner", "coordinator@1", "open", "--project-root", str(self.project),
+                 "--name", "Perf", "--rename", "Speed"],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", D554_CASE=str(case),
+                         D554_SCRIPT=str(SCRIPT), D554_MODE="rename"),
+                text=True)
+            _wait_for_path(case / "before-move")
+            opening = real_popen(
+                ProcessReason.RACE,
+                [sys.executable, "-c", CHILD, "--store", str(self.store),
+                 "open", "--project-root", str(self.project), "--name", "Speed"],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", D554_CASE=str(case),
+                         D554_SCRIPT=str(SCRIPT), D554_MODE="open"),
+                text=True)
+            deadline = time.monotonic() + 15
+            while not (case / "initializing").exists() and opening.poll() is None:
+                if time.monotonic() > deadline:
+                    self.fail("timed out waiting for the second open to reach its first write")
+                time.sleep(0.005)
+            (case / "move-proceed").touch()
+            move_out, move_err = moving.communicate(timeout=15)
+            self.assertEqual(moving.returncode, 0, move_out + move_err)
+            (case / "open-proceed").touch()
+            open_out, open_err = opening.communicate(timeout=15)
+        finally:
+            for name in ("before-move", "move-proceed", "open-proceed"):
+                (case / name).touch()
+            for process in (moving, opening):
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.communicate()
+        speed = self.at.parent / "speed"
+        self.assertFalse(self.at.exists())
+        moved = json.loads((speed / "restaurant.json").read_text())
+        self.assertEqual(moved["restaurant"], "Speed")
+        self.assertEqual(moved["thread"], meta["thread"])
+        self.assertEqual(moved["generation"], meta["generation"])
+        self.assertEqual((speed / "rail.tsv").read_bytes(), rail)
+        self.assertIn(b"T1\t", rail)
+        self.assertNotIn("opened", open_out + open_err)
+        self.assertFalse((self.at.parent / ".rename-speed.json").exists())
+
+    def test_a_rerun_adopts_the_empty_target_an_interrupted_rename_reserved(self):
+        self.open()
+        self.brigade("set", "--thread", "coordinator")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        case = Path(self.temporary.name) / "case"
+        case.mkdir()
+        moving = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, "-c", CHILD, "--store", str(self.store), "--at", str(self.at),
+             "--owner", "coordinator@1", "open", "--project-root", str(self.project),
+             "--name", "Perf", "--rename", "Speed"],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", D554_CASE=str(case),
+                     D554_SCRIPT=str(SCRIPT), D554_MODE="rename"),
+            text=True)
+        try:
+            _wait_for_path(case / "before-move")
+        finally:
+            moving.kill()
+            moving.communicate(timeout=15)
+        self.assertTrue(self.at.exists())
+        self.assertTrue((self.at.parent / "speed").is_dir())
+        self.rename()
+        self.assertFalse(self.at.exists())
+        speed = self.at.parent / "speed"
+        self.assertEqual(json.loads((speed / "restaurant.json").read_text())["restaurant"], "Speed")
+        self.assertIn(b"T1\t", (speed / "rail.tsv").read_bytes())
 
     def test_rename_moves_a_store_that_already_records_the_new_name(self):
         """The state an interruption after the name rewrite leaves: the old path, with the new name stored."""
