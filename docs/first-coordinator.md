@@ -29,7 +29,7 @@ python3 scripts/install.py
 
 > **T3 action:** Run `$setup-pstack` in a new T3 thread. It reads the live catalog and writes your roles.
 
-The command below is the check the smoke runs. It resolves one role against the catalog snapshot that setup writes to `~/.config/pstack-t3/catalog.json`. Replace `grok/grok-4.7` with a provider and model you run.
+The smoke runs the same command against a fixture catalog it writes. On your machine, `$setup-pstack` writes the snapshot to `~/.config/pstack-t3/catalog.json`. Replace `grok/grok-4.7` with a provider and model you run.
 
 ```sh
 python3 scripts/install.py doctor
@@ -41,7 +41,7 @@ python3 skills/pstack-runtime/scripts/roles.py show --catalog ~/.config/pstack-t
 
 ## 4. Open the coordinator
 
-> **T3 action:** Open the coordinator thread. In that thread, `$brigade` opens the restaurant, and the thread stays pinned to it.
+> **T3 action:** Open the coordinator thread. In that thread, `$brigade` opens the restaurant. Pin the thread; `brigade open` does not pin it.
 
 The smoke runs the same open command. It prints the restaurant path. Use that path as `$RESTAURANT` in the commands below.
 

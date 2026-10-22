@@ -301,7 +301,7 @@ class OutsiderSmokeTest(unittest.TestCase):
             self.assertNotIn(str(canary), result.stdout + result.stderr)
 
     def test_page_command_without_a_plan_command_is_refused(self):
-        # A page fence that names a program the plan never runs would teach a stranger a wrong command.
+        # A page fence that names a command the plan never runs would teach a stranger a wrong command.
         text = PAGE.read_text(encoding="utf-8")
         self.assertEqual(_unknown_page_commands(text), [])
         bogus = text + "\n```sh\npython3 scripts/not_a_command.py\n```\n"

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Run the install, the coordinator commands, and one landing against a home this run made.
 
-A stranger clones this repository and runs the install. This script runs that,
-plus the coordinator commands, against a home it mints under a temp root. Each
-step is one process, so the run proves the environment that process starts
-with and the exit status it returns. The stdout of a run that works holds one
-ok line per step. The run lands one commit on a throwaway local bare remote.
+A stranger clones this repository and runs the install and doctor. This script
+runs those, plus the role check and the coordinator commands, against a home it
+mints under a temp root. Each step is one process, so the run proves the
+environment that process starts with and the exit status it returns. The stdout
+of a run that works holds one ok line per step. The run lands one commit on a
+throwaway local bare remote.
 """
 
 import argparse
