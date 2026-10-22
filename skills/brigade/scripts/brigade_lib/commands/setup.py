@@ -100,7 +100,7 @@ def register_open(sub):
     p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review; missing reads as 2")
     p.add_argument("--mode", choices=MODES, help="this restaurant's light or full mode; missing leaves it to the roles files")
     p.add_argument("--context-cap", default=None,
-                   help="on creation, set the context cap; missing uses 300000, except claude adopts an existing integer autoCompactWindow from the project's .claude/settings.local.json; claude attempts to write the cap there unless adopting it; an existing store is left alone")
+                   help="on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone")
     p.add_argument("--coordinator-provider", default=None,
                    help="on creation, choose claude or other; missing uses claude; an existing store uses its saved provider")
 
@@ -152,7 +152,7 @@ def register_set(sub):
     p.add_argument("--doc-timebox", metavar="N",
                    help="the shared-document timebox in minutes, a whole number of 1 or more; \"\" clears it to 90")
     p.add_argument("--context-cap", default=None,
-                   help="the auto-compact window written to .claude/settings.local.json; \"\" clears it to 300000")
+                   help="the auto-compact window written to .claude/settings.local.json when the provider is claude; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
                    help="claude or other; \"\" clears it to claude; other writes no settings file")
 
