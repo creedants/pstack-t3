@@ -60,14 +60,20 @@ MACOS_MUTATIONS = (
     "or_true_on_macos_312_2",
 )
 
-def macos_success_line(job_id: str) -> str:
-    return 'test "${{ needs.' + job_id + '.result }}" = success'
+def macos_result_line(job_id: str) -> str:
+    return 'test "${{ needs.' + job_id + '.result }}" = "$expected"'
+
+def macos_comment(index: int, job_id: str) -> str:
+    return (
+        f"# Part {index} of 4. Runs on a push only. A step failure fails this job. "
+        f"test (3.12) lists {job_id} in needs and requires success on push and skipped on pull_request."
+    )
 
 def assert_macos_blocking(case, text: str) -> None:
     expected_needs = "needs: [part_312_1, part_312_2, part_312_3, part_312_4, " + ", ".join(MACOS_PARTS) + "]"
     case.assertIn(expected_needs, text, "macos needs pins the blocking rule.")
     for job_id in MACOS_PARTS:
-        case.assertIn(macos_success_line(job_id), text, "macos success line pins the blocking rule.")
+        case.assertIn(macos_result_line(job_id), text, "macos result line pins the blocking rule.")
     for phrase in (
         "No macOS part is in a needs list",
         "does not fail the job check",
@@ -81,11 +87,7 @@ def assert_macos_blocking(case, text: str) -> None:
                 case.assertNotIn("skipped", line, "macos no skipped pins the blocking rule.")
                 case.assertNotIn("|| true", line, "macos no or true pins the blocking rule.")
     for index, job_id in enumerate(MACOS_PARTS, start=1):
-        case.assertIn(
-            f"# Part {index} of 4. A step failure fails this job. test (3.12) lists {job_id} in needs and requires result success.",
-            text,
-            "macos comment pins the blocking rule.",
-        )
+        case.assertIn(macos_comment(index, job_id), text, "macos comment pins the blocking rule.")
     try:
         import yaml
     except ImportError:
@@ -100,7 +102,7 @@ def workflow_with_macos_mutation(text: str, name: str) -> str:
     if name == "drop_macos_312_1_from_needs":
         return text.replace(", " + MACOS_PARTS[0], "", 1)
     if name == "skipped_allowance_on_macos_312_1":
-        line = macos_success_line(MACOS_PARTS[0])
+        line = macos_result_line(MACOS_PARTS[0])
         return text.replace(line, line + ' || test "${{ needs.' + MACOS_PARTS[0] + '.result }}" = skipped', 1)
     if name == "continue_on_error_on_macos_test_part_1":
         return text.replace(
@@ -110,12 +112,12 @@ def workflow_with_macos_mutation(text: str, name: str) -> str:
         )
     if name == "restore_advisory_comment":
         return text.replace(
-            "# Part 1 of 4. A step failure fails this job. test (3.12) lists " + MACOS_PARTS[0] + " in needs and requires result success.",
+            macos_comment(1, MACOS_PARTS[0]),
             "# Every step of this part uses continue-on-error, so a step failure does not fail the job check. The part runs part 1 of 4. No macOS part is in a needs list.",
             1,
         )
     if name == "or_true_on_macos_312_2":
-        line = macos_success_line(MACOS_PARTS[1])
+        line = macos_result_line(MACOS_PARTS[1])
         return text.replace(line, line + " || true", 1)
     raise AssertionError(name)
 
@@ -183,12 +185,8 @@ class CiGatesMixin:
                     for prefix, script in gate_scripts(mutated, reader):
                         expected = mutate_gate_block(name, result_block(text, prefix))
                         if prefix == "part_312":
-                            suffix = "".join(
-                                line
-                                for line in original[prefix].splitlines(keepends=True)
-                                if "macos_312" in line
-                            )
-                            expected += suffix
+                            # The macos rule follows the four part lines and the mutation leaves it as it is.
+                            expected += "".join(original[prefix].splitlines(keepends=True)[4:])
                         self.assertEqual(script, expected)
                         with self.assertRaises(AssertionError) as caught:
                             report_failed_part(script, prefix)
@@ -212,22 +210,58 @@ class CiGatesMixin:
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         assert_macos_blocking(self, text)
 
-    def test_a_macos_failure_cancelled_skipped_or_an_empty_result_fails_the_312_gate(self):
+    def test_a_macos_result_other_than_success_fails_the_312_gate_on_push(self):
         # This starts a process because the check is an exit status.
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         for reader in gate_readers():
             script = dict(gate_scripts(text, reader))["part_312"]
             self.assertEqual(
-                gate_script_status(script, "part_312", ("success",) * 4, macos=("success",) * 4), 0
+                gate_script_status(script, "part_312", ("success",) * 4, macos=("success",) * 4, event="push"), 0
             )
             for position in range(4):
                 for bad in ("failure", "cancelled", "skipped", ""):
                     with self.subTest(reader=reader, position=position, bad=bad):
                         macos = ("success",) * position + (bad,) + ("success",) * (3 - position)
                         self.assertNotEqual(
-                            gate_script_status(script, "part_312", ("success",) * 4, macos=macos),
+                            gate_script_status(script, "part_312", ("success",) * 4, macos=macos, event="push"),
                             0,
                         )
+
+    def test_a_macos_result_other_than_skipped_fails_the_312_gate_on_pull_request(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            script = dict(gate_scripts(text, reader))["part_312"]
+            self.assertEqual(
+                gate_script_status(
+                    script, "part_312", ("success",) * 4, macos=("skipped",) * 4, event="pull_request"
+                ),
+                0,
+            )
+            for position in range(4):
+                for bad in ("success", "failure", "cancelled", ""):
+                    with self.subTest(reader=reader, position=position, bad=bad):
+                        macos = ("skipped",) * position + (bad,) + ("skipped",) * (3 - position)
+                        self.assertNotEqual(
+                            gate_script_status(
+                                script, "part_312", ("success",) * 4, macos=macos, event="pull_request"
+                            ),
+                            0,
+                        )
+
+    def test_the_312_gate_exits_nonzero_on_a_schedule_event(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            script = dict(gate_scripts(text, reader))["part_312"]
+            for macos in (("skipped",) * 4, ("success",) * 4):
+                with self.subTest(reader=reader, macos=macos):
+                    self.assertNotEqual(
+                        gate_script_status(
+                            script, "part_312", ("success",) * 4, macos=macos, event="schedule"
+                        ),
+                        0,
+                    )
 
     def test_named_macos_mutations_fail_the_pin_they_target(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()

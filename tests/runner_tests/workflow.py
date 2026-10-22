@@ -1,3 +1,4 @@
+import os
 import subprocess
 from dataclasses import dataclass
 
@@ -269,7 +270,7 @@ def report_failed_part(script: str, prefix: str) -> None:
         raise AssertionError("gate exited 0 with a failed part")
 
 def gate_script_status(
-    script: str, prefix: str, results: tuple[str, ...], macos: tuple[str, ...] | None = None
+    script: str, prefix: str, results: tuple[str, ...], macos: tuple[str, ...] | None = None, event: str = "push"
 ) -> int:
     body = script
     for index, result in enumerate(results, start=1):
@@ -296,6 +297,11 @@ def gate_script_status(
                 body = body.replace(token, result, 1)
     if "${{" in body:
         raise AssertionError(body)
-    completed = subprocess.run(["bash", "-e", "-c", body], capture_output=True, text=True)
+    completed = subprocess.run(
+        ["bash", "-e", "-c", body],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, GITHUB_EVENT_NAME=event),
+    )
     return completed.returncode
 
