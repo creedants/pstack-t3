@@ -1,3 +1,5 @@
+import ast
+import difflib
 import hashlib
 import io
 import os
@@ -5,6 +7,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from brigade_lib import seam
@@ -14,6 +17,13 @@ from brigade_lib.shared import BrigadeError, command_words
 NEEDS_COMMANDS = ("edits verify needs a build command and a check command; "
                   "run set --build-command <command> --check-command <command>, with none for one the project lacks")
 NO_COMMAND = "none"
+# The most lines a small code fix changes.
+SMALL_FIX_LINES = 20
+SMALL_FIX = ("the applied change counts {count} lines, and a small code fix counts at most {cap}; it needs a second "
+             "review. The count is each line the edits add or delete from the file at the reviewed commit to that file "
+             "with the edits applied, so a replaced line counts two. A path ending in .md is not counted, and neither "
+             "is a .py path whose code lines are the same once its comments, its docstrings, blank lines, and trailing "
+             "whitespace are removed")
 # Why an edit cannot apply to the reviewed commit.
 EDIT_FAILS = {
     "missing": "FAIL {path}: no regular file at {sha}",
@@ -52,6 +62,45 @@ def occurrences(content, old):
         found.append(at)
         at = content.find(old, at + 1)
     return found
+
+
+def code_lines(source):
+    """The file's lines once its comments and docstrings are blanked, with trailing spaces and tabs stripped and every empty line dropped, or None when the source does not parse."""
+    try:
+        tree = ast.parse(source)
+        tokens = list(tokenize.tokenize(io.BytesIO(source).readline))
+    except (SyntaxError, ValueError, UnicodeDecodeError, tokenize.TokenError):
+        return None
+    blanked = bytearray(source)
+    starts = [0]
+    for line in source.split(b"\n")[:-1]:
+        starts.append(starts[-1] + len(line) + 1)
+    spans = [(token.start, token.end) for token in tokens if token.type == tokenize.COMMENT]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not node.body:
+            continue
+        first = node.body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+            spans.append(((first.lineno, first.col_offset), (first.end_lineno, first.end_col_offset)))
+    for (row, column), (end_row, end_column) in spans:
+        for at in range(starts[row - 1] + column, starts[end_row - 1] + end_column):
+            if blanked[at] not in b"\r\n":
+                blanked[at] = 32
+    lines = [line.rstrip(b" \t") for line in bytes(blanked).split(b"\n")]
+    return [line for line in lines if line]
+
+
+def counted_lines(before, after, path):
+    """The lines the edits count at one path, which is none for a Markdown path and for a Python path whose code lines match."""
+    if path.endswith(".md"):
+        return 0
+    if path.endswith(".py"):
+        earlier, later = code_lines(before), code_lines(after)
+        if earlier is not None and later is not None and earlier == later:
+            return 0
+    return sum((a2 - a1) + (b2 - b1) for tag, a1, a2, b1, b2 in
+               difflib.SequenceMatcher(None, before.split(b"\n"), after.split(b"\n"), autojunk=False).get_opcodes()
+               if tag != "equal")
 
 
 def apply_edits(contents, edits, sha):
@@ -190,7 +239,10 @@ def exit_code(scratch, command):
 
 
 def replay(project_root, reviewed, before, after, edits, build, check, sha):
-    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output."""
+    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output.
+
+    Raises BrigadeError when the applied change counts more than SMALL_FIX_LINES lines.
+    """
     with seam.tempfile.TemporaryDirectory() as directory:
         scratch = Path(directory)
         archive = git(project_root, "archive", "--format=tar", reviewed).stdout
@@ -203,6 +255,9 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
         changed, lines = apply_edits(contents, edits, sha)
         if lines:
             return lines, False
+        count = sum(counted_lines(contents[path], data, path) for path, data in changed.items())
+        if count > SMALL_FIX_LINES:
+            raise BrigadeError(SMALL_FIX.format(count=count, cap=SMALL_FIX_LINES))
         for path, data in changed.items():
             (scratch / path).write_bytes(data)
         edited = digests(scratch)

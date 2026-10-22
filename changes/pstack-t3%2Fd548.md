@@ -1,6 +1,0 @@
-- kind fix
-- `pass record --verdict pass-with-edits --edits` refuses a report whose edits change more than 20 lines when any edit names a file whose path does not end in `.md`, and `edits verify` refuses that same report because both read it through one parser
-- the count is the lines every edit deletes or inserts, summed over the report, so a replaced line counts two
-- a report whose edits all name `.md` files keeps its old behavior and has no cap
-- `verdict-protocol.md` states the cap, the counting rule, and the Markdown exemption for the gate reviewer
-- `tests/brigade/edits_code/test_small_fix.py` proves a code edit report at exactly 20 changed lines records, one at 21 changed lines is refused with the cap message and writes no pass row, and a Markdown-only report over the cap records
