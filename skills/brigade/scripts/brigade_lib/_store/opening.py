@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from brigade_lib import seam
 from brigade_lib._store.restaurant import Restaurant, holder_prefix
-from brigade_lib._store.vocab import ADMIN_DIR, ADMIN_NAME, COUNTED_STATES, TABLES
+from brigade_lib._store.vocab import ADMIN_DIR, ADMIN_NAME, TABLES
 from brigade_lib.compact import effective_provider, sync_meta
 from brigade_lib.shared import BrigadeError, clean, slug
 
@@ -177,12 +177,18 @@ NO_QUEUE = ("has no landing contract", "not a git repository")
 
 SETTLED_ENTRIES = ("landed", "bounced")
 
+SETTLED_DISHES = ("merged", "dropped")
+
+HEADINGS = (("menu.md", "# Menu:"), ("house-rules.md", "# House rules:"))
+
+REQUEST_TO = re.compile(r"^to (\S+):")
+
 
 def _rename_request(args):
     """The project root, old name, new name, and owner one open --rename works from, or a refusal.
 
     It refuses the executive admin, a missing --name, a new name whose slug is empty or equals --name's,
-    and --intake, --workers, --mode, --context-cap, and --coordinator-provider.
+    and nonempty --intake, --workers, --mode, --context-cap, and --coordinator-provider values.
     """
     if args.admin:
         raise BrigadeError("open --rename renames a coordinator; the executive admin keeps its directory")
@@ -242,6 +248,70 @@ def _held_lines(project_root, prefix):
     return lines
 
 
+def _own_handoff_blocks(rows):
+    """The rail rows of this store that name another restaurant, as a moved ticket or a ticket taken from a handoff."""
+    blocks = []
+    for row in rows:
+        if row["state"] == "moved":
+            blocks.append(f"{row['id']} is moved to {row['dish'].removeprefix('to:')}")
+        elif "(from " in row["source"]:
+            blocks.append(f"{row['id']} came from {row['source'].rpartition('(from ')[2].rstrip(')')}")
+    return blocks
+
+
+def _reference_blocks(directory, project_root):
+    """The executive admin requests and sibling handoffs that name this store, read before its lock.
+
+    The admin's log.tsv records a request as a row of kind request whose note starts `to <directory name>: `,
+    and publishes `inbox/A<n>.line` into this directory. A sibling's rail.tsv names this store in a row whose
+    dish is `to:<directory name>`, or whose source ends with `(from <store path>/<ticket>)`.
+    No process holds two stores' locks, so the siblings are read before this store's lock is taken.
+    """
+    name = directory.name
+    path = f"{directory.parent.name}/{name}"
+    blocks = []
+    for sibling in siblings(directory, str(project_root)):
+        other = Restaurant(directory.parent / sibling)
+        for row in other.rows("log.tsv"):
+            found = REQUEST_TO.match(row["note"]) if row["kind"] == "request" else None
+            if found and found.group(1) == name:
+                blocks.append(f"the executive admin recorded {row['id']} for {name}")
+        for row in other.rows("rail.tsv"):
+            if row["dish"] == f"to:{name}":
+                blocks.append(f"{row['id']} in {sibling} is moved to {name}")
+            elif f"(from {path}/" in row["source"]:
+                blocks.append(f"{row['id']} in {sibling} came from {path}")
+    for filename in sorted(file.name for file in (directory / "inbox").glob("*.line")):
+        if re.fullmatch(r"A\d+\.line", filename):
+            blocks.append(f"inbox/{filename} is an executive admin request")
+    return blocks
+
+
+def _restate_headings(store, old_names, new_name):
+    """Rewrite a menu.md or house-rules.md first line that states one of the old names, in this directory."""
+    for filename, heading in HEADINGS:
+        path = store.dir / filename
+        if not path.is_file():
+            continue
+        first, newline, rest = path.read_text().partition("\n")
+        if first != f"{heading} {new_name}" and first in {f"{heading} {old}" for old in old_names}:
+            store.write(filename, f"{heading} {new_name}{newline}{rest}")
+
+
+def _prior_bytes(directory):
+    """The bytes of the files a rename rewrites, before it rewrites them."""
+    return {name: (directory / name).read_bytes()
+            for name in ("restaurant.json", *(filename for filename, _ in HEADINGS))
+            if (directory / name).is_file()}
+
+
+def _restore(directory, prior):
+    """Put each prior byte string back after a failed write, so the store keeps its bytes."""
+    for name, data in prior.items():
+        if directory.is_dir():
+            (directory / name).write_bytes(data)
+
+
 def rename_restaurant(root, args):
     """Rename the --name restaurant to --rename, move its store, and return the lines open prints."""
     project_root, name, new_name, owner = _rename_request(args)
@@ -249,38 +319,46 @@ def rename_restaurant(root, args):
     directory = parent / slug(name)
     target = parent / slug(new_name)
     store = Restaurant(directory, owner)
-    # A landing read never runs under the store lock, so the blocks below are gathered first.
+    # A sibling read or a landing read never runs under the store lock, so the blocks below are gathered first.
+    references = _reference_blocks(directory, project_root)
+    refused = "open --rename refused, nothing renamed: "
     with store.locked():
         store.fence()
+        stored_root = str(store.meta.get("projectRoot") or "")
+        if stored_root != str(project_root):
+            raise BrigadeError(refused + f"{directory} records the project root {stored_root}; pass that one")
+        meta = store.meta
         blocks = [f"{row['id']} is {row['state']}; finish or drop it first"
-                  for row in store.rows("dishes.tsv") if row["state"] in COUNTED_STATES]
-        prefix = holder_prefix(store.meta)
+                  for row in store.rows("dishes.tsv") if row["state"] not in SETTLED_DISHES]
+        blocks.extend(_own_handoff_blocks(store.rows("rail.tsv")))
+        blocks.extend(references)
+        prefix = holder_prefix(meta)
     blocks.extend(_held_lines(project_root, prefix))
-    refused = "open --rename refused, nothing renamed: "
     if blocks:
         raise BrigadeError(refused + "; ".join(blocks))
+    before = meta["restaurant"]
     with store.guarded():
         if target.exists():
-            blocks.append(f"{target} already holds a coordinator; pick another --rename")
-        if blocks:
-            raise BrigadeError(refused + "; ".join(blocks))
+            raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename")
+        prior = _prior_bytes(directory)
         try:
-            target.mkdir()
-        except FileExistsError:
-            raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename") from None
-        try:
-            directory.rename(target)
-        except OSError:
-            target.rmdir()
+            if before != new_name:
+                meta = store.change_meta(restaurant=new_name)
+            _restate_headings(store, (before, name), new_name)
+            try:
+                target.mkdir()
+            except FileExistsError:
+                raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename") from None
+            try:
+                directory.rename(target)
+            except OSError:
+                target.rmdir()
+                raise
+        except BaseException as error:
+            _restore(directory, prior)
+            if isinstance(error, OSError):
+                raise BrigadeError(refused + str(error)) from None
             raise
-    renamed = Restaurant(target, owner)
-    before = renamed.meta["restaurant"]
-    meta = renamed.change_meta(restaurant=new_name)
-    for filename, heading in (("menu.md", "# Menu:"), ("house-rules.md", "# House rules:")):
-        path = target / filename
-        stated = path.read_text().split("\n", 1) if path.is_file() else []
-        if stated and stated[0] == f"{heading} {before}":
-            renamed.write(filename, "\n".join([f"{heading} {new_name}"] + stated[1:]))
     lines = [f"renamed {directory} to {target}",
              f"holder prefix {prefix} is now {holder_prefix(meta)}"]
     if meta.get("schedules"):
