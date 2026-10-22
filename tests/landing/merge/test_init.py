@@ -257,9 +257,10 @@ class LandingTest(MergeBase, LandingTestBase):
             self.assertIn("needs a new contract", self.land("mode", "local", ok=False))
 
     def test_a_contract_written_with_the_old_auto_mode_reads_as_push(self):
-        self.init(mode="auto")
-        self.assertTrue(self.land("status").startswith("push mode onto"))
-        self.assertEqual(self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh").split()[0], "updated")
+        with self.fake_gh():
+            self.init(mode="auto")
+            self.assertTrue(self.land("status").startswith("push mode onto"))
+            self.assertEqual(self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh").split()[0], "updated")
 
     def test_human_mode_adopts_the_pr_a_crashed_run_created(self):
         with self.fake_gh():

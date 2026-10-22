@@ -1,0 +1,3 @@
+- kind fix
+- the landing tests that init twice stub the merge-method `gh repo view` query with `self.fake_gh()`, so no landing test reaches the host `gh`
+- `tests/landing/_support/host_gh_guard.py` puts a recording `gh` first on `PATH` in `CaseBase.setUp`, records each call, then runs the next `gh` on `PATH`, and fails the test when it recorded one

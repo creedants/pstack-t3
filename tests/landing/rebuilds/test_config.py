@@ -56,11 +56,12 @@ class LandingTest(RebuildsBase, LandingTestBase):
         with land.Store.for_repo(self.work) as store:
             self.assertEqual(store.contract["generated"], GENERATED_PATHS)
             self.assertEqual(store.contract["rebuild"], REBUILD)
-        self.init()
-        with land.Store.for_repo(self.work) as store:
-            self.assertEqual(store.contract["generated"], GENERATED_PATHS)
-            self.assertEqual(store.contract["rebuild"], REBUILD)
-        self.init(generated="", rebuild="")
+        with self.fake_gh():
+            self.init()
+            with land.Store.for_repo(self.work) as store:
+                self.assertEqual(store.contract["generated"], GENERATED_PATHS)
+                self.assertEqual(store.contract["rebuild"], REBUILD)
+            self.init(generated="", rebuild="")
         with land.Store.for_repo(self.work) as store:
             self.assertEqual(store.contract["generated"], [])
             self.assertIsNone(store.contract["rebuild"])

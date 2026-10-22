@@ -116,7 +116,8 @@ class LandingTest(LandingTestBase):
     def test_a_size_init_rerun_without_flags_keeps_the_limit(self):
         self.init_with_limit()
         self.assertIn("size limit 5000 tokens via size-baseline.json", self.land("status"))
-        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh")
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh")
         self.assertIn("size limit 5000 tokens via size-baseline.json", self.land("status"))
         payload = json.loads(self.land("status", "--json"))
         self.assertEqual(payload["sizeMaxTokens"], 5000)
