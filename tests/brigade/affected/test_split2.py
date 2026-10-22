@@ -107,7 +107,7 @@ class AffectedSplit2Test(AffectedBase):
         self.restaurant(self.project, layout={key: value for key, value in LAYOUT.items() if key != "python"})
         out = self.affected("--paths", "src/a.py")
         self.assertIn("tests.test_a", out)
-        self.assertIn("slot -- python3 -m unittest", out)
+        self.assertIn("slot -- PSTACK_TEST_REAL_PROCESS=1 python3 -m unittest", out)
         self.assertNotIn("3.10", out)
 
     def test_the_pstack_layout_renders_the_paragraph_the_old_picker_printed_fails_when_a_sentence_changes(self):
@@ -119,19 +119,20 @@ class AffectedSplit2Test(AffectedBase):
         self.track()
         land = ROOT / "t3/added/landing/scripts/land.py"
         interpreter = LAYOUT["python"]
+        env = "PSTACK_TEST_REAL_PROCESS=1 "
         self.assertEqual(
             self.affected("--paths", "src/a.py"),
             "Affected test modules are `tests.test_a`, `tests.test_pstack_t3`. "
-            f"Run them in the foreground as `python3 {land} slot -- python3 -m unittest tests.test_a tests.test_pstack_t3`. "
-            f"Run the same modules on Python 3.10 in the foreground as `python3 {land} slot -- {interpreter} -m unittest tests.test_a tests.test_pstack_t3`. "
+            f"Run them in the foreground as `python3 {land} slot -- {env}python3 -m unittest tests.test_a tests.test_pstack_t3`. "
+            f"Run the same modules on Python 3.10 in the foreground as `python3 {land} slot -- {env}{interpreter} -m unittest tests.test_a tests.test_pstack_t3`. "
             f"Run `python3 {land} slot -- python3 scripts/build.py` and leave no regeneration diff. "
             f"Run `python3 {land} slot -- python3 scripts/check.py`. "
             "Keep each build and test in a foreground slot.")
         self.assertEqual(
             self.affected("--paths", "README.md"),
             "No affected mapping for `README.md`. "
-            f"Run the full suite in the foreground as `python3 {land} slot --slots 2 -- python3 scripts/run_tests.py -j 8`. "
-            f"Run the same suite on Python 3.10 in the foreground as `python3 {land} slot --slots 2 -- {interpreter} scripts/run_tests.py -j 8`. "
+            f"Run the full suite in the foreground as `python3 {land} slot --slots 2 -- {env}python3 scripts/run_tests.py -j 8`. "
+            f"Run the same suite on Python 3.10 in the foreground as `python3 {land} slot --slots 2 -- {env}{interpreter} scripts/run_tests.py -j 8`. "
             f"Run `python3 {land} slot -- python3 scripts/build.py` and leave no regeneration diff. "
             f"Run `python3 {land} slot -- python3 scripts/check.py`. "
             "Keep each build and test in a foreground slot.")

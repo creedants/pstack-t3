@@ -75,7 +75,7 @@ class AffectedSplit3Test(AffectedBase):
         self.track()
         self.restaurant(self.project, layout=dict(LAYOUT, suite="python3 -m pytest -q", python="/usr/bin/python3.11"))
         out = self.affected("--paths", "README.md")
-        self.assertIn("slot --slots 2 -- /usr/bin/python3.11 -m pytest -q", out)
+        self.assertIn("slot --slots 2 -- PSTACK_TEST_REAL_PROCESS=1 /usr/bin/python3.11 -m pytest -q", out)
         self.assertIn("Python 3.11", out)
         self.assertNotIn("Python 3.10", out)
 
@@ -160,6 +160,26 @@ class AffectedSplit3Test(AffectedBase):
                 self.assertIn("restaurant.json", err)
                 self.assertIn("affectedTests", err)
                 self.assertIn("importRoots", err)
+                self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
+                self.assertEqual(self.store_files(), before_store)
+
+    def test_malformed_env_refused_fails_when_accepted(self):
+        self.git_project()
+        self.write("tests/test_a.py", "def test_a():\n pass\n")
+        self.track()
+        for bad in (None, 123, ["A=1"], {"A": ""}, {"A": "x y"}, {"1A": "1"}, {"A": 1}):
+            with self.subTest(bad=bad):
+                self.restaurant(self.project, layout=dict(LAYOUT, env=bad))
+                err = self.affected("--paths", "tests/test_a.py", ok=False)
+                self.assertIn("restaurant.json", err)
+                self.assertIn("affectedTests", err)
+                self.assertIn("env", err)
+                before = (self.at / "restaurant.json").read_bytes()
+                before_store = self.store_files()
+                err = self.brigade("set", "--check-command", "echo NEW", code=1)
+                self.assertIn("restaurant.json", err)
+                self.assertIn("affectedTests", err)
+                self.assertIn("env", err)
                 self.assertEqual((self.at / "restaurant.json").read_bytes(), before)
                 self.assertEqual(self.store_files(), before_store)
 

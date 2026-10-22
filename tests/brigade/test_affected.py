@@ -22,8 +22,9 @@ LAYOUT = {
     "entryPoints": ["t3/added/brigade/scripts/brigade.py", "t3/added/landing/scripts/land.py"],
     "helpers": ["tests/brigade/support.py", "tests/landing/support.py"],
     "suite": "python3 scripts/run_tests.py -j 8",
-    "python": "/home/marcus/.local/share/mise/installs/python/3.10.22/bin/python3.10",
+    "python": "/usr/local/bin/python3.10",
     "importRoots": ["scripts", "t3/scripts"],
+    "env": {"PSTACK_TEST_REAL_PROCESS": "1"},
 }
 
 
