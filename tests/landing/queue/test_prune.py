@@ -17,10 +17,6 @@ class LandingTest(QueueBase, LandingTestBase):
         return path.read_text().splitlines() if path.exists() else []
 
     def settled_and_in_flight_branches(self):
-        """E1 bounced, E2 landed, E3 waits on checks, and the run then plants four branches by hand.
-
-        landing/e1 stands for a branch an earlier queue left behind and landing/q2 for a landed entry's older name.
-        landing/e99 has no entry row, and feature/x is outside landing/."""
         with self.fake_gh():
             (self.base / "checks").write_text("failed")
             self.init(mode="merge")
@@ -64,6 +60,27 @@ class LandingTest(QueueBase, LandingTestBase):
             self.assertFalse(self.ref_exists(f"refs/heads/{branch}", remote), branch)
         for branch in ("landing/e3", "landing/e99", "feature/x"):
             self.assertTrue(self.ref_exists(f"refs/heads/{branch}", remote), branch)
+
+
+    def test_prune_leaves_non_canonical_names_alone(self):
+        with self.fake_gh():
+            remote = self.settled_and_in_flight_branches()
+            main = self.on_origin("rev-parse", "main")
+            near = ["landing/e01", "landing/q02", "landing/e\u0661", "landing/e1x", "landing/e9223372036854775808", "landing/e0"]
+            for branch in near:
+                self.on_origin("update-ref", f"refs/heads/{branch}", main)
+            self.assertEqual(self.land("prune", "--dry-run").splitlines(), SETTLED_LISTING)
+            for branch in near:
+                self.assertTrue(self.ref_exists(f"refs/heads/{branch}", remote), branch)
+            reported = self.land("prune")
+            self.assertIn("deleted landing/e1 (E1, bounced)", reported)
+            self.assertIn("deleted landing/q2 (E2, landed)", reported)
+            for branch in near:
+                self.assertNotIn(branch, reported)
+                self.assertTrue(self.ref_exists(f"refs/heads/{branch}", remote), branch)
+            for branch in ("landing/e1", "landing/q2"):
+                self.assertFalse(self.ref_exists(f"refs/heads/{branch}", remote), branch)
+            self.assertEqual(self.land("prune"), "")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,3 @@
 - kind fix
-- A bounced landing entry closes its open pull request with the bounce reason as a one-line comment, then deletes its `landing/e<n>` branch; an entry with no pull request yet skips the close, and a failed close or delete prints a warning line without changing the entry's bounced state
-- `land.py prune` closes the open pull request and deletes the remote branch of every landed or bounced entry that still has a `landing/e<n>` or `landing/q<n>` branch, leaves a branch alone when its entry is still in flight and a branch outside `landing/`, and `--dry-run` prints one line per settled branch and acts on none
+- `land.py prune` closes the open pull request and deletes the remote branch of every landed or bounced entry with a canonical branch still on the remote. A canonical branch names `landing/e<n>` or `landing/q<n>` with n in `[1-9][0-9]*` in ASCII and no leading zero. Any other branch is left alone. `--dry-run` prints one line per settled branch and acts on none
+- A failed branch delete keeps its warning unless `remote_branch_is_gone` proves the branch absent. A bounced entry stays bounced when its cleanup warns

@@ -21,7 +21,6 @@ class LandingTest(QueueBase, LandingTestBase):
         return path.read_text().splitlines() if path.exists() else []
 
     def record_actions(self):
-        """Write close to an actions file when the queue closes the PR and delete when it deletes the branch."""
         actions = self.base / "actions"
         real_gh = os.environ["LAND_GH"]
         gh = self.base / "gh-order"
@@ -88,6 +87,31 @@ os.execv({real_git!r}, [{real_git!r}, *args])
         self.assertIn("warning: could not delete landing/e1", reported)
         self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
         self.assertIn("E1 bounced", self.land("status", "E1"))
+
+    def test_a_refused_delete_with_an_empty_listing_still_warns(self):
+        with self.fake_gh():
+            hook = self.base / "origin.git" / "hooks" / "pre-receive"
+            hook.write_text("#!/bin/sh\nwhile read old new ref; do\nif [ \"$ref\" = \"refs/heads/landing/e1\" ] && [ \"$new\" = \"0000000000000000000000000000000000000000\" ]; then\necho refusing >&2\nexit 1\nfi\ndone\nexit 0\n")
+            hook.chmod(0o755)
+            real_git = shutil.which("git")
+            wrapper_dir = self.base / "ls-wrap"
+            wrapper_dir.mkdir()
+            wrapper = wrapper_dir / "git"
+            wrapper.write_text(f"#!{sys.executable}\nimport os, sys\nargs = sys.argv[1:]\nif args[:1] == [\"ls-remote\"] and \"refs/heads/landing/e1\" in args and \"refs/heads/landing/*\" not in args:\n    sys.exit(0)\nos.execv({real_git!r}, [{real_git!r}, *args])\n")
+            wrapper.chmod(0o755)
+            os.environ["PATH"] = str(wrapper_dir) + os.pathsep + os.environ["PATH"]
+            (self.base / "checks").write_text("failed")
+            self.init(mode="merge")
+            self.queue_one()
+            reported = self.land("land")
+            self.assertIn(f"bounced E1 (r/D1): {REASON}", reported)
+            self.assertIn("warning: could not delete landing/e1", reported)
+            self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
+            self.assertIn("E1 bounced", self.land("status", "E1"))
+            pruned = self.land("prune")
+            self.assertNotIn("deleted landing/e1", pruned)
+            self.assertIn("warning: could not delete landing/e1", pruned)
+            self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
 
 
 if __name__ == "__main__":

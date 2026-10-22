@@ -4,7 +4,7 @@ import time
 from collections import namedtuple
 from landing_lib import seam
 from . import required
-from .forge import delete_queue_branch
+from .forge import delete_queue_branch, remote_branch_is_gone
 from .rollup import OBJECT_ID, PR_STATES, merge_blocker, merge_requested
 
 Line = namedtuple("Line", "entries stale tip")
@@ -88,16 +88,14 @@ def close_pr_with_reason(store, url, reason, state=""):
         return False, f"could not close {url}: {(closed.stderr or closed.stdout or 'gh pr close failed').strip()}"
     return True, ""
 
-def delete_landing_branch(store, branch):
-    """Delete branch from the contract remote and drop its local copies. Returns (deleted, warning).
-
-    A branch the remote does not have counts as deleted. A local branch git cannot delete is named in warning."""
+def delete_landing_branch(store, branch, entry):
+    """Delete branch from the contract remote and drop its local copies. Returns (deleted, warning). A push that succeeds counts as deleted. A push that fails counts as deleted only when remote_branch_is_gone says the branch is gone. An empty listing alone is not proof. A local branch git cannot delete is named in warning."""
     remote = store.contract["remote"]
     pushed = seam.git_push(remote, "--delete", branch, cwd=store.repo)
-    if pushed.returncode != 0:
-        listed = seam.git("ls-remote", "--heads", remote, f"refs/heads/{branch}", cwd=store.repo, check=False)
-        if listed.returncode != 0 or listed.stdout.strip():
-            return False, f"could not delete {branch} from {remote}: {seam.git_reason(pushed.stderr)}"
+    if pushed.returncode == 0:
+        return True, seam.forget_local_branch(store, branch)
+    if not remote_branch_is_gone(store, entry, branch, pushed.stderr or ""):
+        return False, f"could not delete {branch} from {remote}: {seam.git_reason(pushed.stderr)}"
     return True, seam.forget_local_branch(store, branch)
 
 def clean_bounced(store, entry, reason, state=""):
@@ -107,7 +105,7 @@ def clean_bounced(store, entry, reason, state=""):
     the remote does not have are not failures."""
     warnings = []
     for _done, warning in (close_pr_with_reason(store, entry["pr"], reason, state),
-                           delete_landing_branch(store, seam.human_branch(entry))):
+                           delete_landing_branch(store, seam.human_branch(entry), entry)):
         if warning:
             warnings.append(warning)
             print(f"warning: {warning}")
