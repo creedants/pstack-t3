@@ -14,7 +14,7 @@ from unittest import mock
 from .names import CLAUDE, CODEX, ROOT, SCRIPT, SUPPORT, _owner_words
 from .inprocess import ProcessReason, _drop_entry, call, real_popen
 from .race_child import _race_args
-from ...landing._support.host_gh_guard import HostGhGuard
+from tests.landing._support.host_gh_guard import HostGhGuard
 
 
 class CaseBase:
