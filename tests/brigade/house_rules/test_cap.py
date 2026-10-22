@@ -13,7 +13,7 @@ class HouseRulesCapTest(BrigadeTest):
         path.write_text(json.dumps(meta))
 
 
-    def test_brief_refuses_a_reviewer_over_the_cap_and_writes_nothing(self):
+    def test_brief_refuses_a_reviewer_over_the_cap_and_writes_no_brief(self):
         self.coordinator()
         self.write_house_rules("[worker] Worker rule.\n[reviewer] " + "R" * 40 + "\n")
         self.set_cap(20)
@@ -65,7 +65,7 @@ class HouseRulesCapTest(BrigadeTest):
         self.assertNotIn("house rules for reviewer", err)
 
 
-    def test_a_bad_houseRulesCap_is_refused_and_writes_nothing(self):
+    def test_a_bad_houseRulesCap_is_refused_and_writes_no_brief(self):
         self.coordinator()
         self.write_house_rules("[worker] Worker rule.\n")
         for value in (0, -1, "10", True, None):
