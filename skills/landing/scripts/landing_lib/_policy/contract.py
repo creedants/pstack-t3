@@ -21,8 +21,9 @@ def refused_forge(repo, remote, mode):
         return f"mode {mode} opens pull requests with gh, and remote {remote!r} is not a GitHub URL; use mode push or mode local"
     if shutil.which(gh_program()) is None:
         return f"mode {mode} opens pull requests with gh, and gh is not installed; install gh, or use mode push or mode local"
-    if seam.gh("auth", "status", cwd=repo).returncode != 0:
-        return f"mode {mode} opens pull requests with gh, and gh auth status failed; run gh auth login, or use mode push or mode local"
+    if seam.gh("auth", "status", "--active", "--hostname", "github.com", cwd=repo).returncode != 0:
+        return (f"mode {mode} opens pull requests with gh, and gh auth status --active --hostname github.com failed; "
+                "run gh auth login, or use mode push or mode local")
     return None
 
 def generated_list(passed, stored):

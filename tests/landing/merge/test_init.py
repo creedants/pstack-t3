@@ -301,12 +301,12 @@ class LandingTest(MergeBase, LandingTestBase):
         os.environ["LAND_GH"] = str(self.base / "gh-not-installed")
 
     def use_gh_that_refuses_auth(self):
-        """Wrap the fake gh so auth status exits 1 and every other call reaches the fake."""
+        """Wrap the fake gh so the github.com auth status exits 1 and every other call reaches the fake."""
         real = os.environ["LAND_GH"]
         wrapper = self.base / "gh-unauthenticated"
         wrapper.write_text(f"""#!{sys.executable}
 import os, sys
-if sys.argv[1:3] == ["auth", "status"]:
+if sys.argv[1:] == ["auth", "status", "--active", "--hostname", "github.com"]:
     print("You are not logged into any GitHub hosts.", file=sys.stderr)
     sys.exit(1)
 os.execv({real!r}, [{real!r}, *sys.argv[1:]])
@@ -342,7 +342,8 @@ os.execv({real!r}, [{real!r}, *sys.argv[1:]])
             self.use_gh_that_refuses_auth()
             err = self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh",
                             "--batch", "1", ok=False)
-        self.assertIn("land: mode human opens pull requests with gh, and gh auth status failed", err)
+        self.assertIn("land: mode human opens pull requests with gh, and "
+                      "gh auth status --active --hostname github.com failed", err)
         self.assertIn("run gh auth login", err)
         self.assert_no_contract()
 
