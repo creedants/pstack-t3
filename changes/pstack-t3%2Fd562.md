@@ -1,0 +1,2 @@
+- kind fix
+- The light-mode gate paragraph in `t3/added/pstack-runtime/light.md` and the announcement example in `t3/runtime.md` now name the same-family fallback when only the author's family has a runnable seat
