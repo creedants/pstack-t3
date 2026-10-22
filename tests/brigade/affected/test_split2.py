@@ -107,7 +107,7 @@ class AffectedSplit2Test(AffectedBase):
         self.restaurant(self.project, layout={key: value for key, value in LAYOUT.items() if key != "python"})
         out = self.affected("--paths", "src/a.py")
         self.assertIn("tests.test_a", out)
-        self.assertIn("slot -- PSTACK_TEST_REAL_PROCESS=1 python3 -m unittest", out)
+        self.assertIn("slot -- env PSTACK_TEST_REAL_PROCESS=1 python3 -m unittest", out)
         self.assertNotIn("3.10", out)
 
     def test_the_pstack_layout_renders_the_paragraph_the_old_picker_printed_fails_when_a_sentence_changes(self):
@@ -119,7 +119,7 @@ class AffectedSplit2Test(AffectedBase):
         self.track()
         land = ROOT / "t3/added/landing/scripts/land.py"
         interpreter = LAYOUT["python"]
-        env = "PSTACK_TEST_REAL_PROCESS=1 "
+        env = "env PSTACK_TEST_REAL_PROCESS=1 "
         self.assertEqual(
             self.affected("--paths", "src/a.py"),
             "Affected test modules are `tests.test_a`, `tests.test_pstack_t3`. "

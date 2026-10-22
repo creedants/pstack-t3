@@ -20,6 +20,9 @@ _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
+_ENV_VALUE = re.compile(r"^[A-Za-z0-9_.,:/+=@%-]+\Z")
+
+
 _PYTHON_NAME = re.compile(r"^python(\d+(?:\.\d+)?)$")
 
 
@@ -75,7 +78,7 @@ def layout(meta):
     A present value that does not parse is refused through refuse_setting, so the message names the file,
     the key, and the value. python is an absolute path whose file name is python<major> or
     python<major>.<minor>, and a value that sets python also needs a suite that starts with python3.
-    env is an object of shell variable names to non-empty values without whitespace, and absent means
+    env is an object of shell variable names to values matching [A-Za-z0-9_.,:/+=@%-]+, and absent means
     no assignment.
     """
     if not meta or AFFECTED_KEY not in meta:
@@ -130,9 +133,9 @@ def layout(meta):
     for name, one in env.items():
         if not isinstance(name, str) or not _ENV_NAME.match(name):
             refuse_setting(AFFECTED_KEY, value, f"'env' needs a variable name for {name!r}")
-        if not isinstance(one, str) or not one or re.search(r"\s", one):
+        if not isinstance(one, str) or not _ENV_VALUE.match(one):
             refuse_setting(AFFECTED_KEY, value,
-                           f"'env' needs a non-empty value without whitespace for {name!r}")
+                           f"'env' needs a value matching [A-Za-z0-9_.,:/+=@%-]+ for {name!r}")
     return Layout(always, workflow or "", tuple(entries), tuple(helpers), suite, python or "", roots,
                   tuple(sorted(env.items())))
 

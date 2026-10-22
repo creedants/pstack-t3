@@ -75,7 +75,7 @@ class AffectedSplit3Test(AffectedBase):
         self.track()
         self.restaurant(self.project, layout=dict(LAYOUT, suite="python3 -m pytest -q", python="/usr/bin/python3.11"))
         out = self.affected("--paths", "README.md")
-        self.assertIn("slot --slots 2 -- PSTACK_TEST_REAL_PROCESS=1 /usr/bin/python3.11 -m pytest -q", out)
+        self.assertIn("slot --slots 2 -- env PSTACK_TEST_REAL_PROCESS=1 /usr/bin/python3.11 -m pytest -q", out)
         self.assertIn("Python 3.11", out)
         self.assertNotIn("Python 3.10", out)
 
@@ -167,7 +167,11 @@ class AffectedSplit3Test(AffectedBase):
         self.git_project()
         self.write("tests/test_a.py", "def test_a():\n pass\n")
         self.track()
-        for bad in (None, 123, ["A=1"], {"A": ""}, {"A": "x y"}, {"1A": "1"}, {"A": 1}):
+        for bad in (None, 123, ["A=1"], {"A": ""}, {"A": "x y"}, {"A": "x\ty"}, {"A": "x\ny"},
+                    {"1A": "1"}, {"A": 1},
+                    {"A": "1;printf${IFS}D535_INJECTED;#"}, {"A": "$(id)"}, {"A": "`id`"},
+                    {"A": "$HOME"}, {"A": "${HOME}"}, {"A": "a|b"}, {"A": "a>b"}, {"A": "a<b"},
+                    {"A": "a'b"}, {"A": 'a"b'}, {"A": "a\\b"}, {"A": "a&b"}, {"A": "a#b"}):
             with self.subTest(bad=bad):
                 self.restaurant(self.project, layout=dict(LAYOUT, env=bad))
                 err = self.affected("--paths", "tests/test_a.py", ok=False)

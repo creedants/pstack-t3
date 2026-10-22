@@ -1,2 +1,2 @@
 - kind fix
-- The affected verify paragraph now prints the environment the layout records in front of every test command, and a bare `python3 scripts/check.py` run reports a `/home/<name>/` path in any file of the checkout except `vendor/`, `.git`, `__pycache__`, and seven test files that hold one as fixture data.
+- The affected verify paragraph runs recorded environments through env in front of every test command and refuses values outside [A-Za-z0-9_.,:/+=@%-], and a bare check run reports a home directory path outside vendor and the allow list.

@@ -22,8 +22,9 @@ def _alternate(command, python):
 
 
 def _with_env(layout, command):
-    """command with each of the layout's environment assignments in front, as NAME=value and one space."""
-    return "".join(f"{name}={value} " for name, value in layout.env) + command
+    if not layout.env:
+        return command
+    return "env " + "".join(f"{name}={value} " for name, value in layout.env) + command
 
 
 def _paragraph(result, land, layout, build, check):

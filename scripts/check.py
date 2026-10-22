@@ -139,7 +139,6 @@ REQUIRED_SCAN = _IDENTITY_REQUIRED_SCAN
 
 HOME_PATH = re.compile(r"/home/[A-Za-z0-9._-]+/")
 
-# These files hold a home path as fixture data. The last one is this finding's own test.
 HOME_PATH_EXEMPT = frozenset({
     "tests/activity_tests/test_filter.py",
     "tests/activity_tests/test_filter_paths.py",
@@ -212,7 +211,6 @@ def main(argv):
     layout = _layout()
     if argv:
         return _tree_mod.main(argv, layout)
-    # The bare run composes the same findings as _tree_mod.main, plus the home path finding.
     problems = (check_tree(layout.repo / "skills")
                 + fence_findings(layout.tests_dir)
                 + badge_findings(layout.readme_path, layout.upstream_path)
