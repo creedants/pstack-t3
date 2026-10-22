@@ -42,6 +42,8 @@ GIT_ENV = {
 PLUGIN = "pstack/.cursor-plugin/plugin.json"
 SKILL = "---\nname: fixture\ndescription: A fixture skill.\n---\n\n# Fixture\n\n"
 PINNED_TREE = {
+    "harness/pstack/README.md": "upstream harness README.md\n",
+    "harness/pstack/claude-code/skills/alpha/SKILL.md": "upstream harness skill\n",
     "other/notes.md": "upstream other/notes.md\n",
     PLUGIN: '{"name": "pstack", "version": "1.0.0"}\n',
     "pstack/README.md": "upstream README.md\n",
@@ -191,7 +193,7 @@ def new_checkout(directory, repository, pinned):
         shutil.copy(ROOT / f"scripts/{name}.py", root / "scripts")
     write_tree(root, T3_TREE)
     write_tree(root / "vendor", {name: text for name, text in PINNED_TREE.items() if name.startswith("pstack/")})
-    meta = {"repository": str(repository), "commit": pinned, "path": "pstack", "version": "1.0.0"}
+    meta = {"repository": str(repository), "commit": pinned, "path": "pstack", "excluded": ["harness/pstack"], "version": "1.0.0"}
     (root / "upstream.json").write_text(json.dumps(meta, indent=2) + "\n")
     (root / "README.md").write_text(README_AT_1_0_0)
     return root

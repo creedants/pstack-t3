@@ -24,6 +24,11 @@ When the sync writes upstream.json it also rewrites the README upstream badge
 so the url and the alt text carry the new version. When the badge line is
 missing or not in the expected form, the sync prints one line naming README.md
 and exits with status 1 before it writes upstream.json or replaces vendor/pstack.
+
+With --check, a change under a path in upstream.json's excluded list gets its own
+row marked excluded by upstream.json. An excluded path must sit outside the
+pinned path. A sync copies the pinned path only, so it never copies an excluded
+one.
 """
 
 import argparse
@@ -43,7 +48,7 @@ ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / "upstream.json"
 
 Change = Literal["changed", "added", "removed"]
-Handling = Literal["overridden", "dropped", "unchanged", "not-shipped"]
+Handling = Literal["overridden", "dropped", "unchanged", "not-shipped", "excluded"]
 Kind = Literal["clean", "same", "conflict", "markers", "deleted", "binary", "no-base"]
 
 STATUS = {"M": "changed", "T": "changed", "A": "added", "D": "removed"}
@@ -52,6 +57,7 @@ HANDLING_TEXT = {
     "dropped": "dropped by t3/removed.txt",
     "unchanged": "ships unchanged",
     "not-shipped": "not shipped",
+    "excluded": "excluded by upstream.json",
 }
 MERGE_DETAIL = {
     "clean": "merged",
@@ -142,7 +148,23 @@ def load_layers():
     )
 
 
-def classify(path, prefix, layers):
+def excluded_paths(meta: Mapping) -> tuple[str, ...]:
+    paths = tuple(meta.get("excluded", ()))
+    tracked = meta["path"]
+    for entry in paths:
+        if not isinstance(entry, str) or not entry:
+            raise ValueError(f"upstream.json excluded path {entry!r} is not a non-empty string")
+        if entry.startswith("/") or any(part in ("", ".", "..") for part in entry.split("/")):
+            raise ValueError(f"upstream.json excluded path {entry!r} is not a relative path")
+        if entry == tracked or entry.startswith(tracked + "/") or tracked.startswith(entry + "/"):
+            raise ValueError(f"upstream.json excluded path {entry} overlaps the tracked path {tracked}")
+    return paths
+
+
+def classify(path, prefix, layers, excluded):
+    for entry in excluded:
+        if path == entry or path.startswith(entry + "/"):
+            return "excluded", None
     rest = PurePosixPath(path).relative_to(prefix)
     if "__pycache__" in rest.parts:
         return "not-shipped", None
@@ -160,7 +182,7 @@ def classify(path, prefix, layers):
     return "unchanged", None
 
 
-def upstream_changes(repository, ref, pinned, prefix):
+def upstream_changes(repository, ref, pinned, prefix, excluded):
     with tempfile.TemporaryDirectory(prefix="pstack-upstream-") as temporary:
         clone = Path(temporary) / "upstream.git"
 
@@ -179,8 +201,9 @@ def upstream_changes(repository, ref, pinned, prefix):
         commit = git("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}").strip()
         changes = []
         if commit != pinned:
+            pathspecs = [f":(literal){prefix}", *(f":(literal){path}" for path in excluded)]
             listing = git(
-                "diff", "--name-status", "--no-renames", "--no-ext-diff", "-z", pinned, commit, "--", f":(literal){prefix}"
+                "diff", "--name-status", "--no-renames", "--no-ext-diff", "-z", pinned, commit, "--", *pathspecs
             )
             fields = listing.split("\0")[:-1]
             changes = [(STATUS[status], path) for status, path in zip(fields[::2], fields[1::2])]
@@ -214,10 +237,10 @@ def render_json(report):
     return json.dumps({**fields, "up_to_date": report.up_to_date, "changes": changes}, indent=2) + "\n"
 
 
-def check(args, meta):
+def check(args, meta, excluded):
     repository = args.repository or meta["repository"]
     try:
-        commit, version, changes = upstream_changes(repository, args.ref, meta["commit"], meta["path"])
+        commit, version, changes = upstream_changes(repository, args.ref, meta["commit"], meta["path"], excluded)
     except subprocess.CalledProcessError as error:
         print(error.stderr.strip() or error, file=sys.stderr)
         return 1
@@ -225,7 +248,7 @@ def check(args, meta):
         print(error, file=sys.stderr)
         return 1
     layers = load_layers()
-    entries = (Entry(path, change, *classify(path, meta["path"], layers)) for change, path in changes)
+    entries = (Entry(path, change, *classify(path, meta["path"], layers, excluded)) for change, path in changes)
     report = Report(
         repository, args.ref, meta["commit"], commit, version, tuple(sorted(entries, key=lambda entry: entry.path))
     )
@@ -351,8 +374,13 @@ def main():
         except ValueError as error:
             parser.error(str(error))
     meta = json.loads(UPSTREAM.read_text())
+    try:
+        excluded = excluded_paths(meta)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 1
     if args.check:
-        return check(args, meta)
+        return check(args, meta, excluded)
     sys.dont_write_bytecode = True
     with tempfile.TemporaryDirectory(prefix="pstack-upstream-") as temporary:
         try:

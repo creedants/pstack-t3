@@ -12,11 +12,11 @@ class ClassifyTest(unittest.TestCase):
     def test_each_path_gets_the_layer_the_build_ships(self):
         for path, expected in CLASSIFIED:
             with self.subTest(path=path):
-                self.assertEqual(sync_upstream.classify(path, "pstack", LAYERS), expected)
+                self.assertEqual(sync_upstream.classify(path, "pstack", LAYERS, ()), expected)
 
     def test_the_prefix_can_be_nested(self):
         self.assertEqual(
-            sync_upstream.classify("plugins/pstack/skills/alpha/SKILL.md", "plugins/pstack", LAYERS),
+            sync_upstream.classify("plugins/pstack/skills/alpha/SKILL.md", "plugins/pstack", LAYERS, ()),
             ("overridden", "t3/overrides/alpha/SKILL.md"),
         )
 
@@ -28,7 +28,7 @@ class ClassifyTest(unittest.TestCase):
             rendered = Path(directory)
             build.render(rendered)
             for rel in build.relative_files(skills):
-                handling, t3_path = sync_upstream.classify(f"pstack/skills/{rel.as_posix()}", "pstack", layers)
+                handling, t3_path = sync_upstream.classify(f"pstack/skills/{rel.as_posix()}", "pstack", layers, ())
                 seen.add(handling)
                 with self.subTest(path=rel.as_posix()):
                     self.assertIn(handling, ("overridden", "unchanged", "dropped"))
@@ -50,7 +50,7 @@ class UpstreamChangesTest(unittest.TestCase):
         self.addCleanup(environment.stop)
 
     def changes(self, repository=None, ref="main", prefix="pstack"):
-        return sync_upstream.upstream_changes(repository or str(self.upstream), ref, self.pinned, prefix)
+        return sync_upstream.upstream_changes(repository or str(self.upstream), ref, self.pinned, prefix, ())
 
     def test_the_pinned_commit_has_no_changes(self):
         self.assertEqual(self.changes(), (self.pinned, "1.0.0", []))
