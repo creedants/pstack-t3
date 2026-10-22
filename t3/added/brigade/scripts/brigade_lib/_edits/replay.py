@@ -65,7 +65,11 @@ def occurrences(content, old):
 
 
 def code_lines(source):
-    """The file's lines once its comments and docstrings are blanked, with trailing spaces and tabs stripped and every empty line dropped, or None when the source does not parse."""
+    """The file's lines once its comments and docstrings are blanked, or None when the source does not parse.
+
+    A line that holds only a comment, or only a docstring, leaves an empty line, and empty lines are dropped. A line
+    that holds code too keeps it, with the spaces and tabs at its end removed.
+    """
     try:
         tree = ast.parse(source)
         tokens = list(tokenize.tokenize(io.BytesIO(source).readline))
@@ -91,7 +95,11 @@ def code_lines(source):
 
 
 def counted_lines(before, after, path):
-    """The lines the edits count at one path, which is none for a Markdown path and for a Python path whose code lines match."""
+    """The lines one changed path adds to the applied change's count.
+
+    Zero for a path that ends in .md. Zero for a path that ends in .py when both sides parse and their code lines match.
+    Every other path counts the lines a diff of before against after deletes and inserts.
+    """
     if path.endswith(".md"):
         return 0
     if path.endswith(".py"):

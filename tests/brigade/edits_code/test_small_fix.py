@@ -32,7 +32,7 @@ class EditsCapTest(BrigadeTest):
                          (0, f"edited src/data.txt\nok check\n{self.verified(reviewed, head)}", ""))
         self.assertEqual(self.edits_rows(), [["D1", reviewed, head, "D1-review-1.md"]])
 
-    def test_an_applied_change_over_20_counted_lines_is_refused_and_records_no_edits_row(self):
+    def test_the_21_edit_report_whose_blocks_add_a_trailing_empty_line_is_refused_by_the_applied_count(self):
         reviewed = self.edits_store(**{"tools/run.py": RUN_LINES})
         edits = [block(str(number + 1), "tools/run.py", f"x{number} = 0; ", f"x{number} = 0; \n")
                  for number in range(21)]
