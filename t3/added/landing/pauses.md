@@ -14,7 +14,7 @@ The line is a chain of candidates from awaiting-merge entries. `land` works it o
 
 With the merge method `squash` or `merge`, `land` builds a queued entry on the last candidate of the line, or on trunk when the line is empty. The PR of an entry behind the first then holds trunk, every entry ahead of it, and its own change.
 
-With `squash` or `merge`, `land` also rebuilds every awaiting-merge entry that has a PR, is outside the line, and is not noted `merge requested by the queue`. It does that before it builds queued entries. It rebases the entry onto the end of the line, runs the fingerprint check and the checks, force-pushes `landing/e<n>`, and prints `rebuilt E<n> (<holder>) <url>`. The PR stays the same. A rebuild that conflicts, differs from the reviewed change, has a foreign commit author the contract's `authorPolicy` bounces, or fails the checks bounces that entry and leaves its PR open. A rebuild whose change is already in trunk lands the entry as `already in trunk` when the end of the line holds trunk's tree, and leaves the entry as it was otherwise.
+With `squash` or `merge`, `land` also rebuilds every awaiting-merge entry that has a PR, is outside the line, and is not noted `merge requested by the queue`. It does that before it builds queued entries. It rebases the entry onto the end of the line, runs the fingerprint check and the checks, force-pushes `landing/e<n>`, and prints `rebuilt E<n> (<holder>) <url>`. The PR stays the same. A rebuild that conflicts, differs from the reviewed change, has a foreign commit author the contract's `authorPolicy` bounces, or fails the checks bounces that entry, closes its open PR with the reason as a one-line comment, and deletes `landing/e<n>` per [Branch cleanup](pauses.md#branch-cleanup). A rebuild whose change is already in trunk lands the entry as `already in trunk` when the end of the line holds trunk's tree, and leaves the entry as it was otherwise.
 
 With `rebase`, `land` builds at most one entry in a run, and none while an awaiting-merge entry is in the line or is noted `merge requested by the queue`.
 
@@ -30,7 +30,7 @@ In `human` mode `land` leaves the PR open and marks the entry landed when someon
 
 ### Bounce
 
-This subsection covers `merge` mode. The check read includes `autoMergeRequest`. The bounce runs `gh pr merge --disable-auto` only when that field is not null, and leaves the PR open. It posts no comment. A bounce of a rebuild reads no checks, calls no `gh pr merge --disable-auto`, and leaves the PR open. When the field is null, the bounce does not call `--disable-auto`. When that call fails, the PR can still merge on its own, so the queue pauses instead of bouncing, per [When the queue pauses](pauses.md#when-the-queue-pauses).
+This subsection covers `merge` mode. The check read includes `autoMergeRequest`. The bounce runs `gh pr merge --disable-auto` only when that field is not null, then closes the PR with the reason as a one-line comment and deletes `landing/e<n>` per [Branch cleanup](pauses.md#branch-cleanup). A bounce of a rebuild reads no checks and calls no `gh pr merge --disable-auto`. When the field is null, the bounce does not call `--disable-auto`. When that call fails, the PR can still merge on its own, so the queue pauses instead of bouncing, per [When the queue pauses](pauses.md#when-the-queue-pauses).
 
 ### Merged
 
@@ -41,6 +41,8 @@ In `merge` mode `land` checks a PR merged at the candidate head before [Branch c
 ### Branch cleanup
 
 In both modes `land` deletes remote `landing/e<n>` after the PR merges. When the server accepts the delete, the entry lands. When the delete fails, `land` asks the forge when the contract remote has exactly one push URL and that URL names the same owner/repo `gh repo view --json nameWithOwner` resolves. It asks `gh api repos/{owner}/{repo}/branches/landing/e<n>`, and that answer alone decides whether `landing/e<n>` exists. HTTP 404 lands the entry. HTTP 200, or any other result, leaves the entry for the next run. Where the forge cannot be asked, a failed delete lands the entry only when git says `landing/e<n>` does not exist and `gh pr view` shows the PR was opened from another branch. An older queue opened such a PR on `landing/q<n>`, and the queue leaves that branch in place. Any other result there leaves the entry for the next run. `land` also deletes a local `landing/e<n>` branch when one exists and git can delete it. When that delete fails, `land` still marks the entry landed and prints the branch it left.
+
+After a bounce, `land` closes the entry's open PR with the bounce reason as a one-line comment, then deletes remote `landing/e<n>`. A PR that is already closed or merged and a branch the remote does not have are not failures, and a failed close or delete prints a warning line. `land.py prune` closes the open PR and deletes the branch of every landed or bounced entry whose `landing/e<n>` or `landing/q<n>` branch is still on the remote. It leaves a branch alone when its entry is queued, landing, or awaiting merge, when no entry has its number, and when its name is outside `landing/`.
 
 ## When the queue pauses
 

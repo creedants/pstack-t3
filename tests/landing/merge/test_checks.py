@@ -107,7 +107,7 @@ class LandingTest(MergeBase, LandingTestBase):
             (self.base / "checks").write_text("failed")
             self.assertEqual(self.land("land"), "bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)")
             self.assertTrue(self.land("lease", "list").startswith("L1 active r/D1"))
-            self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
+            self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
 
     def test_merge_mode_does_not_merge_when_the_check_query_fails(self):
         with self.fake_gh():

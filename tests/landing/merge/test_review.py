@@ -114,10 +114,10 @@ class LandingTest(MergeBase, LandingTestBase):
             out = self.land("land")
             self.assertIn("bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)", out)
             self.assertIn("pr merge https://github.com/o/r/pull/9 --disable-auto", (self.base / "merge-calls").read_text())
-            self.assertNotIn("pr comment", (self.base / "gh-calls").read_text())
-            self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
+            self.assertIn("pr close https://github.com/o/r/pull/9 --comment required checks failed on "
+                          "https://github.com/o/r/pull/9: test (3.12)", (self.base / "gh-calls").read_text())
             self.assertTrue(self.land("lease", "list").startswith("L1 active r/D1"))
-            self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
+            self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
 
     def test_merge_mode_pauses_when_it_cannot_disable_auto_merge_on_a_failed_pr(self):
         with self.fake_gh():
@@ -150,7 +150,8 @@ class LandingTest(MergeBase, LandingTestBase):
             self.assertEqual(self.land("land"), "bounced E1 (r/D1): required checks failed on https://github.com/o/r/pull/9: test (3.12)")
             calls = (self.base / "merge-calls").read_text() if (self.base / "merge-calls").exists() else ""
             self.assertNotIn("--disable-auto", calls)
-            self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
+            self.assertIn("pr close https://github.com/o/r/pull/9 --comment required checks failed on "
+                          "https://github.com/o/r/pull/9: test (3.12)", (self.base / "gh-calls").read_text())
             self.assertNotIn("auto-merge still enabled", self.land("status", "E1"))
             self.assertTrue(self.land("lease", "list").startswith("L1 active"))
 
