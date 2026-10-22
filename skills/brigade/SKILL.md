@@ -60,7 +60,7 @@ These words name files, commands, and steps. They never appear in speech. Replie
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir> --owner <thread>@<generation>"   # the token from status
 $B ticket add --summary "<request>" --kind feature|fix|polish|upkeep|study [--goal G<n>] --source user|github|<feed> [--ref <ref>] [--request A<n>] [--again] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision]   # prints T<n>. --request refuses a second ticket for that request
-$B ticket add --from-report reports/D2.md [--dry-run]   # one waiting ticket per follow-up in that report. It prints a `not filed` line for prose it does not take as a follow-up, and a `skipped` line for follow-up text already on the rail
+$B ticket add --from-report reports/D2.md [--dry-run]   # at most one waiting ticket per item, for the first follow-up marked Safety:, Privacy:, or Correctness: whose text is not already on the rail, and only when no ticket from that report exists yet in any state. A `not filed` line names prose it does not take as a follow-up, or a marked follow-up it does not file and does note. A `skipped` line names follow-up text a ticket already holds, and that text is not noted. Every other follow-up goes to notes.tsv, keyed by the tracked paths it quotes
 $B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,src/b [--timebox 60] [--mode full --reason "<one line>"] [--kind <kind>] [--ride-along T3] [--doc-item]   # claims the lease, prints D<n>
 L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases and the landing queue
 ```
