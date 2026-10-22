@@ -30,6 +30,14 @@ A `file` entry names one document. A `file` entry whose path ends with `/` names
 
 It is an optional repository-relative directory path. It defaults to unset. When it is set, `fire` leases `<dir>/<branch>.md` for the branch that attempt will use. `%` is written as `%25` and `/` is written as `%2F`. When it is unset, `fire` leases no fragment. `fire` with no paths reads no `changeNoteDir` and leases no fragment.
 
+## houseRulesCap
+
+`houseRulesCap` caps one role's house rules by bytes. `brief` and `next` read it. It is a positive whole number of bytes, written by hand in `restaurant.json`. It is absent by default, and an absent key leaves both commands as they are. A present value that is a boolean, is not a whole number, or is under 1 is refused by `brief` and by `next`.
+
+The three roles are `worker`, `reviewer`, and `coordinator`. A rule is a line that starts at column 0 and the indented or blank lines under it. Its first role tag anywhere on its first line selects a role. A rule tagged for one role is left out of every other role's text. A rule tagged for the role loses the tag and at most one space after it. An untagged rule is in every role's text as it is. A role's size is the byte count of that text.
+
+When a role's size is over the cap, `brief` exits 1 and writes no brief and no contract, and prints one line for each over-cap role that names the role, its size, and the cap. `next` prints the same line for each over-cap role on standard error and exits 0.
+
 ## Refusals
 
 `set` validates the prospective settings with the same readers `affected` and `fire` use. `layout` judges `affectedTests`. `doc_policy` judges `sharedDocs` and `docTimebox`. `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment. `fire` always reads `sharedDocs` and `docTimebox` and never reads `affectedTests`.

@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from brigade_lib import seam
+from brigade_lib._store import rules
 from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
@@ -43,7 +44,6 @@ _RULES = (
     ),
 )
 STANDING_PLACEHOLDER = re.compile(r"<([a-z]+)>")
-HOUSE_RULE_TAG = re.compile(r"\[(worker|reviewer|coordinator)\](?: )?")
 ESCALATED = "escalated: "
 MODE_RESOLUTIONS = 3
 SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
@@ -115,6 +115,9 @@ def brief_dish(restaurant, ident, paths, lease, acceptance):
     if not thread:
         raise BrigadeError("no coordinator thread recorded; run brigade.py set --thread")
     menu_purpose(restaurant)
+    lines = house_rules_cap_lines(restaurant)
+    if lines:
+        raise BrigadeError("\n".join(lines))
     return dish, paths, lease, thread
 
 
@@ -246,29 +249,17 @@ def standing_rules(restaurant, context, verify):
 
 
 def worker_house_rules(text):
-    """The house rules a worker brief carries.
+    """The house rules a worker brief carries. A rule tagged for another role is left out, and a worker tag and at most one space after it are removed."""
+    return rules.for_role("worker", text)
 
-    A rule is a line that starts at column 0 and the indented or blank lines under it. A rule whose
-    first line's first role tag is `[reviewer]` or `[coordinator]` is left out. One whose first tag is
-    `[worker]` keeps its place and loses that tag and the one space after it. Every other rule is kept
-    as it is, so a store with no tags renders the text it held before.
-    """
-    rules, current = [], []
-    for line in text.strip().split("\n"):
-        if line[:1] not in ("", " ", "\t") and current:
-            rules.append(current)
-            current = []
-        current.append(line)
-    rules.append(current)
-    kept = []
-    for lines in rules:
-        tag = HOUSE_RULE_TAG.search(lines[0])
-        if tag and tag.group(1) != "worker":
-            continue
-        if tag:
-            lines[0] = HOUSE_RULE_TAG.sub("", lines[0], count=1)
-        kept.append("\n".join(lines))
-    return "\n".join(kept)
+
+def house_rules_cap_lines(restaurant):
+    """One line for each role whose house rules exceed the store's houseRulesCap."""
+    cap = rules.cap_of(restaurant.meta)
+    if cap is None:
+        return ()
+    path = restaurant.dir / "house-rules.md"
+    return rules.breach_lines(cap, path.read_text() if path.is_file() else "")
 
 
 def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread,
