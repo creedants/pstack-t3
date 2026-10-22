@@ -139,7 +139,9 @@ def file_follow_ups(restaurant, name, found, write, tracked):
     The ref ends in a position, which is not an identity, so the text is the only key of the rail check, refuse_live_ref
     is not asked, and the one-ticket check reads the report name in the ref.
     Each ticket takes the goal of the report's item, whatever that goal's state, and follow_up_kind of that item's kind.
-    A follow-up whose text starts with Safety:, Privacy:, or Correctness: is marked, case aside, and leading whitespace and the marks *, _, and a backtick before the word do not count. At most one marked
+    A follow-up is marked when marker(text) returns safety, privacy, or correctness. It removes leading whitespace,
+    then one contiguous run of *, _, or backtick marks, then leading whitespace again. Case does not count, and
+    the marker word must be followed immediately by a colon. At most one marked
     follow-up becomes a ticket: the first whose text is not on the rail, and only when no ticket from this report
     exists yet, in any state.
     Every other follow-up whose text is not on the rail goes to notes.tsv keyed by the tracked paths it quotes.
@@ -155,7 +157,7 @@ def file_follow_ups(restaurant, name, found, write, tracked):
     holders = {}
     for row in sorted(restaurant.rows("rail.tsv"), key=lambda row: row["state"] not in LIVE_TICKET_STATES):
         holders.setdefault(same_text(row["summary"]), f"{row['id']} ({row['state']})")
-    taken = re.compile("/reports/" + re.escape(name) + r"#\d+$")
+    taken = re.compile(re.escape(f"{restaurant.dir.name}/reports/{name}") + r"#\d+$")
     has_ticket = any(taken.search(row.get("ref") or "") for row in restaurant.rows("rail.tsv"))
     item = name[:-3]
     stamp = now()
@@ -209,12 +211,31 @@ def file_follow_ups(restaurant, name, found, write, tracked):
             has_ticket = True
         else:
             lines.append(f"not filed, {name} takes one ticket per item: {text}")
+            rows = note_rows(text, item, stamp, tracked)
             if write:
-                for path, note_item, at, note_text in note_rows(text, item, stamp, tracked):
+                for path, note_item, at, note_text in rows:
                     note_key = (path, note_item, same_text(note_text))
-                    if note_key not in seen:
+                    if note_key in seen:
+                        if path:
+                            lines.append(f"already noted {path} from {ref}: {text}")
+                        else:
+                            lines.append(f"already noted {ref}, no tracked path: {text}")
+                    else:
+                        if path:
+                            lines.append(f"noted {path} from {ref}: {text}")
+                        else:
+                            lines.append(f"noted {ref}, no tracked path: {text}")
                         seen.add(note_key)
                         pending.append((path, note_item, at, note_text))
+            else:
+                for path, note_item, at, note_text in rows:
+                    note_key = (path, note_item, same_text(note_text))
+                    said = "already noted" if note_key in seen else "would note"
+                    if path:
+                        lines.append(f"{said} {path} from {ref}: {text}")
+                    else:
+                        lines.append(f"{said} {ref}, no tracked path: {text}")
+                    seen.add(note_key)
     if write and pending:
         append_notes(restaurant, pending)
     return "\n".join(lines + aside)

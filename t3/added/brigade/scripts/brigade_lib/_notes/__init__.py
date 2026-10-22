@@ -11,7 +11,8 @@ HEADER = ("path", "item", "at", "text")
 def marker(text):
     """The marker word a follow-up text starts with, or "".
 
-    Case does not count. Leading whitespace and the marks `*`, `_`, and a backtick do not count. The word is followed by `:`.
+    Case does not count. Remove leading whitespace, then one contiguous run of `*`, `_`, or backtick marks,
+    then leading whitespace again. The marker word must be followed immediately by `:`.
     """
     stripped = text.lstrip().lstrip("*_`").lstrip()
     lowered = stripped.casefold()
