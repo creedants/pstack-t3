@@ -1,6 +1,8 @@
 """The outsider smoke catches a command a fresh HOME cannot run."""
 
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -21,7 +23,25 @@ AUTHOR = {
     "GIT_COMMITTER_EMAIL": "outsider@example.com",
 }
 CANARY = "canary.txt"
-REQUIRED_STEPS = ("install", "doctor", "roles", "brigade", "land")
+REQUIRED_STEPS = (
+    "install",
+    "doctor",
+    "roles",
+    "brigade",
+    "land",
+    "ticket",
+    "fire",
+    "worker",
+    "dish",
+    "pass",
+    "submit",
+    "queue",
+    "trunk",
+    "merged",
+    "close",
+)
+PAGE = ROOT / "docs" / "first-coordinator.md"
+REF_MARK = "\0REF"
 
 
 def fence_git_environment():
@@ -77,6 +97,111 @@ def run(canary, tmpdir, *argv, overrides=None):
         argv=argv,
         env=env,
     ))
+
+
+def _norm_token(token):
+    if token.startswith("$") or token.startswith("~") or token == "...":
+        return token
+    if "python" in token.lower() and ("bin" in token or token.endswith("python3") or token == sys.executable):
+        return "python3"
+    if token.endswith(".py") and "/" in token:
+        for marker in ("skills/", "scripts/"):
+            at = token.find(marker)
+            if at != -1:
+                return token[at:]
+    return token
+
+
+def _plan_token(part):
+    if isinstance(part, outsider_smoke.Ref):
+        return REF_MARK
+    text = str(part)
+    if text == "-I":
+        return None
+    return _norm_token(text)
+
+
+def _expand_sh(argv):
+    if len(argv) >= 3 and argv[0] == "sh" and argv[1] == "-c":
+        found = []
+        for chunk in str(argv[2]).split(";"):
+            text = chunk.strip()
+            if not text or text == "set -e":
+                continue
+            found.append([_norm_token(t) for t in shlex.split(text)])
+        return found
+    tokens = []
+    for part in argv:
+        token = _plan_token(part)
+        if token is not None:
+            tokens.append(token)
+    return [tokens]
+
+
+def _plan_lists():
+    entries = outsider_smoke._commands(outsider_smoke._stand_in())
+    flat = []
+    for entry in entries:
+        flat.extend(_expand_sh(entry.argv))
+    return flat
+
+
+def _page_blocks(text):
+    return re.findall(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
+
+
+def _page_lists(text):
+    found = []
+    for block in _page_blocks(text):
+        for line in block.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            inner = stripped
+            match = re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\$\((.*)\)\s*$", stripped)
+            if match:
+                inner = match.group(1)
+            found.append([_norm_token(t) for t in shlex.split(inner)])
+    return found
+
+
+def _matches(page, plan):
+    if len(page) != len(plan):
+        return False
+    for have, want in zip(page, plan):
+        if have.startswith("$") or have.startswith("~") or have == "...":
+            continue
+        if have != want:
+            return False
+    return True
+
+
+def _unknown_page_commands(text):
+    plans = _plan_lists()
+    return [page for page in _page_lists(text) if not any(_matches(page, plan) for plan in plans)]
+
+
+def _missing_steps(text):
+    pages = _page_lists(text)
+    entries = [e for e in outsider_smoke._commands(outsider_smoke._stand_in()) if isinstance(e, outsider_smoke.Step)]
+    missing = []
+    for entry in entries:
+        wants = _expand_sh(entry.argv)
+        if entry.name == "worker":
+            wants = [tokens for tokens in wants if tokens and tokens[0] == "git"]
+        if not all(any(_matches(page, want) for page in pages) for want in wants):
+            missing.append(entry.name)
+    return missing
+
+
+def _t3_inside_fence(text):
+    inside = False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            inside = not inside
+        elif inside and "**T3 action:**" in line:
+            return True
+    return False
 
 
 class OutsiderSmokeTest(unittest.TestCase):
@@ -174,3 +299,45 @@ class OutsiderSmokeTest(unittest.TestCase):
             self.assertEqual(listing(Path(canary)), before)
             self.assertNotIn(str(canary), "".join(transcripts))
             self.assertNotIn(str(canary), result.stdout + result.stderr)
+
+    def test_page_command_without_a_plan_command_is_refused(self):
+        # A page fence that names a program the plan never runs would teach a stranger a wrong command.
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertEqual(_unknown_page_commands(text), [])
+        bogus = text + "\n```sh\npython3 scripts/not_a_command.py\n```\n"
+        self.assertIn(["python3", "scripts/not_a_command.py"], _unknown_page_commands(bogus))
+
+    def test_page_covers_every_step_the_plan_runs(self):
+        # A step with no page fence leaves a stranger with no command for that part of the run.
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertEqual(_missing_steps(text), [])
+
+    def test_t3_action_callout_stays_out_of_fences(self):
+        # A T3 action inside a fence reads as a command the smoke runs, but the smoke cannot start T3 threads.
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertFalse(_t3_inside_fence(text))
+
+    def test_ref_names_a_capture_from_an_earlier_entry(self):
+        # A Ref to a name no earlier entry captured would fail only at run time, after slow steps already ran.
+        seen = set()
+        for entry in outsider_smoke._commands(outsider_smoke._stand_in()):
+            for part in entry.argv:
+                if isinstance(part, outsider_smoke.Ref):
+                    self.assertIn(part.name, seen)
+            if entry.capture:
+                seen.add(entry.capture)
+
+    def test_expect_reason_reports_both_kinds(self):
+        # A broken postcondition that reason calls met would let a wrong store state pass as green.
+        self.assertIsNone(outsider_smoke.Expect("is", "T1").reason("T1\n"))
+        self.assertIsNone(outsider_smoke.Expect("is", "T1").reason("T1"))
+        self.assertIsNotNone(outsider_smoke.Expect("is", "T1").reason("T2\n"))
+        self.assertIsNone(outsider_smoke.Expect("has", "merged: 1").reason("Since opening. merged: 1.\n"))
+        self.assertIsNotNone(outsider_smoke.Expect("has", "merged: 1").reason("nothing merged\n"))
+
+    def test_page_missing_a_step_fails_the_check(self):
+        # A check that stays green when a step leaves the page would let the page drift from the smoke.
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertEqual(_missing_steps(text), [])
+        mutated = text.replace("close --dry-run", "close --to-file")
+        self.assertIn("close", _missing_steps(mutated))
