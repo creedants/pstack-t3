@@ -1,0 +1,2 @@
+- kind fix
+- The pull request watching step states what a bounce does to its pull request, which is a close of the open PR and a branch delete with a warning on failure, and states that the queue pauses instead of bouncing when auto-merge cannot be turned off
