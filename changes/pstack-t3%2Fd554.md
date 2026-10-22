@@ -1,3 +1,3 @@
 - kind feature
-- `brigade.py open --rename` moves a restaurant's store to the new name's path and refuses while any landing lease, reservation, or queue entry, or any item in progress or review, is held.
+- `brigade.py open --rename` moves a restaurant's store to the new name's path and refuses while a landing lease, reservation, or queue entry under its holder prefix, or an item in progress or review, is held.
 - Onboard reads an HTTP 404 from the branch protection read as unprotected with no required checks.

@@ -181,7 +181,8 @@ SETTLED_ENTRIES = ("landed", "bounced")
 def _rename_request(args):
     """The project root, old name, new name, and owner one open --rename works from, or a refusal.
 
-    It refuses the executive admin, a missing --name, and every flag a rename cannot honor.
+    It refuses the executive admin, a missing --name, --intake, --workers, --mode, --context-cap,
+    and --coordinator-provider.
     """
     if args.admin:
         raise BrigadeError("open --rename renames a coordinator; the executive admin keeps its directory")
@@ -223,7 +224,8 @@ def _entry_lines(text):
 def _held_lines(project_root, prefix):
     """The landing leases, reservations, and queue entries held under a holder prefix, one line each.
 
-    A repository with no landing contract holds nothing. A read that fails another way refuses the rename.
+    A repository with no landing contract, or a project root that is not a git repository, holds nothing.
+    A read that fails another way refuses the rename.
     """
     lines = []
     for read in (("lease", "list"), ("status", "--holder", prefix)):

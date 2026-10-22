@@ -87,7 +87,7 @@ class RenameTest(BrigadeTest):
         self.assertIn("coordinator@1", error)
         self.assertEqual(self.store_files(), store)
 
-    def test_rename_refuses_a_flag_it_would_ignore(self):
+    def test_rename_refuses_workers_which_it_would_ignore(self):
         self.open()
         store = self.store_files()
         error = self.rename("Speed", "--workers", "2", code=1)
