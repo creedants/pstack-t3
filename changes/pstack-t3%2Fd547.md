@@ -1,0 +1,2 @@
+- kind fix
+- A brief tells the worker to reread the thread id from the brief file and retry the report send once when `t3_thread_send` returns thread_not_found. The module's unused imports and a placeholder-free f-string are removed to keep the file under the size limit.
