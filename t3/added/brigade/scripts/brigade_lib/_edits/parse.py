@@ -193,8 +193,8 @@ def parse_edits(text):
     Raises EditsRefused for a carriage return, for a NUL character, for a byte order mark as the first character,
     for what report_parts refuses, for a second heading whose text is `Edits`, for any other heading in the section,
     for a fence in the section above its first edit, for a section with no edit, and for the first edit that one_edit
-    refuses, and for a report whose edits change more than 20 lines when one of them names a file whose path does not end
-    in .md
+    refuses, and for a report whose edits change more than 20 lines when one of them names a file whose path does not
+    end in .md.
     """
     for key, found in (("return", "\r" in text), ("nul", "\0" in text), ("mark", text.startswith("\ufeff"))):
         if found:

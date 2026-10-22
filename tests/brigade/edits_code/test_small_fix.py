@@ -37,6 +37,17 @@ class EditsCapTest(BrigadeTest):
                          "inserted line as one and a replaced line as two")
         self.assertEqual(self.pass_rows(), [])
 
+    def test_a_mixed_report_over_the_cap_is_refused_though_its_code_edit_alone_is_under_it(self):
+        self.fired_bug_fix()
+        code = block("1", "src/greeting.txt", "old one\nold two\nold three", "new one\nnew two\nnew three")
+        wording = block("2", MARKDOWN, "\n".join(f"old line {number}" for number in range(7)),
+                        "\n".join(f"new line {number}" for number in range(8)))
+        self.assertEqual(self.record_report(report(code, wording), ok=False),
+                         "brigade: reports/D1-review-1.md: its edits change 21 lines; a report whose edits name a file "
+                         "whose path does not end in .md changes at most 20 lines in total, counting a deleted or "
+                         "inserted line as one and a replaced line as two")
+        self.assertEqual(self.pass_rows(), [])
+
     def test_a_markdown_only_report_over_20_changed_lines_is_recorded_because_the_cap_skips_md_files(self):
         self.fired_bug_fix()
         self.assertEqual(self.record_report(report(block("1", MARKDOWN, OLD_FIFTEEN, NEW_FIFTEEN))), "D1 sent-back")
