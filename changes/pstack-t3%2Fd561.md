@@ -1,2 +1,2 @@
 - kind polish
-- `CONTRIBUTING.md` lists the release refusal for a `git log` line before the first commit marker, or a line that is neither a commit marker nor a path under `changes/`, and gives the same git config hint as the message.
+- `CONTRIBUTING.md` lists the release refusal for a `git log` line before the first commit marker, or a line that is neither a commit marker nor a path under `changes/`, and gives the same hint as the message.
