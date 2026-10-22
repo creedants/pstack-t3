@@ -174,6 +174,20 @@ class OpenFlagHelpTest(BrigadeTest):
         self.assertIn(self.PROVIDER_HELP, words)
 
 
+class SetContextCapHelpTest(BrigadeTest):
+    """The context cap setting, as the set help states it."""
+
+    CAP_HELP = ('--context-cap CONTEXT_CAP the auto-compact window written to .claude/settings.local.json '
+                'when the provider is claude; "" clears it to 300000')
+
+    def test_set_help_states_the_window_path_and_the_empty_value_that_clears_to_300000(self):
+        # -h output
+        result = real_process(ProcessReason.HELP, SCRIPT, ["set", "--help"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        words = " ".join(result.stdout.split())
+        self.assertIn(self.CAP_HELP, words)
+
+
 class ReleaseSectionsTest(unittest.TestCase):
     """The release bump and the changelog sections a store of fragments of every kind gives."""
 
