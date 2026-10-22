@@ -3,17 +3,17 @@ from ..support import BrigadeTest, StoresTest, setUpModule
 
 class HandoffAllowanceTest(StoresTest):
     def test_a_sibling_report_ticket_does_not_consume_the_local_item_allowance(self):
-        self.open("core")
+        self.open("core-engine")
         self.open("engine")
-        self.brigade("core", "ticket", "add", "--kind", "fix", "--summary", "s")
-        self.brigade("core", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
+        self.brigade("core-engine", "ticket", "add", "--kind", "fix", "--summary", "s")
+        self.brigade("core-engine", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
         self.brigade("engine", "ticket", "add", "--kind", "fix", "--summary", "s")
         self.brigade("engine", "fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
-        (self.dir("core") / "reports").mkdir(parents=True, exist_ok=True)
-        (self.dir("core") / "reports" / "D1.md").write_text("## Follow-ups\n\n- Correctness: Core follow-up.\n")
-        self.assertEqual(self.brigade("core", "ticket", "add", "--from-report", "reports/D1.md"),
-                         "T2 added from core/reports/D1.md#1: Correctness: Core follow-up.")
-        self.brigade("core", "ticket", "move", "T2", "--to", "engine")
+        (self.dir("core-engine") / "reports").mkdir(parents=True, exist_ok=True)
+        (self.dir("core-engine") / "reports" / "D1.md").write_text("## Follow-ups\n\n- Correctness: Core follow-up.\n")
+        self.assertEqual(self.brigade("core-engine", "ticket", "add", "--from-report", "reports/D1.md"),
+                         "T2 added from core-engine/reports/D1.md#1: Correctness: Core follow-up.")
+        self.brigade("core-engine", "ticket", "move", "T2", "--to", "engine")
         self.brigade("engine", "ticket", "take")
         (self.dir("engine") / "reports").mkdir(parents=True, exist_ok=True)
         (self.dir("engine") / "reports" / "D1.md").write_text("## Follow-ups\n\n- Correctness: Engine follow-up.\n")

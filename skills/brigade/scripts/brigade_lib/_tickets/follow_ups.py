@@ -158,7 +158,7 @@ def file_follow_ups(restaurant, name, found, write, tracked):
     for row in sorted(restaurant.rows("rail.tsv"), key=lambda row: row["state"] not in LIVE_TICKET_STATES):
         holders.setdefault(same_text(row["summary"]), f"{row['id']} ({row['state']})")
     taken = re.compile(re.escape(f"{restaurant.dir.name}/reports/{name}") + r"#\d+$")
-    has_ticket = any(taken.search(row.get("ref") or "") for row in restaurant.rows("rail.tsv"))
+    has_ticket = any(taken.fullmatch(row.get("ref") or "") for row in restaurant.rows("rail.tsv"))
     item = name[:-3]
     stamp = now()
     seen = set()
