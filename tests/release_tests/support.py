@@ -30,6 +30,7 @@ ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
     "LC_ALL": "C",
+    "PYTHONDONTWRITEBYTECODE": "1",
 }
 CHANGELOG = "# Changelog\n\n## 0.2.0 (2026-10-06)\n\n- old\n\n## 0.1.0\n\nFirst.\n"
 HEADING = "## 0.2.1 (2026-10-09)\n\n"
