@@ -7,7 +7,6 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from brigade_lib import seam
@@ -21,9 +20,10 @@ NO_COMMAND = "none"
 SMALL_FIX_LINES = 20
 SMALL_FIX = ("the applied change counts {count} lines, and a small code fix counts at most {cap}; it needs a second "
              "review. The count is each line the edits add or delete from the file at the reviewed commit to that file "
-             "with the edits applied, so a replaced line counts two. A path ending in .md is not counted, and neither "
-             "is a .py path whose code lines are the same once its comments, its docstrings, blank lines, and trailing "
-             "whitespace are removed")
+             "with the edits applied, so a replaced line counts two, and a last line with no newline differs from that "
+             "line with a newline. A path ending in .md is not counted, and neither is a .py path whose AST is the same "
+             "once its docstrings are removed, so a change to a comment, a docstring, or formatting alone is not counted. "
+             "A change to a printed message or to code on a test line changes that AST and is counted")
 # Why an edit cannot apply to the reviewed commit.
 EDIT_FAILS = {
     "missing": "FAIL {path}: no regular file at {sha}",
@@ -64,58 +64,52 @@ def occurrences(content, old):
     return found
 
 
-def character_offset(line, offset):
-    """The character offset in one line of text of the UTF-8 byte offset ast reports."""
-    return len(line.encode("utf-8")[:offset].decode("utf-8", "ignore"))
+def without_docstrings(tree):
+    """The tree with every docstring removed.
 
-
-def code_lines(source):
-    """The file's lines once its comments and docstrings are blanked, or None when the source does not parse.
-
-    A line that holds only a comment, or only a docstring, leaves an empty line, and empty lines are dropped. A line
-    that holds code too keeps it, with the whitespace at its end removed.
+    A docstring is the first statement of a module, class, function, or async function body when that statement is an
+    expression whose value is a string constant.
     """
-    try:
-        encoding, _ = tokenize.detect_encoding(io.BytesIO(source).readline)
-        text = source.decode(encoding)
-        tree = ast.parse(text)
-        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    except (SyntaxError, ValueError, UnicodeDecodeError, tokenize.TokenError):
-        return None
-    lines = text.split("\n")
-    spans = [(token.start, token.end) for token in tokens if token.type == tokenize.COMMENT]
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not node.body:
-            continue
-        first = node.body[0]
-        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
-            spans.append(((first.lineno, character_offset(lines[first.lineno - 1], first.col_offset)),
-                          (first.end_lineno, character_offset(lines[first.end_lineno - 1], first.end_col_offset))))
-    blanked = list(lines)
-    for (row, at), (end_row, end) in spans:
-        for number in range(row, end_row + 1):
-            line = blanked[number - 1]
-            first = at if number == row else 0
-            last = end if number == end_row else len(line)
-            blanked[number - 1] = line[:first] + " " * (last - first) + line[last:]
-    kept = [line.rstrip() for line in blanked]
-    return [line for line in kept if line]
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                node.body = node.body[1:]
+    return tree
+
+
+def ast_dump(source):
+    """ast.dump of the source once its docstrings are removed, or None when the source does not parse."""
+    try:
+        return ast.dump(without_docstrings(ast.parse(source)))
+    except (SyntaxError, ValueError):
+        return None
+
+
+def line_records(data):
+    """The file's lines, each with the newline that ends it. A last line with no newline is kept as it is."""
+    records = data.split(b"\n")
+    lines = [record + b"\n" for record in records[:-1]]
+    if records[-1]:
+        lines.append(records[-1])
+    return lines
 
 
 def counted_lines(before, after, path):
     """The lines one changed path adds to the applied change's count.
 
-    Zero for a path that ends in .md. Zero for a path that ends in .py when both sides parse and their code lines match.
-    Every other path counts the lines a diff of before against after deletes and inserts.
+    Zero for a path that ends in .md. Zero for a path that ends in .py when both sides parse and their ASTs are equal
+    once every docstring is removed. Every other path counts the lines a diff of before against after deletes and
+    inserts, with each line keeping the newline that ends it.
     """
     if path.endswith(".md"):
         return 0
     if path.endswith(".py"):
-        earlier, later = code_lines(before), code_lines(after)
+        earlier, later = ast_dump(before), ast_dump(after)
         if earlier is not None and later is not None and earlier == later:
             return 0
     return sum((a2 - a1) + (b2 - b1) for tag, a1, a2, b1, b2 in
-               difflib.SequenceMatcher(None, before.split(b"\n"), after.split(b"\n"), autojunk=False).get_opcodes()
+               difflib.SequenceMatcher(None, line_records(before), line_records(after), autojunk=False).get_opcodes()
                if tag != "equal")
 
 

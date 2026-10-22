@@ -1,2 +1,0 @@
-- kind feature
-- `edits verify` refuses an applied change over 20 counted lines, counting each line the edits add or delete in the changed files from the reviewed commit, and skipping a path that ends in `.md` and a `.py` path whose code lines are the same once its comments, its docstrings, blank lines, and trailing whitespace are removed

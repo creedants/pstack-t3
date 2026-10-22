@@ -1,4 +1,5 @@
 from ..support import BrigadeTest, setUpModule
+from . import cap_refusal
 
 
 OLD_TEN = "\n".join(f"old line {number}" for number in range(10))
@@ -33,19 +34,13 @@ class EditsCapTest(BrigadeTest):
         self.assertEqual(self.edits_rows(), [["D1", reviewed, head, "D1-review-1.md"]])
 
     def test_the_21_edit_report_whose_blocks_add_a_trailing_empty_line_is_refused_by_the_applied_count(self):
-        reviewed = self.edits_store(**{"tools/run.py": RUN_LINES})
-        edits = [block(str(number + 1), "tools/run.py", f"x{number} = 0; ", f"x{number} = 0; \n")
+        reviewed = self.edits_store(**{"tools/run.txt": RUN_LINES})
+        edits = [block(str(number + 1), "tools/run.txt", f"x{number} = 0; ", f"x{number} = 0; \n")
                  for number in range(21)]
         self.review_file("D1-review-1.md", report(*edits))
         self.assertEqual(self.record_edits(reviewed, "--edits", "D1-review-1.md"), "D1 sent-back")
-        head = self.head_commit(self.SOURCE, **{"tools/run.py": SPLIT_LINES})
-        self.assertEqual(self.verify(reviewed, head),
-                         (1, "", "brigade: the applied change counts 63 lines, and a small code fix counts at most 20; "
-                                 "it needs a second review. The count is each line the edits add or delete from the file "
-                                 "at the reviewed commit to that file with the edits applied, so a replaced line counts "
-                                 "two. A path ending in .md is not counted, and neither is a .py path whose code lines "
-                                 "are the same once its comments, its docstrings, blank lines, and trailing whitespace "
-                                 "are removed"))
+        head = self.head_commit(self.SOURCE, **{"tools/run.txt": SPLIT_LINES})
+        self.assertEqual(self.verify(reviewed, head), (1, "", cap_refusal(63)))
         self.assertEqual(self.edits_rows(), [])
 
     def test_an_applied_change_to_only_comments_in_a_python_file_verifies(self):
@@ -66,15 +61,12 @@ class EditsCapTest(BrigadeTest):
 
     def test_a_mixed_applied_change_counts_only_the_paths_that_are_not_exempt(self):
         reviewed = self.edits_store(**{"docs/notes.md": OLD_THIRTY + "\n",
-                                       "tools/commented.py": OLD_COMMENTS + "\nvalue = 1\n",
                                        "src/data.txt": OLD_TEN + "\n"})
         self.review_file("D1-review-1.md", report(block("1", "docs/notes.md", OLD_THIRTY, NEW_THIRTY),
-                                                  block("2", "tools/commented.py", OLD_COMMENTS, NEW_COMMENTS),
-                                                  block("3", "src/data.txt", OLD_TEN, NEW_TEN)))
+                                                  block("2", "src/data.txt", OLD_TEN, NEW_TEN)))
         self.record_edits(reviewed, "--edits", "D1-review-1.md")
         head = self.head_commit(self.SOURCE, **{"docs/notes.md": NEW_THIRTY + "\n",
-                                                "tools/commented.py": NEW_COMMENTS + "\nvalue = 1\n",
                                                 "src/data.txt": NEW_TEN + "\n"})
         self.assertEqual(self.verify(reviewed, head),
-                         (0, "edited docs/notes.md\nedited src/data.txt\nedited tools/commented.py\nok check\n"
+                         (0, "edited docs/notes.md\nedited src/data.txt\nok check\n"
                              f"{self.verified(reviewed, head)}", ""))
