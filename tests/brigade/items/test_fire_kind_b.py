@@ -111,8 +111,11 @@ class FireKindBMixin:
         self.two_goals()
         self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G2")
         self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a")
-        self.assertEqual(len(self.follow_ups_in(BULLETS).splitlines()), 3)
-        self.assertEqual([self.label("rail.tsv", ident) for ident in ("T2", "T3", "T4")], [("polish", "G2")] * 3)
+        self.assertEqual(len(self.follow_ups_in(BULLETS).splitlines()), 5)
+        self.assertEqual(self.label("rail.tsv", "T2"), ("polish", "G2"))
+        self.assertEqual(self.brigade("ticket", "list", "--state", "waiting").splitlines(), [
+            f"T2 waiting low polish G2 [report] Correctness: A no-ref `--source user` add still has no CLI dedupe. The new Refusals rule tells the coordinator to read `ticket list` before refiling. A `brigade.py` guard would make that structural. perf/reports/D1.md#1",
+        ])
 
     def test_from_report_on_an_item_with_no_kind_and_no_goal_files_tickets_with_no_kind_and_no_goal(self):
         self.open()
@@ -120,7 +123,7 @@ class FireKindBMixin:
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
         self.hand_edit("dishes.tsv", "D1", kind="")
         self.follow_ups_in(BULLETS)
-        self.assertEqual([self.label("rail.tsv", ident) for ident in ("T2", "T3", "T4")], [("", "")] * 3)
+        self.assertEqual([self.label("rail.tsv", ident) for ident in ("T2",)], [("", "")])
 
     def test_report_entry_names_the_kind_of_each_entry_under_reports(self):
         self.fired_bug_fix()

@@ -10,7 +10,7 @@ class SourcesMixin:
         self.assertEqual(self.brigade("core", "ticket", "add", "--kind", "fix", "--summary", "Fix the cache"), "T2")
 
     def test_from_report_files_the_same_report_name_in_two_siblings(self):
-        body = "## Follow-ups\n\n- Shared text.\n"
+        body = "## Follow-ups\n\n- Correctness: Shared text.\n"
         for name in ("core", "engine"):
             self.open(name)
             self.brigade(name, "ticket", "add", "--kind", "fix", "--summary", "s")
@@ -18,8 +18,8 @@ class SourcesMixin:
             (self.dir(name) / "reports").mkdir(exist_ok=True)
             (self.dir(name) / "reports" / "D1.md").write_text(body)
             self.assertEqual(self.brigade(name, "ticket", "add", "--from-report", "reports/D1.md"),
-                             f"T2 added from {name}/reports/D1.md#1: Shared text.")
-        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Shared text.", "", "", "", "polish", ""])
+                             f"T2 added from {name}/reports/D1.md#1: Correctness: Shared text.")
+        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Correctness: Shared text.", "", "", "", "polish", ""])
 
     def test_a_sibling_cannot_claim_a_source_another_owns(self):
         self.open("docs", "--intake", "github")

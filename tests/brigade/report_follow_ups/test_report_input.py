@@ -21,33 +21,39 @@ class ReportInputMixin:
         finally:
             dry_run.kill()
         self.assertEqual([line.split(":")[0] for line in out.splitlines()],
-                         [f"would add from perf/reports/D1.md#{number}" for number in (1, 2, 3)], err)
+                         ["would add from perf/reports/D1.md#1",
+                          "not filed, D1.md takes one ticket per item",
+                          "would note perf/reports/D1.md#2, no tracked path",
+                          "not filed, D1.md takes one ticket per item",
+                          "would note perf/reports/D1.md#3, no tracked path"], err)
 
     def test_from_report_skips_the_second_of_two_items_with_the_same_text(self):
         self.fired_bug_fix()
-        twice = "## Follow-ups\n\n- Same thing.\n- same  THING.\n- Other thing.\n"
+        twice = "## Follow-ups\n\n- Correctness: Same thing.\n- Correctness: same  THING.\n- Correctness: Other thing.\n"
         self.assertEqual(self.follow_ups_in(twice, "--dry-run").splitlines(), [
-            "would add from perf/reports/D1.md#1: Same thing.",
-            "skipped perf/reports/D1.md#2, same text as #1 above: same  THING.",
-            "would add from perf/reports/D1.md#3: Other thing.",
+            "would add from perf/reports/D1.md#1: Correctness: Same thing.",
+            "skipped perf/reports/D1.md#2, same text as #1 above: Correctness: same  THING.",
+            "not filed, D1.md takes one ticket per item: Correctness: Other thing.",
+            "would note perf/reports/D1.md#3, no tracked path: Correctness: Other thing.",
         ])
         self.assertEqual(self.follow_ups_in(twice).splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Same thing.",
-            "skipped perf/reports/D1.md#2, same text as T2 (waiting): same  THING.",
-            "T3 added from perf/reports/D1.md#3: Other thing.",
+            "T2 added from perf/reports/D1.md#1: Correctness: Same thing.",
+            "skipped perf/reports/D1.md#2, same text as T2 (waiting): Correctness: same  THING.",
+            "not filed, D1.md takes one ticket per item: Correctness: Other thing.",
+            "noted perf/reports/D1.md#3, no tracked path: Correctness: Other thing.",
         ])
 
     def test_from_report_dry_run_prints_a_list_item_with_no_text_as_not_filed(self):
         self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n- One thing.\n", "--dry-run"),
-                         "would add from perf/reports/D1.md#1: One thing.\nnot filed, list item with no text")
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- \n- Correctness: One thing.\n", "--dry-run"),
+                         "would add from perf/reports/D1.md#1: Correctness: One thing.\nnot filed, list item with no text")
 
     def test_from_report_takes_the_report_by_name_or_by_a_path_into_this_store(self):
         self.fired_bug_fix()
-        path = self.review_file("D1.md", "## Follow-ups\n\n- One thing.\n")
+        path = self.review_file("D1.md", "## Follow-ups\n\n- Correctness: One thing.\n")
         for spelling in ("D1.md", "reports/D1.md", str(path)):
             self.assertEqual(self.brigade("ticket", "add", "--from-report", spelling, "--dry-run"),
-                             "would add from perf/reports/D1.md#1: One thing.", spelling)
+                             "would add from perf/reports/D1.md#1: Correctness: One thing.", spelling)
 
     def test_from_report_refuses_what_is_not_an_item_report_of_this_store(self):
         self.fired_bug_fix()
@@ -130,11 +136,14 @@ class ReportInputMixin:
         line = next(line for line in text.splitlines() if line.startswith("- Write it to "))
         asked = "List each follow-up as one top-level list item under a `"
         heading = line.split(asked, 1)[1].split("`", 1)[0]
-        self.assertTrue(line.endswith(f"{asked}{heading}` heading, or write `None.` there. "
+        self.assertIn(f"{asked}{heading}` heading, or write `None.` there. ", line)
+        self.assertIn("Mark a follow-up that is safety, privacy, or correctness with `Safety:`, `Privacy:`, or `Correctness:` at the start of its text, after any list marker. ", line)
+        self.assertTrue(line.endswith("Only a marked follow-up can become a ticket, at most one per item. "
+                                      "Every other follow-up goes to the store's notes ledger, unless its text is already on the rail. "
                                       "Name each file a follow-up touches by its repository path in backticks."), line)
-        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\n- Warm start is still slow.\n")
+        self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\n- Correctness: Warm start is still slow.\n")
         self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
-                         "T2 added from perf/reports/D1.md#1: Warm start is still slow.")
+                         "T2 added from perf/reports/D1.md#1: Correctness: Warm start is still slow.")
         self.review_file("D1.md", f"# D1\n\nStatus: done\n\n{heading}\n\nNone.\n")
         self.assertEqual(self.brigade("ticket", "add", "--from-report", "reports/D1.md"),
                          "reports/D1.md lists no follow-ups; nothing added\nnot filed, says no work is needed: None.")
@@ -165,16 +174,16 @@ class ReportInputMixin:
 
     def test_ticket_add_from_report_of_an_item_with_a_bad_kind_cell_and_a_bad_goal_cell_warns_of_both_and_files_a_ticket_with_no_kind_and_no_goal(self):
         warnings = self.item_with_two_bad_cells()
-        self.review_file("D1.md", "## Follow-ups\n\n- Tidy guide.\n")
+        self.review_file("D1.md", "## Follow-ups\n\n- Correctness: Tidy guide.\n")
         self.assertEqual(self.run_raw("ticket", "add", "--from-report", "reports/D1.md"),
-                         (0, "T2 added from perf/reports/D1.md#1: Tidy guide.\n", warnings))
+                         (0, "T2 added from perf/reports/D1.md#1: Correctness: Tidy guide.\n", warnings))
         self.assertEqual(self.raw_cells("rail.tsv", "T2", "state", "kind", "goal"), (b"waiting", b"", b""))
         self.assertEqual(self.raw_cells("dishes.tsv", "D1", "kind", "goal"), (b"chore", b"G9"))
 
     def test_ticket_add_from_report_dry_run_prints_the_same_warnings_and_changes_no_file(self):
         warnings = self.item_with_two_bad_cells()
-        self.review_file("D1.md", "## Follow-ups\n\n- Tidy guide.\n")
+        self.review_file("D1.md", "## Follow-ups\n\n- Correctness: Tidy guide.\n")
         before = self.store_files()
         self.assertEqual(self.run_raw("ticket", "add", "--from-report", "reports/D1.md", "--dry-run"),
-                         (0, "would add from perf/reports/D1.md#1: Tidy guide.\n", warnings))
+                         (0, "would add from perf/reports/D1.md#1: Correctness: Tidy guide.\n", warnings))
         self.assertEqual(self.store_files(), before)

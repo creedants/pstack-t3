@@ -322,6 +322,9 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         WAIT_RULE,
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups. "
         "List each follow-up as one top-level list item under a `## Follow-ups` heading, or write `None.` there. "
+        "Mark a follow-up that is safety, privacy, or correctness with `Safety:`, `Privacy:`, or `Correctness:` at the start of its text, after any list marker. "
+        "Only a marked follow-up can become a ticket, at most one per item. "
+        "Every other follow-up goes to the store's notes ledger, unless its text is already on the rail. "
         "Name each file a follow-up touches by its repository path in backticks.",
         "- Hold a `## Threads` section with one list item per child of the form - <role> `<thread id>` <seat>. The role is one of code delegate, claims check, and architect runner, named literally. The seat is one bare provider/model token with nothing after it and no backticks around it. That means no reasoning level, no note, and no effort word after the seat. List only code delegate, claims check, and architect runner under ## Threads. Put every other child under ## Notes. List only T3 threads started with `delegate_task` or `t3_thread_launch` for those threads. For example, the line - code delegate `mcp:00000000-0000-4000-8000-000000000001` opencode-go/step-5-preview-free parses as one child with no unreadable line. Name a child run inside the worker's own harness in the report body instead, never in the section. A missing section adds no row and is not an error. The worker still writes the section when it used a child.",
         "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",

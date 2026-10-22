@@ -7,7 +7,7 @@ from pathlib import Path
 
 COMMAND_LINE_FLOOR = 7
 
-FOLLOW_UP = "## Follow-ups\n\n- File the skill line.\n"
+FOLLOW_UP = "## Follow-ups\n\n- Correctness: File the skill line.\n"
 
 FIXTURE_SKILL = """```bash
 $B ticket add --summary "<request>" --kind feature|fix|polish|upkeep|study [--goal G<n>] --source user|github|<feed> [--ref <ref>] [--request A<n>] [--again] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision]

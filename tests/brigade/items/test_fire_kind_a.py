@@ -32,7 +32,9 @@ class FireKindAMixin:
         self.assertEqual(out["ticket list"], "T1 assigned normal [user] s")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## In progress", "", "- D1 (T1): Fix s",
                                                                   "", "## Spend", "",
-                                                                  "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded"])
+                                                                  "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded",
+                                                                  "", "## Follow-up share", "",
+                                                                  "- 0 of 1 tickets created in the last 14 days came from a report (0%)."])
         self.assertNotIn("chore", "".join(out.values()))
 
     def test_close_prints_no_goal_heading_in_a_store_whose_tickets_and_items_have_kinds_and_no_goal(self):
@@ -42,7 +44,9 @@ class FireKindAMixin:
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix a")
         self.assertEqual(self.close_run("--dry-run")[1].splitlines()[4:],
                          ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- polish T2: b",
-                          "", "## Spend", "", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded"])
+                          "", "## Spend", "", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded",
+                          "", "## Follow-up share", "",
+                          "- 0 of 2 tickets created in the last 14 days came from a report (0%)."])
 
     def test_fire_gives_the_item_the_kind_and_goal_of_its_lead_ticket_and_leaves_that_tickets_two_cells_as_they_were(self):
         self.two_goals()

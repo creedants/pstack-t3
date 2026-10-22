@@ -5,7 +5,8 @@ import sqlite3
 
 class SpendReportTest(BrigadeTest, _SpendFixture):
     def spend_block(self, text):
-        return text[text.index("## Spend"):]
+        block = text[text.index("## Spend"):]
+        return block.split("\n\n## Follow-up share")[0]
     def two_goal_store(self):
         self.fill(
             [self.dish("D1"), self.dish("D2", goal="G2")],

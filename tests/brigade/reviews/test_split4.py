@@ -281,4 +281,6 @@ class ReviewsSplit4Test(BrigadeTest):
             "goal not recorded  wall 0m (1 open)  rounds 1  send-backs 0  threads not recorded",
             "G1  wall open  rounds 0  send-backs 0  threads not recorded",
             "G2  wall open  rounds 1  send-backs 1  threads not recorded",
+            "", "## Follow-up share", "",
+            "- 0 of 9 tickets created in the last 14 days came from a report (0%).",
         ])

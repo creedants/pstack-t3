@@ -84,7 +84,7 @@ brigade.py [flags] ticket <action>
 
 add, list, update, move, take, or record paths on tickets on the rail
 
-`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`.
+`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`, `notes`.
 
 ## brigade.py ticket add
 
@@ -95,8 +95,8 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--summary SUMMARY` |  |  |  |  |
-| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it and changes only the ticket table, the log, and lastActivityAt; each ticket takes the goal of the report's item, and when that item has a kind the ticket takes fix at priority urgent or normal and polish at low; a follow-up is filed with no --priority, so it is low |
-| `--dry-run` |  |  |  | with --from-report: print what it would add; it changes no table and no log |
+| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files at most one waiting ticket per item, and only when no ticket from that report exists yet, for the first follow-up marked Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; any other marked follow-up whose text is not on the rail prints not filed and goes to notes.tsv; every other follow-up whose text is not on the rail goes to notes.tsv keyed by the tracked paths it quotes; changes the ticket table, the log, and lastActivityAt when it files a ticket, and notes.tsv when it notes one; each ticket takes the goal of the report's item, and when that item has a kind the ticket takes fix at priority urgent or normal and polish at low; a follow-up is filed with no --priority, so it is low |
+| `--dry-run` |  |  |  | with --from-report: print what it would add or note, and what is already noted; it changes no store file |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
 | `--request REQUEST` |  |  |  | the admin request id this ticket carries out; refuses a second ticket for it |
@@ -170,6 +170,21 @@ record the tracked paths each waiting ticket's summary quotes, on tickets that r
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--dry-run` |  |  |  | print what it would record; it changes no table |
+
+## brigade.py ticket notes
+
+```text
+brigade.py [flags] ticket notes (--paths PATHS | --all)
+```
+
+list the follow-ups the store noted instead of filing as tickets
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--paths PATHS` |  |  |  | comma-separated files and directories; prints the notes that name them |
+| `--all` |  |  |  | prints every note |
+
+Give exactly one of `--paths`, `--all`.
 
 ## brigade.py goal
 

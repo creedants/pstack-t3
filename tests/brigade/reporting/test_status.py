@@ -132,7 +132,8 @@ class ReportingTest(BrigadeTest):
         text = self.brigade("close", "--dry-run")
         self.assertEqual(text.split("\n\n", 2)[2], "\n\n".join([
             "## Moved to full mode", "- D1 (T1): contested: two owners",
-            "## Spend", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded"]))
+            "## Spend", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded",
+            "## Follow-up share", "- 0 of 1 tickets created in the last 14 days came from a report (0%)."]))
     def test_the_second_send_back_moves_the_item_to_full_once(self):
         self.coordinator()
         self.record("a1", "send-back")
