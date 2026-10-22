@@ -156,7 +156,6 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         meta["coordinatorProvider"] = coordinator_provider
     if admin:
         meta["role"] = "admin"
-    # A settings write is opt-in, so a creation with neither flag writes nothing under the project root.
     if (context_cap is not None or coordinator_provider is not None) and effective_provider(meta) == "claude":
         try:
             sync_meta(meta)
