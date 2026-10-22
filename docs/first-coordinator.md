@@ -49,6 +49,12 @@ The smoke runs the same open command. It prints the restaurant path. Use that pa
 python3 skills/brigade/scripts/brigade.py open --project-root ~/my-repo --name smoke
 ```
 
+Bind the restaurant to the coordinator thread. `$THREAD` is the reader T3 thread id. Later brigade writes carry `--owner $THREAD@1`. The smoke binds with `smoke-thread`.
+
+```sh
+python3 skills/brigade/scripts/brigade.py --at $RESTAURANT set --thread $THREAD
+```
+
 ## 5. Write the landing contract
 
 The queue needs a contract before any work can be fired. The `local` and `push` modes are frozen, per [the guide](guide/coordinator.md). Push mode is supported and frozen. This walkthrough uses push mode.
@@ -64,7 +70,7 @@ The command prints the landing store path. That store holds the contract, the qu
 File the request on the restaurant's rail.
 
 ```sh
-python3 skills/brigade/scripts/brigade.py --at $RESTAURANT ticket add --summary "Add a second work line" --kind feature --paths a.txt
+python3 skills/brigade/scripts/brigade.py --at $RESTAURANT --owner $THREAD@1 ticket add --summary "Add a second work line" --kind feature --paths a.txt
 ```
 
 The command prints `T1`. `--paths` names the file the work will change, so fire can lease it.
@@ -74,14 +80,14 @@ The command prints `T1`. `--paths` names the file the work will change, so fire 
 Fire the ticket into one unit of work for the feature playbook.
 
 ```sh
-python3 skills/brigade/scripts/brigade.py --at $RESTAURANT fire --tickets T1 --station feature --summary "Add a second work line" --paths a.txt
+python3 skills/brigade/scripts/brigade.py --at $RESTAURANT --owner $THREAD@1 fire --tickets T1 --station feature --summary "Add a second work line" --paths a.txt
 ```
 
 The command prints the unit and its lease. Fire claims the landing lease on `a.txt`.
 
 ## 8. Run the worker
 
-> **T3 action:** Launch the worker thread with the unit's brief. The worker runs the feature playbook in its own worktree.
+> **T3 action:** Render the worker brief with `brigade brief` and launch the worker thread with that brief. The worker runs the feature playbook in its own worktree.
 
 The smoke cannot start a thread. It stands in for the worker with these commands on branch `smoke/d1`. The two lines show the change, and the commit records it.
 
@@ -102,11 +108,11 @@ SHA=$(git -C ~/work rev-parse HEAD)
 Record the branch and the commit on the unit, then record the pass. `--author` and `--verifier` take provider and model names. The values below are the smoke's examples, so use the models you run.
 
 ```sh
-python3 skills/brigade/scripts/brigade.py --at $RESTAURANT dish D1 --branch smoke/d1 --sha $SHA --state in-review
+python3 skills/brigade/scripts/brigade.py --at $RESTAURANT --owner $THREAD@1 dish D1 --branch smoke/d1 --sha $SHA --state in-review
 ```
 
 ```sh
-python3 skills/brigade/scripts/brigade.py --at $RESTAURANT pass record D1 --sha $SHA --verdict pass --author grok/grok-4.7 --verifier claude/claude-opus-5-5
+python3 skills/brigade/scripts/brigade.py --at $RESTAURANT --owner $THREAD@1 pass record D1 --sha $SHA --verdict pass --author grok/grok-4.7 --verifier claude/claude-opus-5-5
 ```
 
 The unit cannot move to merged until it has a pass at this commit.
@@ -116,14 +122,14 @@ The unit cannot move to merged until it has a pass at this commit.
 Submit the reviewed commit to the queue, then drain the queue. The queue runs the contract's checks and pushes trunk to `origin`. This walkthrough sets no check, so the contract's check list is empty.
 
 ```sh
-python3 skills/landing/scripts/land.py --repo ~/my-repo submit --holder smoke/D1 --branch smoke/d1 --sha $SHA --lease L1 --reviewer claude/claude-opus-5-5
+python3 skills/landing/scripts/land.py --repo ~/my-repo submit --holder smoke/D1 --branch smoke/d1 --sha $SHA --lease L1 --reviewer claude/claude-opus-5-5 --owner smoke/@1
 ```
 
 ```sh
 python3 skills/landing/scripts/land.py --repo ~/my-repo land
 ```
 
-The queue replays the commit, so the trunk commit has a new SHA.
+The queue replays the reviewed commit onto trunk.
 
 ## 11. Check the trunk
 
@@ -140,7 +146,7 @@ The output shows the landed file. It holds both lines.
 Record that the unit merged. Then print the report. `close --dry-run` writes nothing.
 
 ```sh
-python3 skills/brigade/scripts/brigade.py --at $RESTAURANT dish D1 --state merged
+python3 skills/brigade/scripts/brigade.py --at $RESTAURANT --owner $THREAD@1 dish D1 --state merged
 ```
 
 ```sh

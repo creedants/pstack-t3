@@ -27,6 +27,9 @@ README_TEXT = "# outsider smoke\n"
 WORK_FIRST = "first line\n"
 WORK_TEXT = "first line\nsecond line\n"
 WORK_SUMMARY = "Add a second work line"
+SMOKE_THREAD = "smoke-thread"
+SMOKE_OWNER = SMOKE_THREAD + "@1"
+LAND_OWNER = "smoke/@1"
 # One prep command writes a file whose text is its second argument.
 WRITER = "import sys\nopen(sys.argv[1], 'w', encoding='utf-8').write(sys.argv[2])\n"
 
@@ -132,14 +135,16 @@ def _stand_in():
     return Layout(Path(""), Path(""), Path(""), Path(""), CHECKOUT, Path(""))
 
 
-def brigade(layout, *args):
+def brigade(layout, *args, owner=None):
     """A brigade command against the restaurant the open step captured."""
+    fenced = ("--owner", owner) if owner is not None else ()
     return (
         sys.executable,
         "-I",
         str(CHECKOUT / "skills" / "brigade" / "scripts" / "brigade.py"),
         "--at",
         Ref("restaurant"),
+        *fenced,
         *args,
     )
 
@@ -169,7 +174,6 @@ def _worker_script(layout):
 
 
 def _commands(layout):
-    """Every setup and step, in order. Script paths are absolute, and git and sh come from PATH."""
     python = sys.executable
     document = json.dumps(_catalog_document(), indent=2) + "\n"
     return (
@@ -216,6 +220,11 @@ def _commands(layout):
             capture="restaurant",
         ),
         Step(
+            "bind",
+            brigade(layout, "set", "--thread", SMOKE_THREAD),
+            CHECKOUT,
+        ),
+        Step(
             "land",
             (
                 python,
@@ -235,20 +244,20 @@ def _commands(layout):
         ),
         Step(
             "ticket",
-            brigade(layout, "ticket", "add", "--summary", WORK_SUMMARY, "--kind", "feature", "--paths", "a.txt"),
+            brigade(layout, "ticket", "add", "--summary", WORK_SUMMARY, "--kind", "feature", "--paths", "a.txt", owner=SMOKE_OWNER),
             CHECKOUT,
             expect=Expect("is", "T1"),
         ),
         Step(
             "fire",
-            brigade(layout, "fire", "--tickets", "T1", "--station", "feature", "--summary", WORK_SUMMARY, "--paths", "a.txt"),
+            brigade(layout, "fire", "--tickets", "T1", "--station", "feature", "--summary", WORK_SUMMARY, "--paths", "a.txt", owner=SMOKE_OWNER),
             CHECKOUT,
             expect=Expect("is", "D1 (lease L1 held by smoke/D1)"),
         ),
         Step("worker", ("sh", "-c", _worker_script(layout)), CHECKOUT, capture="sha"),
         Step(
             "dish",
-            brigade(layout, "dish", "D1", "--branch", "smoke/d1", "--sha", Ref("sha"), "--state", "in-review"),
+            brigade(layout, "dish", "D1", "--branch", "smoke/d1", "--sha", Ref("sha"), "--state", "in-review", owner=SMOKE_OWNER),
             CHECKOUT,
             expect=Expect("is", "D1 in-review"),
         ),
@@ -267,6 +276,7 @@ def _commands(layout):
                 "grok/grok-4.7",
                 "--verifier",
                 "claude/claude-opus-5-5",
+                owner=SMOKE_OWNER,
             ),
             CHECKOUT,
             expect=Expect("is", "D1 passed"),
@@ -286,6 +296,8 @@ def _commands(layout):
                 "L1",
                 "--reviewer",
                 "claude/claude-opus-5-5",
+                "--owner",
+                LAND_OWNER,
             ),
             CHECKOUT,
             expect=Expect("is", "E1"),
@@ -299,7 +311,7 @@ def _commands(layout):
         ),
         Step(
             "merged",
-            brigade(layout, "dish", "D1", "--state", "merged"),
+            brigade(layout, "dish", "D1", "--state", "merged", owner=SMOKE_OWNER),
             CHECKOUT,
             expect=Expect("is", "D1 merged"),
         ),
@@ -394,7 +406,6 @@ def _catalog_document():
 
 
 def _resolve(argv, captures):
-    """Replace every Ref with the value the named capture stored."""
     resolved = []
     for part in argv:
         if isinstance(part, Ref):
@@ -407,7 +418,6 @@ def _resolve(argv, captures):
 
 
 def _extract(capture, stdout):
-    """The value one capture stores from the stripped stdout."""
     stripped = stdout.strip()
     if capture == "restaurant" and stripped.startswith("opened "):
         return stripped[len("opened "):].strip()

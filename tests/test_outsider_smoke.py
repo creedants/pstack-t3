@@ -28,6 +28,7 @@ REQUIRED_STEPS = (
     "doctor",
     "roles",
     "brigade",
+    "bind",
     "land",
     "ticket",
     "fire",
@@ -218,8 +219,6 @@ class OutsiderSmokeTest(unittest.TestCase):
             self.assertEqual(listing(Path(canary)), before)
 
     def test_every_required_step_prints_its_ok_line(self):
-        # Review D306 round 1: a plan that dropped the roles step left every test green, because
-        # the expected lines came from the same plan. These names come from this test.
         with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
             (Path(canary) / CANARY).write_text("keep\n")
             result = run(canary, tmpdir)
@@ -301,24 +300,20 @@ class OutsiderSmokeTest(unittest.TestCase):
             self.assertNotIn(str(canary), result.stdout + result.stderr)
 
     def test_page_command_without_a_plan_command_is_refused(self):
-        # A page fence that names a command the plan never runs would teach a stranger a wrong command.
         text = PAGE.read_text(encoding="utf-8")
         self.assertEqual(_unknown_page_commands(text), [])
         bogus = text + "\n```sh\npython3 scripts/not_a_command.py\n```\n"
         self.assertIn(["python3", "scripts/not_a_command.py"], _unknown_page_commands(bogus))
 
     def test_page_covers_every_step_the_plan_runs(self):
-        # A step with no page fence leaves a stranger with no command for that part of the run.
         text = PAGE.read_text(encoding="utf-8")
         self.assertEqual(_missing_steps(text), [])
 
     def test_t3_action_callout_stays_out_of_fences(self):
-        # A T3 action inside a fence reads as a command the smoke runs, but the smoke cannot start T3 threads.
         text = PAGE.read_text(encoding="utf-8")
         self.assertFalse(_t3_inside_fence(text))
 
     def test_ref_names_a_capture_from_an_earlier_entry(self):
-        # A Ref to a name no earlier entry captured would fail only at run time, after slow steps already ran.
         seen = set()
         for entry in outsider_smoke._commands(outsider_smoke._stand_in()):
             for part in entry.argv:
@@ -328,7 +323,6 @@ class OutsiderSmokeTest(unittest.TestCase):
                 seen.add(entry.capture)
 
     def test_expect_reason_reports_both_kinds(self):
-        # A broken postcondition that reason calls met would let a wrong store state pass as green.
         self.assertIsNone(outsider_smoke.Expect("is", "T1").reason("T1\n"))
         self.assertIsNone(outsider_smoke.Expect("is", "T1").reason("T1"))
         self.assertIsNotNone(outsider_smoke.Expect("is", "T1").reason("T2\n"))
@@ -336,8 +330,44 @@ class OutsiderSmokeTest(unittest.TestCase):
         self.assertIsNotNone(outsider_smoke.Expect("has", "merged: 1").reason("nothing merged\n"))
 
     def test_page_missing_a_step_fails_the_check(self):
-        # A check that stays green when a step leaves the page would let the page drift from the smoke.
         text = PAGE.read_text(encoding="utf-8")
         self.assertEqual(_missing_steps(text), [])
         mutated = text.replace("close --dry-run", "close --to-file")
         self.assertIn("close", _missing_steps(mutated))
+
+    def test_plan_binds_before_ticket_and_later_writes_carry_owner(self):
+        entries = outsider_smoke._commands(outsider_smoke._stand_in())
+        steps = [entry for entry in entries if isinstance(entry, outsider_smoke.Step)]
+        names = [step.name for step in steps]
+        self.assertLess(names.index("bind"), names.index("ticket"))
+        bind = steps[names.index("bind")]
+        words = [part for part in bind.argv if isinstance(part, str)]
+        self.assertIn("set", words)
+        self.assertIn("--thread", words)
+        self.assertIn(outsider_smoke.SMOKE_THREAD, words)
+        self.assertNotIn("--owner", words)
+        for step in steps[names.index("bind") + 1:]:
+            words = [part for part in step.argv if isinstance(part, str)]
+            if not any(word.endswith("brigade.py") for word in words):
+                continue
+            if step.name == "close":
+                self.assertNotIn("--owner", words)
+            else:
+                self.assertIn("--owner", words)
+                self.assertIn("smoke-thread@1", words)
+        submit = steps[names.index("submit")]
+        words = [part for part in submit.argv if isinstance(part, str)]
+        self.assertIn("--owner", words)
+        self.assertIn("smoke/@1", words)
+        plans = _plan_lists()
+        owners = [tokens[index + 1] for tokens in plans for index, token in enumerate(tokens) if token == "--owner" and index + 1 < len(tokens)]
+        self.assertIn("smoke-thread@1", owners)
+        self.assertIn("smoke/@1", owners)
+
+    def test_page_binds_with_thread_and_carries_owner(self):
+        text = PAGE.read_text(encoding="utf-8")
+        pages = _page_lists(text)
+        self.assertTrue(any("set" in tokens and "--thread" in tokens for tokens in pages))
+        owners = [tokens[index + 1] for tokens in pages for index, token in enumerate(tokens) if token == "--owner" and index + 1 < len(tokens)]
+        self.assertIn("$THREAD@1", owners)
+        self.assertIn("smoke/@1", owners)
