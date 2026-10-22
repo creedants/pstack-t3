@@ -68,17 +68,19 @@ try:
     import landing_lib.drain as _drain_mod
     import landing_lib.times as _times_mod
     import landing_lib._land.parser as _parser_mod
+    import landing_lib._land.prune as _prune_mod
     for _mod in (_governor_mod, _store_mod, _policy_mod, _sizes_mod, _genmap_mod, _leases_mod, _queue_mod,
                 _merge_mod, _contests_mod, _drain_mod, _times_mod):
         globals().update({k: v for k, v in vars(_mod).items() if not k.startswith("__") and k != "seam"})
     _build_parser = _parser_mod.build_parser
+    _run_prune = _prune_mod.prune
 finally:
     _sys.dont_write_bytecode = _bw
     _drop_cached_landing("landing_lib", _pkg)
     _sys.modules.update(_prior_landing)
 del _bw, _drop_cached_landing, _pkg, _alias, _libdir, _types, _uuid, _prior_landing
 del _foundation_mod, _governor_mod, _store_mod, _policy_mod, _sizes_mod, _genmap_mod, _leases_mod, _queue_mod
-del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod, _parser_mod
+del _merge_mod, _contests_mod, _drain_mod, _times_mod, _seam_bootstrap, _mod, _parser_mod, _prune_mod
 
 def parser():
     return _build_parser(__doc__.splitlines()[0], exclusive_cap=EXCLUSIVE_CAP, modes=MODES,
@@ -157,6 +159,8 @@ def run(argv):
                 db.execute("DELETE FROM contract WHERE key = 'tip'")
                 store.log(db, "queue", 0, "resumed")
             return "queue resumed", 0
+        if args.command == "prune":
+            return _run_prune(store, args.dry_run), 0
         if args.holder:
             if args.id:
                 raise LandError("status takes an entry id or --holder, not both")

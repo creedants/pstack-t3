@@ -16,7 +16,7 @@ Land many agents' work on one repository through one queue.
 | --- | --- | --- | --- | --- |
 | `--repo REPO` |  |  | `.` | any checkout of the repository (default: current directory) |
 
-`<command>` is one of `init`, `cap`, `mode`, `times`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `status`, `size`, `slot`.
+`<command>` is one of `init`, `cap`, `mode`, `times`, `owner`, `lease`, `submit`, `share`, `contest`, `land`, `resume`, `prune`, `status`, `size`, `slot`.
 
 ## land.py init
 
@@ -277,6 +277,18 @@ land.py [flags] resume
 ```
 
 clear a pause after you did what its reason says
+
+## land.py prune
+
+```text
+land.py [flags] prune [--dry-run]
+```
+
+close the PR and delete the remote branch of every landed or bounced entry that still has a landing branch. A branch outside landing/e\<n> and landing/q\<n>, and a branch whose entry is still in flight, is left alone
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--dry-run` |  |  |  | print one line per branch and change nothing |
 
 ## land.py status
 

@@ -1,6 +1,7 @@
 import json
 from datetime import timedelta
 from landing_lib import seam
+from .._merge.settle import clean_bounced
 
 def submit(store, holder, branch, sha, lease, reviewer, title="", body="", owner=None):
     contract, repo = store.contract, store.repo
@@ -147,6 +148,8 @@ def attempt(store, integration, entries):
     for entry in entries:
         reason = integration.apply(entry, base)
         candidate = "" if reason else integration.head()
+        if reason and reason != "already-in-trunk":
+            clean_bounced(store, entry, reason)
         with store.tx() as db:
             if reason == "already-in-trunk":
                 settle_landed(store, db, entry["id"], base, "already in trunk")
@@ -161,12 +164,15 @@ def attempt(store, integration, entries):
         return landed, bounced, [], base
     failure = integration.check()
     if failure:
+        reason = f"checks failed: {failure}"
+        if len(applied) == 1:
+            clean_bounced(store, applied[0], reason)
         with store.tx() as db:
             if len(applied) > 1:
                 for entry in applied:
                     store.set_entry(db, entry["id"], "queued", candidate="", note="batch failed checks; landing one at a time")
                 return landed, bounced, [entry["id"] for entry in applied], base
-            settle_bounced(store, db, applied[0]["id"], f"checks failed: {failure}")
+            settle_bounced(store, db, applied[0]["id"], reason)
             return landed, bounced + [applied[0]["id"]], [], base
     candidate = integration.head()
     with store.tx() as db:
