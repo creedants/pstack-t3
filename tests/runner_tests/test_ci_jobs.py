@@ -185,7 +185,7 @@ class CiJobsMixin:
                 self.assertEqual(runs[1].count("select_browser(directory)"), 1)
                 self.assertEqual(runs[1].count("select_browser(directory, timeout=60)"), 1)
 
-    def test_the_workflow_cancels_a_superseded_run_on_the_same_ref(self):
+    def test_the_workflow_concurrency_group_is_the_workflow_and_ref_with_cancel_in_progress(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         try:
             import yaml

@@ -249,7 +249,7 @@ class CiGatesMixin:
                             0,
                         )
 
-    def test_the_312_gate_exits_nonzero_on_an_event_other_than_push_or_pull_request(self):
+    def test_the_312_gate_exits_nonzero_on_a_schedule_event(self):
         # This starts a process because the check is an exit status.
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         for reader in gate_readers():
