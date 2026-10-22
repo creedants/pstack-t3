@@ -37,7 +37,8 @@ class Layout:
     import_roots are repo paths tried as prefixes for absolute imports, in candidate order after the loader directory and the root with every match kept.
     Relative imports never search them. They are normalized and deduped in order and never hold the root itself.
     An absent key means the directories of entry_points and helpers.
-    env holds (name, value) pairs, and the paragraph prints each one in front of every test command.
+    env holds (name, value) pairs, and the paragraph prints each one in front of the affected-module command
+    and the full-suite command, and in front of their second interpreter copies when python is set.
     """
     always: str
     workflow_module: str
