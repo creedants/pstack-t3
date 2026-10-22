@@ -89,7 +89,7 @@ def close_pr_with_reason(store, url, reason, state=""):
     return True, ""
 
 def delete_landing_branch(store, branch, entry):
-    """Delete branch from the contract remote and drop its local copies. Returns (deleted, warning). A push that succeeds counts as deleted. A push that fails counts as deleted only when remote_branch_is_gone says the branch is gone. An empty listing alone is not proof. An entry with no pull request never asks the forge. A local branch git cannot delete is named in warning."""
+    """Delete branch from the contract remote and drop its local copies. Returns (deleted, warning). A push that succeeds counts as deleted. For an entry with a pull request, a push that fails counts as deleted only when remote_branch_is_gone says the branch is gone. For an entry with no pull request, Git reporting an absent ref counts as deleted. An empty listing alone is not proof. An entry with no pull request never asks the forge. A local branch git cannot delete is named in warning."""
     remote = store.contract["remote"]
     pushed = seam.git_push(remote, "--delete", branch, cwd=store.repo)
     if pushed.returncode == 0:
