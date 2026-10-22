@@ -1,3 +1,2 @@
 - kind fix
-- With one runnable model family, the gate review takes a same-family seat and records the verdict as `same-family` instead of `blocked`. With two families it behaves as before.
-- `setup-pstack` states the one-family case and names no pstack-t3 script as an escalation example.
+- With no runnable seat from a family other than the author's, the gate review runs on a same-family seat and marks the verdict `same-family`, where a catalog with no runnable seat at all still returns `blocked`. `setup-pstack` states that case and names no pstack-t3 script as an escalation example.
