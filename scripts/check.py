@@ -139,7 +139,7 @@ REQUIRED_SCAN = _IDENTITY_REQUIRED_SCAN
 
 HOME_PATH = re.compile(r"/home/[A-Za-z0-9._-]+/")
 
-# These files hold paths a scrubber removes, and this finding's own test holds its fixtures.
+# These files hold a home path as fixture data. The last one is this finding's own test.
 HOME_PATH_EXEMPT = frozenset({
     "tests/activity_tests/test_filter.py",
     "tests/activity_tests/test_filter_paths.py",
