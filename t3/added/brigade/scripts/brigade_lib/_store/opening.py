@@ -364,17 +364,19 @@ def _reserve_target(directory, target, refused):
             recorded = json.loads(marker.read_text()).get("from")
         except (OSError, json.JSONDecodeError, AttributeError):
             recorded = None
-        if recorded == directory.name and _left_reservation(directory, target, marker):
-            return marker
-        if recorded == directory.name and not target.exists():
-            try:
-                target.mkdir()
-                marker.write_text(json.dumps({"from": directory.name, "inode": target.stat().st_ino}))
-            except BaseException:
-                _release_target(directory, target, marker)
-                raise
-            return marker
-        raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
+        if recorded == directory.name:
+            if _left_reservation(directory, target, marker):
+                return marker
+            if not target.exists():
+                try:
+                    target.mkdir()
+                    marker.write_text(json.dumps({"from": directory.name, "inode": target.stat().st_ino}))
+                except BaseException:
+                    _release_target(directory, target, marker)
+                    raise
+                return marker
+            raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
+        raise BrigadeError(refused + f"{marker} is not this rename's record; remove it") from None
     try:
         marker.write_text(json.dumps({"from": directory.name}))
         target.mkdir()
@@ -395,7 +397,7 @@ def rename_restaurant(root, args):
     directory = parent / slug(name)
     target = parent / slug(new_name)
     store = Restaurant(directory, owner)
-    # A sibling read or a landing read never runs under the store lock, so the blocks below are gathered first.
+    # Sibling and landing reads never run under the store lock, so both run before the lock for the rewrite is taken.
     references = _reference_blocks(directory, project_root)
     refused = "open --rename refused, nothing renamed: "
     with store.locked():

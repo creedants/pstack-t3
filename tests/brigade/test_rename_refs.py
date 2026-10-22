@@ -202,7 +202,7 @@ class RenameReferenceTest(BrigadeTest):
         self.assertEqual(self.store_files(), store)
         self.assertFalse((self.at.parent / "speed").exists())
 
-    def test_a_second_open_paused_before_its_first_write_cannot_replace_the_moved_store(self):
+    def test_an_open_that_lost_the_target_reservation_cannot_replace_the_moved_store(self):
         """D554 review 2 blocker 1: an open that lost the target reservation never initializes over the moved store."""
         self.open()
         self.brigade("set", "--thread", "coordinator")
@@ -290,6 +290,17 @@ class RenameReferenceTest(BrigadeTest):
         self.assertFalse((self.at.parent / ".rename-speed.json").exists())
         opened = json.loads((self.at.parent / "speed" / "restaurant.json").read_text())
         self.assertIsNone(opened["thread"])
+
+    def test_a_rename_refuses_a_target_marker_another_store_left(self):
+        self.open()
+        marker = self.at.parent / ".rename-speed.json"
+        marker.write_text('{"from": "docs"}')
+        store = self.store_files()
+        error = self.rename(code=1)
+        self.assertIn(str(marker), error)
+        self.assertEqual(self.store_files(), store)
+        self.assertFalse((self.at.parent / "speed").exists())
+        self.assertTrue(marker.is_file())
 
     def test_a_rerun_adopts_the_empty_target_an_interrupted_rename_reserved(self):
         self.open()
