@@ -158,7 +158,7 @@ def build_parser(description, exclusive_cap=_DEFAULT_EXCLUSIVE_CAP, modes=_DEFAU
 
     sub.add_parser("land", help="drain the queue unless another run holds it")
     sub.add_parser("resume", help="clear a pause after you did what its reason says")
-    prune_help = ("close the PR and delete the remote branch of every landed or bounced entry that still has a landing "
+    prune_help = ("close the open PR and delete the remote branch of every landed or bounced entry that still has a landing "
                   "branch. A branch outside landing/e<n> and landing/q<n>, and a branch whose entry is still in flight, is left alone")
     p = sub.add_parser("prune", help=prune_help, description=prune_help)
     p.add_argument("--dry-run", action="store_true", help="print one line per branch and change nothing")

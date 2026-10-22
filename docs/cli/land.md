@@ -284,7 +284,7 @@ clear a pause after you did what its reason says
 land.py [flags] prune [--dry-run]
 ```
 
-close the PR and delete the remote branch of every landed or bounced entry that still has a landing branch. A branch outside landing/e\<n> and landing/q\<n>, and a branch whose entry is still in flight, is left alone
+close the open PR and delete the remote branch of every landed or bounced entry that still has a landing branch. A branch outside landing/e\<n> and landing/q\<n>, and a branch whose entry is still in flight, is left alone
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

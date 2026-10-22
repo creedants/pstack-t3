@@ -114,9 +114,10 @@ def clean_bounced(store, entry, reason, state=""):
     return " ".join(warnings)
 
 def bounce_open_pr(store, ident, url, reason, armed):
-    """Bounce an open merge-mode PR. Disable auto-merge when it is on, close the PR, and delete its branch.
+    """Bounce an open merge-mode PR. Disable auto-merge when it is on, then close the PR and delete its branch.
 
-    A PR whose auto-merge stays on can still merge without the queue, so the queue pauses and keeps tracking it."""
+    When auto-merge cannot be disabled it raises and leaves the PR and the branch in place, because a PR whose
+    auto-merge stays on can still merge without the queue, so the queue pauses and keeps tracking it."""
     problem = disarm_auto_merge(store, url, armed)
     if problem:
         raise seam.AutoMergeStillEnabled(

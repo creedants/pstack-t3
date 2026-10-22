@@ -1,3 +1,3 @@
 - kind fix
-- A bounced landing entry closes its pull request with the bounce reason as a one-line comment and deletes its `landing/e<n>` branch, in that order, and a failed close or delete prints a warning line without changing the entry's bounced state
-- `land.py prune` closes the pull request and deletes the remote branch of every landed or bounced entry that still has a `landing/e<n>` or `landing/q<n>` branch, leaves a branch alone when its entry is still in flight and a branch outside `landing/`, and `--dry-run` prints one line per branch and acts on none
+- A bounced landing entry closes its open pull request with the bounce reason as a one-line comment, then deletes its `landing/e<n>` branch; an entry with no pull request yet skips the close, and a failed close or delete prints a warning line without changing the entry's bounced state
+- `land.py prune` closes the open pull request and deletes the remote branch of every landed or bounced entry that still has a `landing/e<n>` or `landing/q<n>` branch, leaves a branch alone when its entry is still in flight and a branch outside `landing/`, and `--dry-run` prints one line per branch and acts on none

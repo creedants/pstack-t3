@@ -29,7 +29,7 @@ def settled_entry(store, branch):
     return row if row is not None and row["state"] in ("landed", "bounced") else None
 
 def prune(store, dry_run=False):
-    """Close the PR and delete the remote branch of every settled entry whose landing branch still exists.
+    """Close the open PR and delete the remote branch of every settled entry whose landing branch still exists.
 
     A branch outside landing/e<n> and landing/q<n>, a branch whose entry is missing, and a branch whose entry is
     still in flight are left alone. Each line names one action, and --dry-run prints one line per branch and acts on none.
