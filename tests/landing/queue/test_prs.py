@@ -138,8 +138,8 @@ class LandingTest(QueueBase, LandingTestBase):
     def test_a_merged_pr_on_landing_e_waits_when_git_says_it_is_absent_and_the_remote_is_not_github(self):
         """The PR head is landing/e1, so git's absent line alone does not settle the entry."""
         with self.fake_gh():
-            sh("git", "remote", "set-url", "origin", str(self.base / "origin.git"), cwd=self.work)
             self.init(mode="human")
+            sh("git", "remote", "set-url", "origin", str(self.base / "origin.git"), cwd=self.work)
             self.queue_one()
             self.assertEqual(self.land("land"), "opened PRs for E1 (r/D1) https://github.com/o/r/pull/9")
             remote = self.base / "origin.git"

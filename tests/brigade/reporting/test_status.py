@@ -1,5 +1,7 @@
 from ..support import setUpModule
 from ..support import BrigadeTest, CLAUDE, CODEX, Path, ProcessReason, SCRIPT, call, call_in_process, real_process, run_globals, _ReportingRace, _owner_words, _shown_root, datetime, io, json, mock, os, runpy, subprocess, sys, timezone
+import shlex
+import shutil
 import sqlite3
 
 class ReportingTest(BrigadeTest):
@@ -32,14 +34,33 @@ class ReportingTest(BrigadeTest):
         subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(remote)], check=True)
         subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=self.project, check=True)
         subprocess.run(["git", "push", "-q", "origin", "main"], cwd=self.project, check=True)
-        self.land("init", "--trunk", "main", "--mode", "human")
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
-            self.open()
-            self.land("mode", "merge")
-            self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, lands by merge\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)")
-            header = self.brigade("walk").splitlines()[0]
-            self.assertEqual(header, f"{_shown_root(self.project)}: {self.land('status')}")
-            self.assertTrue(header.startswith(f"{_shown_root(self.project)}: merge mode onto "))
+        gh = Path(self.temporary.name) / "gh"
+        gh.write_text("#!/bin/sh\nexit 0\n")
+        gh.chmod(0o755)
+        subprocess.run(["git", "remote", "set-url", "origin", "https://github.com/o/r.git"], cwd=self.project, check=True)
+        rewrite = f"url.{remote}/.insteadOf=https://github.com/o/r.git"
+        git = shutil.which("git")
+        git_wrap = Path(self.temporary.name) / "git-wrap"
+        git_wrap.mkdir()
+        wrapper = git_wrap / "git"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            "case $1 in\n"
+            "push|fetch|ls-remote|pull)\n"
+            f"  exec {shlex.quote(git)} -c {shlex.quote(rewrite)} \"$@\" ;;\n"
+            "esac\n"
+            f"exec {shlex.quote(git)} \"$@\"\n")
+        wrapper.chmod(0o755)
+        environ = {"LAND_GH": str(gh), "PATH": str(git_wrap) + os.pathsep + os.environ.get("PATH", "")}
+        with mock.patch.dict(os.environ, environ):
+            self.land("init", "--trunk", "main", "--mode", "human")
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.land_env()["XDG_STATE_HOME"]}):
+                self.open()
+                self.land("mode", "merge")
+                self.assertEqual(self.brigade("status"), "thread not recorded\nreporting: milestones, lands by merge\nworkers: 0 of 2 running, 2 idle, auto-start: normal\nliveness: every 600000 ms (default for milestones)")
+                header = self.brigade("walk").splitlines()[0]
+                self.assertEqual(header, f"{_shown_root(self.project)}: {self.land('status')}")
+                self.assertTrue(header.startswith(f"{_shown_root(self.project)}: merge mode onto "))
     def test_walk_groups_repositories_and_repo_selects_one(self):
         from unittest import mock
         other = Path(self.temporary.name) / "other-app"

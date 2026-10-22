@@ -44,9 +44,10 @@ class LandingTest(QueueBase, LandingTestBase):
             self.assertEqual(create[create.index("--body") + 1], "")
 
     def test_a_rerun_without_the_flag_keeps_pr_item_line_on(self):
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "on")
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1")
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "on")
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1")
         self.assertEqual(self.stored_pr_item_line(), "true")
         log = self.base / "gh-log"
         with self.fake_gh():
@@ -65,15 +66,17 @@ class LandingTest(QueueBase, LandingTestBase):
             self.assertEqual(create[create.index("--body") + 1], "Kind: polish. Goal: rules in the tool")
 
     def test_an_unknown_pr_item_line_value_is_refused_and_leaves_the_contract_unchanged(self):
-        self.init(mode="human")
-        before = self.queue_rows()
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "bogus", ok=False)
+        with self.fake_gh():
+            self.init(mode="human")
+            before = self.queue_rows()
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "bogus", ok=False)
         self.assertEqual(self.queue_rows(), before)
 
     def test_a_deleted_pr_item_line_key_reads_as_off(self):
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "on")
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "on")
         with self.raw_db() as db:
             db.execute("DELETE FROM contract WHERE key = 'prItemLine'")
             db.commit()
@@ -163,3 +166,51 @@ class LandingTest(QueueBase, LandingTestBase):
         self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
                   "--heartbeat-ms", "7200000")
         self.assertIn("heartbeat everyMs 7200000 merge wait 900000", self.land("status"))
+
+    def use_gh_auth_by_arguments(self, github, other):
+        """Wrap the fake gh so auth status answers by its arguments. github is the exit status of the github.com-qualified call, other of an unqualified one."""
+        real = os.environ["LAND_GH"]
+        wrapper = self.base / "gh-auth-by-arguments"
+        wrapper.write_text(f"""#!{sys.executable}
+import os, sys
+if sys.argv[1:] == ["auth", "status", "--active", "--hostname", "github.com"]:
+    sys.exit({github})
+if sys.argv[1:3] == ["auth", "status"]:
+    sys.exit({other})
+os.execv({real!r}, [{real!r}, *sys.argv[1:]])
+""")
+        wrapper.chmod(0o755)
+        os.environ["LAND_GH"] = str(wrapper)
+
+    def test_init_accepts_a_github_login_beside_a_stale_host(self):
+        with self.fake_gh():
+            self.use_gh_auth_by_arguments(github=0, other=1)
+            self.assertIn("created", self.init(mode="human"))
+        self.assertTrue(self.land("status").startswith("human mode onto"), self.land("status"))
+
+    def test_init_refuses_an_enterprise_only_login_and_writes_no_database(self):
+        with self.fake_gh():
+            self.use_gh_auth_by_arguments(github=1, other=0)
+            err = self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh",
+                            "--batch", "1", ok=False)
+        self.assertIn("land: mode human opens pull requests with gh, and "
+                      "gh auth status --active --hostname github.com failed", err)
+        self.assertIn("use mode push or mode local", err)
+        self.assertEqual(list((self.base / "state").glob("pstack-t3/landing/*/land.db")), [])
+
+    def test_mode_accepts_a_github_login_beside_a_stale_host(self):
+        with self.fake_gh():
+            self.init(mode="push")
+            self.use_gh_auth_by_arguments(github=0, other=1)
+            self.assertEqual(self.land("mode", "human"), "landing mode is now human")
+        self.assertTrue(self.land("status").startswith("human mode onto"), self.land("status"))
+
+    def test_mode_refuses_an_enterprise_only_login_and_keeps_the_stored_mode(self):
+        with self.fake_gh():
+            self.init(mode="push")
+            self.use_gh_auth_by_arguments(github=1, other=0)
+            err = self.land("mode", "human", ok=False)
+        self.assertIn("land: mode human opens pull requests with gh, and "
+                      "gh auth status --active --hostname github.com failed", err)
+        self.assertIn("use mode push or mode local", err)
+        self.assertTrue(self.land("status").startswith("push mode onto"), self.land("status"))

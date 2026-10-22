@@ -291,3 +291,81 @@ class LandingTest(MergeBase, LandingTestBase):
             self.assertEqual(self.land("land"), "landed E1 (r/D1)")
             sh("git", "push", "-q", "--force", "origin", "HEAD:main", cwd=self.work)
             self.assertIn("queue paused: trunk no longer contains the last landed commit", self.land("land"))
+
+    def use_a_local_origin(self):
+        """Point origin at a bare repository path, which no GitHub client can read as a GitHub repository."""
+        sh("git", "remote", "set-url", "origin", str(self.base / "origin.git"), cwd=self.work)
+
+    def use_gh_off_the_environment(self):
+        """Name a gh on LAND_GH that is not an executable file."""
+        os.environ["LAND_GH"] = str(self.base / "gh-not-installed")
+
+    def use_gh_that_refuses_auth(self):
+        """Wrap the fake gh so the github.com auth status exits 1 and every other call reaches the fake."""
+        real = os.environ["LAND_GH"]
+        wrapper = self.base / "gh-unauthenticated"
+        wrapper.write_text(f"""#!{sys.executable}
+import os, sys
+if sys.argv[1:] == ["auth", "status", "--active", "--hostname", "github.com"]:
+    print("You are not logged into any GitHub hosts.", file=sys.stderr)
+    sys.exit(1)
+os.execv({real!r}, [{real!r}, *sys.argv[1:]])
+""")
+        wrapper.chmod(0o755)
+        os.environ["LAND_GH"] = str(wrapper)
+
+    def assert_no_contract(self):
+        self.assertEqual(list((self.base / "state").glob("pstack-t3/landing/*/land.db")), [])
+
+    def test_init_refuses_merge_and_human_mode_when_the_origin_is_not_github(self):
+        self.use_a_local_origin()
+        with self.fake_gh():
+            for mode in ("merge", "human"):
+                with self.subTest(mode=mode):
+                    err = self.land("init", "--trunk", "main", "--mode", mode, "--check", "./check.sh",
+                                    "--batch", "1", ok=False)
+                    self.assertIn(f"land: mode {mode} opens pull requests with gh, and remote 'origin' is not a GitHub URL", err)
+                    self.assertIn("use mode push or mode local", err)
+                    self.assert_no_contract()
+
+    def test_init_refuses_merge_mode_when_gh_is_missing(self):
+        with self.fake_gh():
+            self.use_gh_off_the_environment()
+            err = self.land("init", "--trunk", "main", "--mode", "merge", "--check", "./check.sh",
+                            "--batch", "1", ok=False)
+        self.assertIn("land: mode merge opens pull requests with gh, and gh is not installed", err)
+        self.assertIn("use mode push or mode local", err)
+        self.assert_no_contract()
+
+    def test_init_refuses_human_mode_when_gh_auth_status_fails(self):
+        with self.fake_gh():
+            self.use_gh_that_refuses_auth()
+            err = self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh",
+                            "--batch", "1", ok=False)
+        self.assertIn("land: mode human opens pull requests with gh, and "
+                      "gh auth status --active --hostname github.com failed", err)
+        self.assertIn("run gh auth login", err)
+        self.assert_no_contract()
+
+    def test_mode_refuses_merge_and_human_when_the_origin_is_not_github(self):
+        with self.fake_gh():
+            self.init(mode="push")
+            self.use_a_local_origin()
+            for mode in ("merge", "human"):
+                with self.subTest(mode=mode):
+                    self.assertIn(f"mode {mode} opens pull requests with gh, and remote 'origin' is not a GitHub URL",
+                                  self.land("mode", mode, ok=False))
+            self.assertEqual(self.contract()["mode"], "push")
+
+    def test_push_mode_inits_and_switches_with_no_gh_and_no_github_remote(self):
+        self.use_a_local_origin()
+        with self.fake_gh():
+            self.use_gh_off_the_environment()
+            self.assertIn("created", self.init(mode="push"))
+            self.assertEqual(self.land("mode", "push"), "landing mode is now push")
+
+    def test_local_mode_inits_with_no_gh_and_no_github_remote(self):
+        self.use_a_local_origin()
+        with self.fake_gh():
+            self.use_gh_off_the_environment()
+            self.assertIn("created", self.init(mode="local", base=sh("git", "rev-parse", "HEAD", cwd=self.work)))

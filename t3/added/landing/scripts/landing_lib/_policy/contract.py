@@ -1,7 +1,30 @@
 import json
+import os
+import shutil
 from pathlib import Path
 from landing_lib import seam
+from landing_lib._merge.forge import github_owner_repo
 from .errors import allowed_merge_methods, busy_queue_message, pick_merge_method, trunk_ref
+
+GH_MODES = ("merge", "human")
+
+def gh_program():
+    """The gh command the queue runs. LAND_GH names another executable."""
+    return os.environ.get("LAND_GH", "gh")
+
+def refused_forge(repo, remote, mode):
+    """Why merge or human mode cannot land this repository through pull requests, or None for push and local."""
+    if mode not in GH_MODES:
+        return None
+    listed = seam.git("remote", "get-url", remote, cwd=repo, check=False)
+    if not github_owner_repo(listed.stdout.strip()):
+        return f"mode {mode} opens pull requests with gh, and remote {remote!r} is not a GitHub URL; use mode push or mode local"
+    if shutil.which(gh_program()) is None:
+        return f"mode {mode} opens pull requests with gh, and gh is not installed; install gh, or use mode push or mode local"
+    if seam.gh("auth", "status", "--active", "--hostname", "github.com", cwd=repo).returncode != 0:
+        return (f"mode {mode} opens pull requests with gh, and gh auth status --active --hostname github.com failed; "
+                "run gh auth login, or use mode push or mode local")
+    return None
 
 def generated_list(passed, stored):
     """The generated paths an init stores. None keeps the stored list. An empty value clears it."""
@@ -130,6 +153,9 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
     if mode in seam.REMOTE_MODES:
         if not seam.git("remote", "get-url", remote, cwd=repo, check=False).stdout.strip():
             raise seam.LandError(f"mode {mode} needs remote {remote!r}; use --mode local for a repository without one")
+        reason = refused_forge(repo, remote, mode)
+        if reason:
+            raise seam.LandError(reason)
         seam.git("fetch", remote, trunk, cwd=repo)
     # A bad generated path must be refused before the store exists, so a first init leaves no database.
     if generated is not None:
@@ -202,6 +228,9 @@ def change_mode(store, mode, merge_method):
     seen = store.contract["mode"]
     if "local" in (mode, seen) and mode != seen:
         raise seam.LandError("local mode lands on refs/landing/<trunk>, not the remote trunk; switching to or from it needs a new contract")
+    reason = refused_forge(store.repo, store.contract["remote"], mode)
+    if reason:
+        raise seam.LandError(reason)
     allowed = None
     if merge_method or mode == "merge":
         allowed = allowed_merge_methods(store.repo)

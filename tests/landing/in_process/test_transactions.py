@@ -35,7 +35,8 @@ class LandingTest(InProcessBase, LandingTestBase):
         hits = self.subprocesses_during_land()
         self.assertEqual(self.origin_log()[0], "w1")
         self.assertIn("E1 landed", self.land("status", "E1"))
-        self.land("mode", "human")
+        with self.fake_gh():
+            self.land("mode", "human")
         sh("git", "fetch", "-q", "origin", cwd=self.work)
         sh("git", "merge", "-q", "--ff-only", "origin/main", cwd=self.work)
         sha = self.worker("w2", {"b.txt": "same\n"})
