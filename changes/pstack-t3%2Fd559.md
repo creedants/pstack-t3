@@ -1,0 +1,9 @@
+- kind upkeep
+- Move `vendor/pstack` to upstream commit 4ec7ffa173ea at version 0.15.30.
+- Refresh `upstream.json` and the README badge to that commit and version.
+- Ship `skills/statechart/` from the new vendored file.
+- Add `t3/overrides/statechart/SKILL.md`, which states that `--out DIR` sets the output folder.
+- Carry upstream's statechart row into `t3/overrides/poteto-help/SKILL.md` with the `$` prefix.
+- Refresh the generated `skills/poteto-help/SKILL.md`, `skills/statechart/`, and `docs/skills.md`.
+- Refresh `t3/overrides.lock.json` after review of both re-ports.
+- `python3 scripts/check.py` reports no Cursor leftovers.
