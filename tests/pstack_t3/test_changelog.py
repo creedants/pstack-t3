@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "t3/scripts"))
 sys.path.append(str(ROOT / "scripts"))
 
+import release
 import shutil
 import tempfile
 from tests.pstack_t3.support import fence_git_environment, fragment_name, changelog_findings, release_bullets, _git
@@ -58,10 +59,7 @@ class ChangelogTest(unittest.TestCase):
         findings = changelog_findings(ROOT)
         self.assertEqual(findings, [], "\n".join(findings) or "Write bullets under changes/.")
         contributing = (ROOT / "CONTRIBUTING.md").read_text()
-        self.assertIn(
-            "git log --reverse --diff-filter=A --format= --name-only -- changes/",
-            contributing,
-        )
+        self.assertIn("git " + " ".join(release.LOG), contributing)
         self.assertNotIn("Add a line under Unreleased", contributing)
         self.assertNotIn("Each bullet is one line", contributing)
         self.assertIn("Indent a continuation line under that bullet.", contributing)
