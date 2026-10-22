@@ -41,7 +41,7 @@ class HouseRulesCapTest(BrigadeTest):
                           "over the houseRulesCap of 20 bytes"])
 
 
-    def test_brief_without_the_key_briefs_a_house_rules_file_that_is_over_the_cap_size(self):
+    def test_brief_without_the_cap_key_writes_a_brief_and_keeps_only_the_worker_rule(self):
         self.coordinator()
         self.write_house_rules("[worker] Worker rule.\n[reviewer] " + "R" * 40 + "\n")
         self.brigade(*self.BRIEF)

@@ -32,7 +32,7 @@ It is an optional repository-relative directory path. It defaults to unset. When
 
 ## houseRulesCap
 
-`houseRulesCap` caps one role's house rules by bytes. `brief` and `next` read it. It is a positive whole number of bytes, written by hand in `restaurant.json`. It is absent by default, and an absent key leaves both commands as they are. A present value that is a boolean, is not a whole number, or is under 1 is refused by `brief` and by `next`.
+`houseRulesCap` caps one role's house rules by bytes. `brief` and `next` read it. It is a positive integer count of bytes, written by hand in `restaurant.json` as a JSON number with no fraction. It is absent by default, and an absent key leaves both commands as they are. A present value that is a boolean, is not an integer, or is under 1 is refused by `brief` and by `next`.
 
 The three roles are `worker`, `reviewer`, and `coordinator`. A rule is a line that starts at column 0 and the indented or blank lines under it. Its first role tag anywhere on its first line selects a role. A rule tagged for one role is left out of every other role's text. A rule tagged for the role loses the tag and at most one space after it. An untagged rule is in every role's text as it is. A role's size is the byte count of that text.
 
