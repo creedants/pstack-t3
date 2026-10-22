@@ -21,7 +21,9 @@ class LabelsMiscMixin:
         self.assertEqual(out["startable"].splitlines()[2], "T2 normal fix, 0m: unknown, no paths recorded")
         self.assertEqual(out["close --dry-run"].splitlines()[4:],
                          ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b",
-                          "", "## Spend", "", "G7  wall open  rounds 0  send-backs 0  threads not recorded"])
+                          "", "## Spend", "", "G7  wall open  rounds 0  send-backs 0  threads not recorded",
+                          "", "## Follow-up share", "",
+                          "- 0 of 2 tickets created in the last 14 days came from a report (0%)."])
         self.assertNotIn("G9", "".join(out.values()))
         before, _, after = out["close --dry-run"].partition("## Spend")
         self.assertNotIn("G7", "".join(value for key, value in out.items() if key != "close --dry-run") + before)
@@ -29,7 +31,7 @@ class LabelsMiscMixin:
 
     def test_from_report_changes_only_the_ticket_table_the_log_and_last_activity(self):
         self.fired_bug_fix()
-        self.review_file("D1.md", BULLETS)
+        self.review_file("D1.md", "## Follow-ups\n\n- Correctness: Tidy.\n")
 
         def changed_by(*command):
             before = self.store_files()
@@ -88,5 +90,7 @@ class LabelsMiscMixin:
         self.assertEqual(out["ticket list"], "T1 assigned normal fix [user] a\nT2 waiting normal fix [user] b")
         self.assertEqual(out["close --dry-run"].splitlines()[4:],
                          ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b",
-                          "", "## Spend", "", "G1  wall open  rounds 0  send-backs 0  threads not recorded"])
+                          "", "## Spend", "", "G1  wall open  rounds 0  send-backs 0  threads not recorded",
+                          "", "## Follow-up share", "",
+                          "- 0 of 2 tickets created in the last 14 days came from a report (0%)."])
         self.assertFalse((self.at / "goals.tsv").exists())

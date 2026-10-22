@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam, spend
+from brigade_lib._notes import share_lines
 from brigade_lib.leases import holding_blocks
 from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural
@@ -98,6 +99,7 @@ def report(restaurant, write=True):
     if len(lines) == 4:
         lines += ["Nothing new.", ""]
     lines += spend_section(restaurant, since)
+    lines += share_lines(restaurant)
     text = "\n".join(lines)
     path = None
     if write:

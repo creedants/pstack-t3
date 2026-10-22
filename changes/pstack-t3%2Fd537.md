@@ -1,0 +1,2 @@
+- kind feature
+- `ticket add --from-report` files only a marked follow-up as a ticket and notes the other follow-ups in `notes.tsv`, skipping text already on the rail

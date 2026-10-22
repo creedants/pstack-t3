@@ -27,53 +27,53 @@ class BareItemsMixin:
 
     def test_from_report_still_files_a_longer_hyphen_line_and_keeps_the_lines_around_a_skipped_one(self):
         self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n---\n- Fix b.\n").splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Fix a.",
-            "T3 added from perf/reports/D1.md#2: Fix b.",
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Correctness: Fix a.\n---\n- Safety: Fix b.\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Correctness: Fix a.",
+            "not filed, D1.md takes one ticket per item: Safety: Fix b.",
         ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the gate.\n\n---\n\nName the file.\n").splitlines(), [
-            "T4 added from perf/reports/D1.md#1: Reword the gate.",
-            "T5 added from perf/reports/D1.md#2: Name the file.",
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nCorrectness: Reword the gate.\n\n---\n\nSafety: Name the file.\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Correctness: Reword the gate.",
+            "not filed, D1.md takes one ticket per item: Safety: Name the file.",
         ])
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Run it.\n\n```\n---\n```\n").splitlines(), [
-            "T6 added from perf/reports/D1.md#1: Run it. ``` --- ```",
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Correctness: Run it.\n\n```\n---\n```\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Correctness: Run it. ``` --- ```",
         ])
-        for body, line in (("## Follow-ups\n\n----\n", "----"),
-                           ("## Follow-ups\n\n* ---\n", "---"),
-                           ("## Follow-ups\n\n--- extra\n", "--- extra"),
-                           ("## Follow-ups\n\n1. ---\n", "---")):
+        for body, line in (("## Follow-ups\n\nCorrectness: ----\n", "Correctness: ----"),
+                           ("## Follow-ups\n\n* Correctness: ---\n", "Correctness: ---"),
+                           ("## Follow-ups\n\nCorrectness: --- extra\n", "Correctness: --- extra"),
+                           ("## Follow-ups\n\n1. Correctness: ---\n", "Correctness: ---")):
             self.assertEqual(self.follow_ups_in(body, "--dry-run"), f"would add from perf/reports/D1.md#1: {line}")
 
     def test_from_report_keeps_a_separator_line_inside_a_tilde_fence(self):
         self.fired_bug_fix()
-        body = "## Follow-ups\n\n- Preserve the YAML document marker in `src/config.py`:\n  ~~~yaml\n  ---\n  key: value\n  ~~~\n"
-        filed = "T2 added from perf/reports/D1.md#1: Preserve the YAML document marker in `src/config.py`: ~~~yaml --- key: value ~~~"
-        self.assertEqual(self.follow_ups_in(body), filed)
+        body = "## Follow-ups\n\n- Correctness: Preserve the YAML document marker in `src/config.py`:\n  ~~~yaml\n  ---\n  key: value\n  ~~~\n"
+        filed = "would add from perf/reports/D1.md#1: Correctness: Preserve the YAML document marker in `src/config.py`: ~~~yaml --- key: value ~~~"
+        self.assertEqual(self.follow_ups_in(body, "--dry-run"), filed)
 
     def test_a_tilde_line_inside_a_backtick_fence_does_not_close_it(self):
         self.fired_bug_fix()
-        body = "## Follow-ups\n\n- Run it.\n\n```\n~~~\n---\n```\n"
-        self.assertEqual(self.follow_ups_in(body), "T2 added from perf/reports/D1.md#1: Run it. ``` ~~~ --- ```")
+        body = "## Follow-ups\n\n- Correctness: Run it.\n\n```\n~~~\n---\n```\n"
+        self.assertEqual(self.follow_ups_in(body, "--dry-run"), "would add from perf/reports/D1.md#1: Correctness: Run it. ``` ~~~ --- ```")
 
     def test_a_paragraph_above_a_list_item_with_no_text_is_filed_when_no_other_list_item_follows(self):
         self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nReword the guide.\n\n- \n").splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Reword the guide.",
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nCorrectness: Reword the guide.\n\n- \n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Correctness: Reword the guide.",
             "not filed, list item with no text",
         ])
 
     def test_a_paragraph_above_a_list_item_with_no_text_and_then_a_list_item_introduces_the_list(self):
         self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nTwo things remain.\n\n- \n- Fix a.\n").splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Fix a.",
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\nTwo things remain.\n\n- \n- Correctness: Fix a.\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Correctness: Fix a.",
             "not filed, prose that introduces a list: Two things remain.",
             "not filed, list item with no text",
         ])
 
     def test_a_paragraph_below_a_list_item_with_no_text_that_follows_the_last_list_item_with_text_closes_the_section(self):
         self.fired_bug_fix()
-        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Fix a.\n\n- \n\nThat is all.\n").splitlines(), [
-            "T2 added from perf/reports/D1.md#1: Fix a.",
+        self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Correctness: Fix a.\n\n- \n\nThat is all.\n", "--dry-run").splitlines(), [
+            "would add from perf/reports/D1.md#1: Correctness: Fix a.",
             "not filed, list item with no text",
             "not filed, prose after the last list item: That is all.",
         ])

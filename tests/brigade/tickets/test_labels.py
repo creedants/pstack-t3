@@ -57,7 +57,9 @@ class LabelsMixin:
         self.assertEqual(out["ticket list"], "T1 waiting normal [user] a")
         self.assertEqual(out["startable"].splitlines()[2], "T1 normal, 0m: unknown, no paths recorded")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## New tickets, not started", "", "- T1: a",
-                                                                  "", "## Spend", "", "none"])
+                                                                  "", "## Spend", "", "none",
+                                                                  "", "## Follow-up share", "",
+                                                                  "- 0 of 1 tickets created in the last 14 days came from a report (0%)."])
         self.assertNotIn("bugfix", "".join(out.values()))
 
     def test_fire_ride_along_of_a_low_ticket_whose_kind_cell_is_a_padded_feature_warns_and_leaves_the_cell_as_it_was(self):

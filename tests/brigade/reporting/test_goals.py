@@ -17,7 +17,7 @@ class ReportingTest(BrigadeTest):
         self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "pass", "--author", CLAUDE, "--verifier", CODEX)
         self.brigade("dish", "D1", "--state", "merged")
         self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "merged")
-        self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
+        self.follow_ups_in("## Follow-ups\n\n- Correctness: Tidy the guide.\n")
         self.assertEqual(self.label("rail.tsv", "T2"), ("polish", "G1"))
         self.assertEqual(self.brigade("goal", "list").splitlines()[0],
                          "G1 done activity view: 1 waiting, 0 in flight, 1 merged, 0 send-backs")
@@ -133,7 +133,7 @@ class ReportingTest(BrigadeTest):
         self.hand_edit("dishes.tsv", "D1", state="merged")
         self.hand_edit("rail.tsv", "T1", state="done")
         self.brigade("goal", "set", "G1", "--state", "done", "--evidence", "merged")
-        self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
+        self.follow_ups_in("## Follow-ups\n\n- Correctness: Tidy the guide.\n")
         self.assertEqual(self.brigade("status").splitlines()[3:], ["liveness: every 600000 ms (default for milestones)", "kinds: polish 1 waiting", "goals: G1 done, 1 waiting"])
     def test_status_prints_the_unassigned_entry_alone_when_the_store_has_a_goal_and_no_work_under_it(self):
         self.two_goals()
@@ -223,7 +223,7 @@ class ReportingTest(BrigadeTest):
         self.assertEqual(self.brigade("watch"), f"{idle}\nno work in progress")
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
         self.assertEqual(self.close_run("--dry-run"),
-                         (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.\n\n## Spend\n\nnone", ""))
+                         (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.\n\n## Spend\n\nnone\n\n## Follow-up share\n\n- no ticket was created in the last 14 days.", ""))
         self.assertEqual(self.brigade("walk").splitlines(), [
             f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty. author policy: any",
             "  Perf (reports milestones): nothing on record",

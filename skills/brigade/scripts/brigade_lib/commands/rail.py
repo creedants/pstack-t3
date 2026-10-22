@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._notes import note_lines
 from brigade_lib.commands.once import OncePaths
 from brigade_lib.leases import holding_blocks
 from brigade_lib.reports import item_report
@@ -40,11 +41,16 @@ def register_ticket(sub):
     how = a.add_mutually_exclusive_group(required=True)
     how.add_argument("--summary")
     how.add_argument("--from-report", metavar="FILE",
-                     help="an item report under reports/, such as reports/D2.md; files one waiting ticket per follow-up in it "
-                          "and changes only the ticket table, the log, and lastActivityAt; each ticket takes the goal of the "
-                          "report's item, and when that item has a kind the ticket takes fix at priority urgent or normal "
-                          "and polish at low; a follow-up is filed with no --priority, so it is low")
-    a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add; it changes no table and no log")
+                     help="an item report under reports/, such as reports/D2.md; files at most one waiting ticket per "
+                          "item, and only when no ticket from that report exists yet, for the first follow-up marked "
+                          "Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; any "
+                          "other marked follow-up whose text is not on the rail prints not filed and goes to notes.tsv; "
+                          "every other follow-up whose text is not on the rail goes to notes.tsv keyed by the tracked "
+                          "paths it quotes; changes the ticket table, the log, and lastActivityAt when it files a ticket, "
+                          "and notes.tsv when it notes one; each ticket takes the goal of the report's item, and when that "
+                          "item has a kind the ticket takes fix at priority urgent or normal and polish at low; a "
+                          "follow-up is filed with no --priority, so it is low")
+    a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add or note, and what is already noted; it changes no store file")
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
     a.add_argument("--request", default="", help="the admin request id this ticket carries out; refuses a second ticket for it")
@@ -89,6 +95,10 @@ def register_ticket(sub):
                                     "the tracked file of that name when exactly one has that name, and a file under skills/ "
                                     "is not counted when a file of the same name is tracked under t3/")
     a.add_argument("--dry-run", action="store_true", help="print what it would record; it changes no table")
+    a = t.add_parser("notes", help="list the follow-ups the store noted instead of filing as tickets")
+    picked = a.add_mutually_exclusive_group(required=True)
+    picked.add_argument("--paths", help="comma-separated files and directories; prints the notes that name them")
+    picked.add_argument("--all", action="store_true", help="prints every note")
 
 
 def register_goal(sub):
@@ -208,6 +218,14 @@ def handle_locked(restaurant, args, view):
         labels = read_labels(restaurant, EVERY_ROW)
         return goal_lines(labels, count_labels(restaurant, labels), args.all)
     if args.command == "ticket":
+        if args.action == "notes":
+            if args.all:
+                with restaurant.checked():
+                    return note_lines(restaurant, (), True)
+            wanted = tuple(part.strip() for part in (args.paths or "").split(","))
+            wanted = tuple(part for part in wanted if part)
+            with restaurant.checked():
+                return note_lines(restaurant, wanted, False)
         rails = view.rails if view.rails is not None else {}
         if args.action == "add":
             return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails, again=args.again,

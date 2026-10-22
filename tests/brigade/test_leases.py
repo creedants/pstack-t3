@@ -17,8 +17,8 @@ class LeasesTest(BrigadeTest):
         self.brigade("set", "--thread", "t1")
         before = self.tables()
         self.assertIn("log.tsv", before)
-        self.assertEqual(self.follow_ups_in(BULLETS, "--dry-run", owner=False).splitlines()[2],
-                         "would add from perf/reports/D1.md#3: PR #87 was not commented on, approved, or closed.")
+        self.assertEqual(self.follow_ups_in(BULLETS, "--dry-run", owner=False).splitlines()[0],
+                         "would add from perf/reports/D1.md#1: Correctness: A no-ref `--source user` add still has no CLI dedupe. The new Refusals rule tells the coordinator to read `ticket list` before refiling. A `brigade.py` guard would make that structural.")
         self.assertEqual(self.follow_ups_in(BULLETS, ok=False, owner=False),
                          "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
         self.assertEqual(self.tables(), before)

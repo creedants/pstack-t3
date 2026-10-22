@@ -231,7 +231,7 @@ class FireRideMixin:
         self.two_goals()
         self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Do a")
-        self.follow_ups_in("## Follow-ups\n\n- Tidy the guide.\n")
+        self.follow_ups_in("## Follow-ups\n\n- Correctness: Tidy the guide.\n")
         self.assertEqual(self.table_row(self.at, "rail.tsv", "T2")["priority"], "")
         self.brigade("ticket", "add", "--summary", "c", "--kind", "fix", "--goal", "G2")
         self.assertEqual(self.brigade("fire", "--tickets", "T3,T2", "--ride-along", "T2", "--station", "bug-fix", "--summary", "x"), "D2")

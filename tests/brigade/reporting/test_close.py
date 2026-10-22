@@ -171,7 +171,8 @@ class ReportingTest(BrigadeTest, _ReportingRace):
             f"Since opening. merged: 1.", "",
             "## Merged", "", "- fix D1 (T1): Fix s", "",
             "## Dropped", "", "- T2: UI", "",
-            "## Spend", "", "goal not recorded  wall 0m  rounds 1  send-backs 0  threads not recorded",
+            "## Spend", "", "goal not recorded  wall 0m  rounds 1  send-backs 0  threads not recorded", "",
+            "## Follow-up share", "", "- 0 of 2 tickets created in the last 14 days came from a report (0%).",
         ]))
     def test_close_to_file_prints_the_written_path_and_advances_the_report(self):
         self.open()

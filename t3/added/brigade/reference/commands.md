@@ -24,6 +24,7 @@ $B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket
 $B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell
 $B ticket take                               # files every ticket a sibling handed to this restaurant
 $B ticket paths [--dry-run]                  # on each waiting ticket that records no paths, records the tracked paths its summary quotes in backticks
+$B ticket notes --paths a.py,b.py | --all   # prints the notes that name those paths, or every note
 $B startable                                 # the workers line, then a count line and each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file
