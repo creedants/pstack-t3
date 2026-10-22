@@ -321,8 +321,16 @@ def _drop_marker(marker):
         pass
 
 
-def _release_target(target, marker):
-    """Remove a failed rename's reservation: the target while it is an empty directory, then its marker."""
+def _release_target(directory, target, marker):
+    """Remove a failed rename's reservation: the marker's inode record, the target while it is empty, then the marker.
+
+    The marker loses its inode first, so a rerun never adopts a target directory that was not the one this marker
+    recorded.
+    """
+    try:
+        marker.write_text(json.dumps({"from": directory.name}))
+    except OSError:
+        pass
     try:
         if target.is_dir() and not any(target.iterdir()):
             target.rmdir()
@@ -363,7 +371,7 @@ def _reserve_target(directory, target, refused):
                 target.mkdir()
                 marker.write_text(json.dumps({"from": directory.name, "inode": target.stat().st_ino}))
             except BaseException:
-                _release_target(target, marker)
+                _release_target(directory, target, marker)
                 raise
             return marker
         raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
@@ -375,7 +383,7 @@ def _reserve_target(directory, target, refused):
         _drop_marker(marker)
         raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
     except BaseException:
-        _release_target(target, marker)
+        _release_target(directory, target, marker)
         raise
     return marker
 
@@ -418,7 +426,7 @@ def rename_restaurant(root, args):
             directory.rename(target)
         except BaseException as error:
             _restore(directory, prior)
-            _release_target(target, marker)
+            _release_target(directory, target, marker)
             if isinstance(error, OSError):
                 raise BrigadeError(refused + str(error)) from None
             raise

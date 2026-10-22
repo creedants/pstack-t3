@@ -239,6 +239,7 @@ class RenameReferenceTest(BrigadeTest):
             self.assertEqual(moving.returncode, 0, move_out + move_err)
             (case / "open-proceed").touch()
             open_out, open_err = opening.communicate(timeout=15)
+            self.assertEqual(opening.returncode, 1, open_out + open_err)
         finally:
             for name in ("before-move", "move-proceed", "open-proceed"):
                 (case / name).touch()
@@ -256,6 +257,39 @@ class RenameReferenceTest(BrigadeTest):
         self.assertIn(b"T1\t", rail)
         self.assertNotIn("opened", open_out + open_err)
         self.assertFalse((self.at.parent / ".rename-speed.json").exists())
+
+    def test_a_rename_refuses_the_directory_a_live_open_just_created(self):
+        """D554 review 2 blocker 1: a rename never fills a target another open created before the reservation."""
+        self.open()
+        self.brigade("set", "--thread", "coordinator")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        store = self.store_files()
+        case = Path(self.temporary.name) / "case"
+        case.mkdir()
+        opening = real_popen(
+            ProcessReason.RACE,
+            [sys.executable, "-c", CHILD, "--store", str(self.store),
+             "open", "--project-root", str(self.project), "--name", "Speed"],
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", D554_CASE=str(case),
+                     D554_SCRIPT=str(SCRIPT), D554_MODE="open"),
+            text=True)
+        try:
+            _wait_for_path(case / "initializing")
+            error = self.rename(code=1)
+            (case / "open-proceed").touch()
+            open_out, open_err = opening.communicate(timeout=15)
+        finally:
+            (case / "open-proceed").touch()
+            if opening.poll() is None:
+                opening.kill()
+                opening.communicate()
+        self.assertIn(str(self.at.parent / "speed"), error)
+        self.assertEqual(self.store_files(), store)
+        self.assertEqual(opening.returncode, 0, open_err)
+        self.assertIn("opened", open_out)
+        self.assertFalse((self.at.parent / ".rename-speed.json").exists())
+        opened = json.loads((self.at.parent / "speed" / "restaurant.json").read_text())
+        self.assertIsNone(opened["thread"])
 
     def test_a_rerun_adopts_the_empty_target_an_interrupted_rename_reserved(self):
         self.open()
