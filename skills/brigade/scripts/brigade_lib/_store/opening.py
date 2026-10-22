@@ -350,7 +350,7 @@ def rename_restaurant(root, args):
             _restate_headings(store, (before, name), new_name)
             try:
                 directory.rename(target)
-            except OSError as error:
+            except OSError:
                 if target.exists():
                     raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename") from None
                 raise
