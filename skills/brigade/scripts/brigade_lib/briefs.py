@@ -1,25 +1,8 @@
-import argparse
-import fcntl
-import fnmatch
-import functools
-import hashlib
-import io
-import json
-import os
-import posixpath
 import re
-import runpy
-import shlex
-import stat
 import subprocess
 import sys
-import tarfile
-import tempfile
-import time
-from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from brigade_lib import seam
 from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
@@ -303,7 +286,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
         f"PURPOSE: {menu_purpose(restaurant)}",
-        f"TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
+        "TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
         "SCOPE:",
         f"- You run in your own git worktree on branch `{dish['branch']}`, started from `{base}`. Work only there, and commit on that branch.",
         f"- Change only these paths, leased to you as {lease}: {paths}. A change outside them is refused when it lands. Report it instead of making it.",
@@ -331,6 +314,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
           if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
+        "- If `t3_thread_send` returns thread_not_found, read the thread id again from this brief file, copy it exactly, and retry once; name both attempts in the final message.",
         "- Then end your turn with one line naming the report path.",
         "", "STANDING ORDERS:", worker_house_rules((restaurant.dir / "house-rules.md").read_text()),
     ]
