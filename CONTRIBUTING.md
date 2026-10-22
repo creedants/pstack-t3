@@ -93,7 +93,7 @@ The script exits 1, names the fix, and changes nothing when one of these holds:
 - A real run has no `--notes-file`.
 - A real run cannot read the notes file as UTF-8 or finds no `Stable check: T3 Code <version> passed` record in it.
 - In a real run, the first `Stable check: T3 Code <version>` record in the notes file says `failed`.
-- In a real run, the notes file has no `## New`, `## Fixed`, or `## Before you upgrade` heading, or has no non-empty line under one.
+- In a real run, the notes file lacks any of `## New`, `## Fixed`, or `## Before you upgrade` as an exact line after removing trailing spaces, or the first matching line for any heading has no body line containing a character other than space or tab. Lines are read with `str.splitlines()`. The body ends at the next line starting with `#` or `##` followed by whitespace or the end of the line.
 
 The script writes `CHANGELOG.md` through a temporary file and then deletes the fragments. It holds `SIGINT`, `SIGTERM`, and `SIGHUP` for that whole step. When a write or a delete fails, or one of those signals arrives, it writes `CHANGELOG.md` back and re-creates each deleted fragment from the bytes it read first. It then checks every file against those bytes. It prints `nothing changed` and exits 1 only when the check passes. Otherwise it names each file that differs and prints the command below. A kill that cannot be caught, or power loss, can leave a partial run. The command below restores that too.
 
