@@ -306,7 +306,7 @@ def _prior_bytes(directory):
 
 
 def _restore(directory, prior):
-    """Put each prior byte string back after a failed write, so the store keeps its bytes."""
+    """Put each prior byte string back after a failed write or a failed move, so the store keeps its bytes."""
     for name, data in prior.items():
         if directory.is_dir():
             (directory / name).write_bytes(data)

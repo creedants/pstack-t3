@@ -2,7 +2,7 @@ from .support import BrigadeTest, Path, SCRIPT, call_in_process, json, mock, run
 
 
 class RenameReferenceTest(BrigadeTest):
-    """A rename is refused while it reports to the executive admin, while an executive admin request, a handoff, or another project root names the store."""
+    """A rename is refused while it reports to the executive admin, while an executive admin request or a handoff names the store, or while --project-root is not the root the store records."""
 
     def rename(self, new="Speed", project_root=None, **kwargs):
         return self.brigade("open", "--project-root", str(project_root or self.project), "--name", "Perf",
@@ -66,7 +66,7 @@ class RenameReferenceTest(BrigadeTest):
         self.assertEqual(self.files(self.at.parent / "docs"), sibling)
         self.assertFalse((self.at.parent / "speed").exists())
 
-    def test_rename_refuses_a_ticket_a_sibling_handed_to_it(self):
+    def test_rename_refuses_a_ticket_a_sibling_took_from_it(self):
         self.open()
         self.open_sibling("docs")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
