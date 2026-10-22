@@ -1,0 +1,2 @@
+- kind fix
+- The affected verify paragraph runs recorded environments through env in front of each affected module and full suite command and refuses values outside [A-Za-z0-9_.,:/+=@%-], and a bare check run reports a home directory path outside vendor and the allow list.
