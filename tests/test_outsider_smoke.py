@@ -335,7 +335,7 @@ class OutsiderSmokeTest(unittest.TestCase):
         mutated = text.replace("close --dry-run", "close --to-file")
         self.assertIn("close", _missing_steps(mutated))
 
-    def test_plan_binds_before_ticket_and_later_writes_carry_owner(self):
+    def test_plan_binds_before_ticket_and_later_writes_except_close_carry_owner(self):
         entries = outsider_smoke._commands(outsider_smoke._stand_in())
         steps = [entry for entry in entries if isinstance(entry, outsider_smoke.Step)]
         names = [step.name for step in steps]
@@ -364,7 +364,7 @@ class OutsiderSmokeTest(unittest.TestCase):
         self.assertIn("smoke-thread@1", owners)
         self.assertIn("smoke/@1", owners)
 
-    def test_page_binds_with_thread_and_carries_owner(self):
+    def test_page_binds_with_thread_and_writes_except_close_carry_owner(self):
         text = PAGE.read_text(encoding="utf-8")
         pages = _page_lists(text)
         self.assertTrue(any("set" in tokens and "--thread" in tokens for tokens in pages))

@@ -49,7 +49,7 @@ The smoke runs the same open command. It prints the restaurant path. Use that pa
 python3 skills/brigade/scripts/brigade.py open --project-root ~/my-repo --name smoke
 ```
 
-Bind the restaurant to the coordinator thread. `$THREAD` is the reader T3 thread id. Later brigade writes carry `--owner $THREAD@1`. The smoke binds with `smoke-thread`.
+Bind the restaurant to the coordinator thread. `$THREAD` is the coordinator thread id. Later brigade writes except `close --dry-run` carry `--owner $THREAD@1`. The smoke binds with `smoke-thread`.
 
 ```sh
 python3 skills/brigade/scripts/brigade.py --at $RESTAURANT set --thread $THREAD
