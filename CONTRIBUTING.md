@@ -91,10 +91,10 @@ The script exits 1, names the fix, and changes nothing when one of these holds:
 - `CHANGELOG.md` already has a `## X.Y.Z` heading, or the version is not above the latest heading.
 - `docs/changelog/` already has a heading for the version.
 - `changes/` holds no fragments, or holds an entry that is not a `.md` file.
-- A fragment's first line is a bullet whose text starts with `kind` but is not `- kind feature`, `- kind fix`, `- kind polish`, `- kind upkeep`, or `- kind study`.
-- A fragment holds no bullet, not counting an exact kind line on its first line.
+- A fragment's first line starts with `- ` and its remaining text after `str.strip()` starts with `kind` but is not `kind feature`, `kind fix`, `kind polish`, `kind upkeep`, or `kind study`.
+- A fragment holds no bullet, not counting a first-line kind marker. A kind marker starts with `- ` and its remaining text after `str.strip()` is one of the five kind texts above.
 - A fragment holds a line that is not a bullet or a continuation line.
-- When `CHANGELOG.md` or `docs/changelog/` already holds a version, the version is not the one the fragment kinds give, which bumps the highest version's minor number and resets the patch number to zero when any fragment's first line is `- kind feature`, and otherwise bumps the highest version's patch number.
+- When `CHANGELOG.md` or `docs/changelog/` already holds a version, the version is not the one the fragment kinds give, which bumps the highest version's minor number and resets the patch number to zero when any fragment's first line starts with `- ` and its remaining text after `str.strip()` is `kind feature`, and otherwise bumps the highest version's patch number.
 - The clone is shallow, or no commit added a fragment that sits in `changes/`.
 - A real run has no `--notes-file`.
 - A real run cannot read the notes file as UTF-8 or finds no `Stable check: T3 Code <version> passed` record in it.
