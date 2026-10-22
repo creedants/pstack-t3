@@ -32,7 +32,7 @@ sys.exit(127)
 
 
 class HostGhGuard:
-    """Fail a test that reaches the gh shim with no stub of its own.
+    """Fail a test that reaches the gh shim with no stub of its own, and one whose stub wrote a call to the unanswered log.
 
     A test that rewrites PATH to drop the shim, or runs an absolute host path, is outside the guard.
     """
@@ -42,6 +42,7 @@ class HostGhGuard:
         self.directory = Path(base) / "host-gh-guard"
         self.script = self.directory / "bin" / "gh"
         self.log = self.directory / "calls"
+        self.unanswered = self.directory / "unanswered"
 
     def install(self):
         self.script.parent.mkdir(parents=True)
@@ -52,6 +53,7 @@ class HostGhGuard:
             log=str(self.log)))
         self.script.chmod(0o755)
         self.log.touch()
+        self.unanswered.touch()
         os.environ["PATH"] = str(self.script.parent) + os.pathsep + os.environ.get("PATH", "")
 
     def calls(self):
@@ -62,3 +64,10 @@ class HostGhGuard:
         if calls:
             raise AssertionError(
                 f"this {self.label} test called gh with no stub of its own; recorded calls: {calls}")
+
+    def assert_answered(self):
+        calls = [json.loads(line) for line in self.unanswered.read_text().splitlines() if line]
+        if calls:
+            raise AssertionError(
+                f"this {self.label} gh stub had no answer for {calls[0]}; "
+                f"unanswered calls: {calls}")

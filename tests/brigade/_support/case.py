@@ -34,6 +34,7 @@ class CaseBase:
         self.gh_guard = HostGhGuard(self.temporary.name, label="brigade")
         self.gh_guard.install()
         self.addCleanup(self.gh_guard.assert_unused)
+        self.addCleanup(self.gh_guard.assert_answered)
 
 
     def isolate_roles_config(self):
