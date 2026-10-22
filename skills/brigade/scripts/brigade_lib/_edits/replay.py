@@ -64,34 +64,42 @@ def occurrences(content, old):
     return found
 
 
+def character_offset(line, offset):
+    """The character offset in one line of text of the UTF-8 byte offset ast reports."""
+    return len(line.encode("utf-8")[:offset].decode("utf-8", "ignore"))
+
+
 def code_lines(source):
     """The file's lines once its comments and docstrings are blanked, or None when the source does not parse.
 
     A line that holds only a comment, or only a docstring, leaves an empty line, and empty lines are dropped. A line
-    that holds code too keeps it, with the spaces and tabs at its end removed.
+    that holds code too keeps it, with the whitespace at its end removed.
     """
     try:
-        tree = ast.parse(source)
-        tokens = list(tokenize.tokenize(io.BytesIO(source).readline))
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(source).readline)
+        text = source.decode(encoding)
+        tree = ast.parse(text)
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
     except (SyntaxError, ValueError, UnicodeDecodeError, tokenize.TokenError):
         return None
-    blanked = bytearray(source)
-    starts = [0]
-    for line in source.split(b"\n")[:-1]:
-        starts.append(starts[-1] + len(line) + 1)
+    lines = text.split("\n")
     spans = [(token.start, token.end) for token in tokens if token.type == tokenize.COMMENT]
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not node.body:
             continue
         first = node.body[0]
         if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
-            spans.append(((first.lineno, first.col_offset), (first.end_lineno, first.end_col_offset)))
-    for (row, column), (end_row, end_column) in spans:
-        for at in range(starts[row - 1] + column, starts[end_row - 1] + end_column):
-            if blanked[at] not in b"\r\n":
-                blanked[at] = 32
-    lines = [line.rstrip(b" \t") for line in bytes(blanked).split(b"\n")]
-    return [line for line in lines if line]
+            spans.append(((first.lineno, character_offset(lines[first.lineno - 1], first.col_offset)),
+                          (first.end_lineno, character_offset(lines[first.end_lineno - 1], first.end_col_offset))))
+    blanked = list(lines)
+    for (row, at), (end_row, end) in spans:
+        for number in range(row, end_row + 1):
+            line = blanked[number - 1]
+            first = at if number == row else 0
+            last = end if number == end_row else len(line)
+            blanked[number - 1] = line[:first] + " " * (last - first) + line[last:]
+    kept = [line.rstrip() for line in blanked]
+    return [line for line in kept if line]
 
 
 def counted_lines(before, after, path):
