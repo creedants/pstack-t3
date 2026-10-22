@@ -15,6 +15,7 @@ from pathlib import Path
 
 from tests import in_process
 from tests.brigade.support import BrigadeTest, ProcessReason, SCRIPT, real_process, setUpModule
+from tests.landing._support.host_gh_guard import HostGhGuard
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "scripts/release.py"
@@ -191,6 +192,15 @@ class SetContextCapHelpTest(BrigadeTest):
 
 class ReleaseSectionsTest(unittest.TestCase):
     """The release bump and the changelog sections a store of fragments of every kind gives."""
+
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        before = os.environ["PATH"]
+        self.addCleanup(os.environ.__setitem__, "PATH", before)
+        self.gh_guard = HostGhGuard(scratch.name, label="brigade")
+        self.gh_guard.install()
+        self.addCleanup(self.gh_guard.assert_unused)
 
     @contextmanager
     def repository(self):

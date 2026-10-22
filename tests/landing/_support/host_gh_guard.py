@@ -32,12 +32,13 @@ sys.exit(127)
 
 
 class HostGhGuard:
-    """Fail a landing test that reaches the gh shim with no stub of its own.
+    """Fail a test that reaches the gh shim with no stub of its own.
 
     A test that rewrites PATH to drop the shim, or runs an absolute host path, is outside the guard.
     """
 
-    def __init__(self, base):
+    def __init__(self, base, label="landing"):
+        self.label = label
         self.directory = Path(base) / "host-gh-guard"
         self.script = self.directory / "bin" / "gh"
         self.log = self.directory / "calls"
@@ -60,4 +61,4 @@ class HostGhGuard:
         calls = self.calls()
         if calls:
             raise AssertionError(
-                f"this landing test called gh with no stub of its own; recorded calls: {calls}")
+                f"this {self.label} test called gh with no stub of its own; recorded calls: {calls}")
