@@ -1,0 +1,2 @@
+- kind polish
+- `CONTRIBUTING.md` adds the notes-file section refusal to the list of cases where `scripts/release.py` exits 1 before writing.
