@@ -82,7 +82,7 @@ git log --reverse --diff-filter=A --format= --name-only -- changes/
 
 To check the order by hand, read that log. Skip blank lines. Skip a path that is no longer a file. When the log lists a path more than once, the later line is the one that orders it.
 
-The script exits 1, names the fix, and changes nothing when one of these holds:
+The script exits 1 and changes nothing when one of these holds:
 
 - `CHANGELOG.md` or `changes/` has uncommitted changes.
 - `CHANGELOG.md` is missing or is a symlink.
