@@ -80,7 +80,7 @@ The script orders the fragments by the commit that added each one, and it orders
 git log --reverse --diff-filter=A --no-renames --no-show-signature -z --format=%x01 --name-only -- changes/
 ```
 
-The output is NUL-separated. A token of one `\x01` byte starts a commit, and the tokens after it are that commit's added paths under `changes/`, each with one leading newline the script removes. The script records only a path with one `/`, so `changes/<name>.md` and not a path in a subdirectory. When a commit adds more than one fragment, the script orders them by name.
+The output is NUL-separated. A token of one `\x01` byte starts a commit, and the tokens after it are that commit's added paths under `changes/`. The script removes at most one leading newline from a token. The script records only a path with one `/`, so `changes/<name>.md` and not a path in a subdirectory. When a commit adds more than one fragment, the script orders them by name.
 
 To check the order by hand, read this log. It drops `-z`, the marker format, `--no-renames`, and `--no-show-signature` from the command above. Without `--no-renames`, git prints a renamed path as a rename, and `--diff-filter=A` leaves that line out, so this form misses a fragment that a commit renamed.
 
