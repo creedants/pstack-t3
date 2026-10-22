@@ -42,10 +42,11 @@ def for_role(role, text):
 
 
 def house_rules(path):
-    """The house rules the file holds. A path that is not a file is refused by name, and no brief is written."""
-    if not path.is_file():
-        raise BrigadeError(f"{path} is missing; no brief was written")
-    return path.read_text()
+    """The house rules the file holds. A missing file is refused by name, and no brief is written."""
+    try:
+        return path.read_text()
+    except FileNotFoundError:
+        raise BrigadeError(f"{path} is missing; no brief was written") from None
 
 
 def role_sizes(text):
