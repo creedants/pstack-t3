@@ -181,7 +181,8 @@ class LandingTest(MergeBase, LandingTestBase):
             self.assertEqual(self.origin_files("landing/e3"), ["one", "outside", "three"])
             self.assertEqual(self.on_origin("rev-parse", "landing/e3^"), self.on_origin("rev-parse", "main"))
             self.assertEqual(self.listed(), ["L2 active r/D2: b.txt", "L3 submitted r/D3: lib/x.py"])
-            self.assertNotIn("pr close", (self.base / "gh-calls").read_text())
+            self.assertIn("pr close https://github.com/o/r/pull/10 --comment conflict with trunk",
+                          (self.base / "gh-calls").read_text())
             self.assertEqual(self.origin_log(), ["outside", "w1", "init"])
 
     def test_merge_mode_merges_nothing_and_rebuilds_both_passed_entries_when_trunk_gained_an_outside_commit_then_lands_both(self):

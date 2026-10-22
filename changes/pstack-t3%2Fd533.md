@@ -1,0 +1,3 @@
+- kind fix
+- `land.py prune` closes the open pull request and deletes the remote branch of every landed or bounced entry with a canonical branch still on the remote. A canonical branch names `landing/e<n>` or `landing/q<n>` with n in `[1-9][0-9]*` in ASCII and no leading zero. Any other branch is left alone. `--dry-run` prints one line per settled branch and acts on none
+- A failed branch delete keeps its warning unless `remote_branch_is_gone` says the branch is gone. A bounced entry stays bounced when its cleanup warns

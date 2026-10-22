@@ -4,7 +4,7 @@ import time
 from collections import namedtuple
 from landing_lib import seam
 from . import required
-from .forge import delete_queue_branch
+from .forge import _CLIENT_ABSENT_REF, delete_queue_branch, remote_branch_is_gone
 from .rollup import OBJECT_ID, PR_STATES, merge_blocker, merge_requested
 
 Line = namedtuple("Line", "entries stale tip")
@@ -69,15 +69,63 @@ def disarm_auto_merge(store, url, armed):
         return ""
     return (result.stderr or result.stdout or "gh pr merge --disable-auto failed").strip()
 
-def bounce_open_pr(store, ident, url, reason, armed):
-    """Bounce an open merge-mode PR. Disable auto-merge when it is on, and leave the PR open.
+def close_pr_with_reason(store, url, reason, state=""):
+    """Close an open PR with reason as a one-line comment. Returns (closed, warning).
 
-    A PR whose auto-merge stays on can still merge without the queue, so the queue pauses and keeps tracking it."""
+    A PR that is closed or merged is left as it is, which returns (False, ""). state is a state the
+    caller already read, and is read here when it is empty."""
+    if not url:
+        return False, ""
+    if not state:
+        try:
+            state = read_pr_state(store, url)[0]
+        except seam.Infrastructure as problem:
+            return False, f"could not read the state of {url}: {problem}"
+    if state != "OPEN":
+        return False, ""
+    closed = seam.gh("pr", "close", url, "--comment", " ".join(reason.split()), cwd=store.repo)
+    if closed.returncode != 0:
+        return False, f"could not close {url}: {(closed.stderr or closed.stdout or 'gh pr close failed').strip()}"
+    return True, ""
+
+def delete_landing_branch(store, branch, entry):
+    """Delete branch from the contract remote and drop its local copies. Returns (deleted, warning). A push that succeeds counts as deleted. For an entry with a pull request, a push that fails counts as deleted only when remote_branch_is_gone says the branch is gone. For an entry with no pull request, Git reporting an absent ref counts as deleted. An empty listing alone is not proof. An entry with no pull request never asks the forge. A local branch git cannot delete is named in warning."""
+    remote = store.contract["remote"]
+    pushed = seam.git_push(remote, "--delete", branch, cwd=store.repo)
+    if pushed.returncode == 0:
+        return True, seam.forget_local_branch(store, branch)
+    stderr = pushed.stderr or ""
+    if not entry["pr"]:
+        if _CLIENT_ABSENT_REF.search(stderr) is not None:
+            return True, seam.forget_local_branch(store, branch)
+        return False, f"could not delete {branch} from {remote}: {seam.git_reason(pushed.stderr)}"
+    if not remote_branch_is_gone(store, entry, branch, stderr):
+        return False, f"could not delete {branch} from {remote}: {seam.git_reason(pushed.stderr)}"
+    return True, seam.forget_local_branch(store, branch)
+
+def clean_bounced(store, entry, reason, state=""):
+    """Close the entry's PR with the reason, then delete its landing branch. Returns the warnings joined, or "".
+
+    Both steps run when one fails. Each failure prints one warning line. An already closed PR and a branch `remote_branch_is_gone` reports gone are not failures."""
+    warnings = []
+    for _done, warning in (close_pr_with_reason(store, entry["pr"], reason, state),
+                           delete_landing_branch(store, seam.human_branch(entry), entry)):
+        if warning:
+            warnings.append(warning)
+            print(f"warning: {warning}")
+    return " ".join(warnings)
+
+def bounce_open_pr(store, ident, url, reason, armed):
+    """Bounce an open merge-mode PR. Disable auto-merge when it is on, then close the PR and delete its branch.
+
+    When auto-merge cannot be disabled it raises and leaves the PR and the branch in place, because a PR whose
+    auto-merge stays on can still merge without the queue, so the queue pauses and keeps tracking it."""
     problem = disarm_auto_merge(store, url, armed)
     if problem:
         raise seam.AutoMergeStillEnabled(
             f"{reason}. Auto-merge is still enabled: {problem}. "
             f"Turn auto-merge off on {url}, then run land.py resume and land.py land")
+    clean_bounced(store, entry_row(store, ident), reason, "OPEN")
     with store.tx() as db:
         seam.settle_bounced(store, db, ident, reason)
 
@@ -177,8 +225,10 @@ def take_pr(store, entry, landed, bounced):
             raise seam.UncheckedTrunk(unchecked)
         return True
     if state == "CLOSED":
+        reason = "PR closed without merging"
+        clean_bounced(store, entry, reason, "CLOSED")
         with store.tx() as db:
-            seam.settle_bounced(store, db, entry["id"], "PR closed without merging")
+            seam.settle_bounced(store, db, entry["id"], reason)
         bounced.append(entry["id"])
         return True
     if state == "OPEN" and head and head != entry["candidate"]:
@@ -192,6 +242,7 @@ def poll(store, entry, out):
     if not entry["pr"]:
         reason = seam.foreign_author(store, entry)
         if reason:
+            clean_bounced(store, entry, reason)
             with store.tx() as db:
                 seam.settle_bounced(store, db, entry["id"], reason)
             out.bounced.append(entry["id"])

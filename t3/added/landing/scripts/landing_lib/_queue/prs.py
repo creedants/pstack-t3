@@ -2,7 +2,7 @@ import os
 import subprocess
 from collections import namedtuple
 from landing_lib import seam
-from .entries import forget_absent, settle_bounced, settle_landed
+from .entries import clean_bounced, forget_absent, settle_bounced, settle_landed
 
 def gh(*args, cwd):
     return subprocess.run([os.environ.get("LAND_GH", "gh"), *args], cwd=cwd, capture_output=True, text=True)
@@ -19,6 +19,8 @@ def build(store, integration, entry, onto, trunk, out):
     if reason == "already-in-trunk" and not seam.same_tree(store.repo, onto, trunk):
         return onto
     if reason:
+        if reason != "already-in-trunk":
+            clean_bounced(store, entry, reason)
         with store.tx() as db:
             if reason == "already-in-trunk":
                 settle_landed(store, db, ident, trunk, "already in trunk")
