@@ -43,6 +43,8 @@ The maintainers keep a byte-identical copy of the pinned upstream commit and re-
 
 Start with [1. Install (two minutes)](docs/guide.md#1-install-two-minutes).
 
+New to coordinators? Start with [your first coordinator in about 20 minutes](docs/first-coordinator.md) to land one change on a throwaway repository.
+
 See [all 61 skills and every playbook](docs/skills.md).
 
 pstack is by [Lauren Tan (poteto)](https://x.com/poteto). MIT licensed. See [LICENSE](LICENSE).
