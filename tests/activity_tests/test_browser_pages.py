@@ -212,7 +212,11 @@ class LiveAttemptFoldTest(BrowserCase):
 class ProbeSkipTest(unittest.TestCase):
     def test_a_missed_probe_skips_once_locally_on_every_os_and_retries_and_fails_under_ci(self):
         calls = []
-        miss = lambda _directory, timeout=None: calls.append(os.environ.get("CI", "")) or (None, ["stub missed"])
+        timeouts = []
+        def miss(_directory, timeout=None):
+            calls.append(os.environ.get("CI", ""))
+            timeouts.append(timeout)
+            return (None, ["stub missed"])
         subjects = (
             (RenderHeightTest, "test_height_of_each_page_drawn_at_390_pixels_is_not_above_the_height_the_model_reserves_or_the_frame"),
             (LiveAttemptFoldTest, "test_live_fold_script_on_the_static_document_shows_earlier_rows_when_attempt_details_open_and_hides_them_on_close"),
@@ -223,5 +227,7 @@ class ProbeSkipTest(unittest.TestCase):
                 for ci, macos, tries, failed in cases:
                     with self.subTest(subject=subject.__name__, ci=ci, macos=macos), mock.patch.dict(os.environ, {"CI": ci}), mock.patch(f"{__name__}.MACOS", macos):
                         calls.clear()
+                        timeouts.clear()
                         result = unittest.TextTestRunner(stream=io.StringIO()).run(subject(method))
                         self.assertEqual((calls[:], "no working headless browser: stub missed" in (result.failures or result.skipped)[0][1], bool(result.failures), bool(result.skipped)), ([ci] * tries, True, failed, not failed))
+                        self.assertEqual(timeouts[0], DARWIN_PROBE_TIMEOUT if macos else PROBE_TIMEOUT)
