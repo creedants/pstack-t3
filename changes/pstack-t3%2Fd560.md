@@ -1,2 +1,2 @@
 - kind polish
-- brigade `CaseBase` and `ReleaseSectionsTest` in `tests/test_brigade.py` install `HostGhGuard` from `tests/landing/_support/host_gh_guard.py`, which fails a brigade test that reaches `gh` with no stub of its own and runs no host `gh`
+- brigade `CaseBase` installs `HostGhGuard` from `tests/landing/_support/host_gh_guard.py`, so a brigade case test that reaches `gh` with no stub of its own fails with the guard's message and runs no host `gh`
