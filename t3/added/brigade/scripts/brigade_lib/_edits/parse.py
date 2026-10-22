@@ -1,3 +1,4 @@
+import difflib
 import posixpath
 import re
 from dataclasses import dataclass
@@ -13,6 +14,10 @@ LABELS = {"Old text:": "old", "New text:": "new"}
 # The marks edit_mark gives the five parts of one edit that one_edit reads, in the only order it reads them.
 EDIT_MARKS = ["file", "old", "fence", "new", "fence"]
 BLANK = re.compile(r"[ \t]*")
+# The end of a path whose edits are wording, which a report may change past the cap.
+WORDING_SUFFIX = ".md"
+# The most lines a report that names any other file may change.
+SMALL_FIX_LINES = 20
 # What a block quote, a list item, and indentation put in front of a line's text.
 NESTED = re.compile(r"[ \t]*(?:(?:>|(?:[-+*]|[0-9]{1,9}[.)])(?=[ \t]))[ \t]*)*")
 UNDERLINE = re.compile(NESTED.pattern + r"(?:=+|-+)[ \t]*")
@@ -52,6 +57,8 @@ EDITS_REFUSED = {
               "the fenced block below it must be empty or only spaces and tabs"),
     "empty": ": Edit {number} has an empty old text",
     "path": ": Edit {number} names {path}; a path is relative to the repository and has no .. part",
+    "cap": (": its edits change {count} lines; a report whose edits name a file whose path does not end in .md changes "
+            "at most {cap} lines in total, counting a deleted or inserted line as one and a replaced line as two"),
 }
 
 
@@ -164,6 +171,18 @@ def one_edit(number, parts):
     return Edit(number, posixpath.normpath(path), old, new)
 
 
+def changed_lines(old, new):
+    """The number of lines one edit changes.
+
+    Counts, for each run of lines difflib.SequenceMatcher does not match, the lines it deletes from the old text and
+    the lines it inserts into the new text, so a replaced line counts two. Both texts are split with str.splitlines,
+    so an empty new text holds no line.
+    """
+    return sum((a2 - a1) + (b2 - b1) for tag, a1, a2, b1, b2 in
+               difflib.SequenceMatcher(None, old.splitlines(), new.splitlines(), autojunk=False).get_opcodes()
+               if tag != "equal")
+
+
 def parse_edits(text):
     """The edits of a review report's `## Edits` section, in the report's order.
 
@@ -174,7 +193,8 @@ def parse_edits(text):
     Raises EditsRefused for a carriage return, for a NUL character, for a byte order mark as the first character,
     for what report_parts refuses, for a second heading whose text is `Edits`, for any other heading in the section,
     for a fence in the section above its first edit, for a section with no edit, and for the first edit that one_edit
-    refuses.
+    refuses, and for a report whose edits change more than 20 lines when one of them names a file whose path does not end
+    in .md
     """
     for key, found in (("return", "\r" in text), ("nul", "\0" in text), ("mark", text.startswith("\ufeff"))):
         if found:
@@ -200,7 +220,12 @@ def parse_edits(text):
                 raise EditsRefused(EDITS_REFUSED["above"].format(line=number))
     if not edits:
         raise EditsRefused(EDITS_REFUSED["none"])
-    return tuple(one_edit(number, parts) for number, parts in edits)
+    edits = tuple(one_edit(number, parts) for number, parts in edits)
+    if any(not edit.path.lower().endswith(WORDING_SUFFIX) for edit in edits):
+        count = sum(changed_lines(edit.old, edit.new) for edit in edits)
+        if count > SMALL_FIX_LINES:
+            raise EditsRefused(EDITS_REFUSED["cap"].format(count=count, cap=SMALL_FIX_LINES))
+    return edits
 
 
 def report_edits(restaurant, name):
