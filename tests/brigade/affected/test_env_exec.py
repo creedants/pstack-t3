@@ -11,7 +11,7 @@ class AffectedEnvExecTest(AffectedBase):
         self.write("tests/test_a.py", "def test_a():\n    pass\n")
         self.track()
         probe = "python3 -c \"import os; print(os.environ.get('PSTACK_TEST_REAL_PROCESS'))\""
-        self.restaurant(self.project, layout=dict(LAYOUT, suite=probe))
+        self.restaurant(self.project, layout=dict(LAYOUT, suite=probe, env={"PSTACK_TEST_REAL_PROCESS": "2"}))
         out = self.affected("--paths", "README.md")
         marker = "slot --slots 2 -- "
         start = out.index(marker) + len(marker)
@@ -19,4 +19,4 @@ class AffectedEnvExecTest(AffectedBase):
         args = shlex.split(printed)
         proc = subprocess.run(args, capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stdout.strip(), "1")
+        self.assertEqual(proc.stdout.strip(), "2")
