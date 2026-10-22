@@ -134,7 +134,7 @@ class CiJobsMixin:
             macos = jobs[f"macos_312_{index}"]
             self.assertEqual(macos["name"], f"macOS (3.12, {index}/4)")
             self.assertEqual(macos["runs-on"], "macos-latest")
-            self.assertEqual(macos["if"], "github.event_name == 'push'")
+            self.assertEqual(macos.get("if"), "github.event_name == 'push'", "macos if pins the push-only rule.")
             self.assertNotIn("strategy", macos)
             self.assertNotIn("needs", macos)
             self.assertNotIn("env", macos)
@@ -196,7 +196,8 @@ class CiJobsMixin:
             self.assertEqual(lines[start + 1], "  group: ${{ github.workflow }}-${{ github.ref }}")
             self.assertEqual(lines[start + 2], "  cancel-in-progress: true")
             return
-        block = yaml.safe_load(text)["concurrency"]
-        self.assertEqual(block["group"], "${{ github.workflow }}-${{ github.ref }}")
-        self.assertIs(block["cancel-in-progress"], True)
+        block = yaml.safe_load(text).get("concurrency")
+        self.assertIsNotNone(block, "concurrency pins the group and the cancel setting.")
+        self.assertEqual(block["group"], "${{ github.workflow }}-${{ github.ref }}", "concurrency group pins the workflow and ref.")
+        self.assertIs(block["cancel-in-progress"], True, "cancel-in-progress pins true.")
 
