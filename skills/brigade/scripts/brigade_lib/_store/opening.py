@@ -181,8 +181,8 @@ SETTLED_ENTRIES = ("landed", "bounced")
 def _rename_request(args):
     """The project root, old name, new name, and owner one open --rename works from, or a refusal.
 
-    It refuses the executive admin, a missing --name, --intake, --workers, --mode, --context-cap,
-    and --coordinator-provider.
+    It refuses the executive admin, a missing --name, a new name whose slug is empty or equals --name's,
+    and --intake, --workers, --mode, --context-cap, and --coordinator-provider.
     """
     if args.admin:
         raise BrigadeError("open --rename renames a coordinator; the executive admin keeps its directory")
