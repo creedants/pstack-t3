@@ -74,13 +74,21 @@ python3 scripts/release.py X.Y.Z --notes-file <release notes file>
 5. Commit `CHANGELOG.md` and the deleted fragments in one commit. Tag `vX.Y.Z` on the commit that lands on main, and push the tag.
 6. Run `gh release create vX.Y.Z --notes-file <that changelog section>`.
 
-The script orders the fragments by the commit that added each one. It reads this log with `--no-renames` added, and it orders the fragments that one commit added by name.
+The script orders the fragments by the commit that added each one, and it orders the fragments that one commit added by name. It reads the output of this command.
+
+```bash
+git log --reverse --diff-filter=A --no-renames --no-show-signature -z --format=%x01 --name-only -- changes/
+```
+
+The output is NUL-separated. A token of one `\x01` byte starts a commit, and the tokens after it are that commit's added paths under `changes/`, each with one leading newline the script removes. The script records only a path with one `/`, so `changes/<name>.md` and not a path in a subdirectory. When a commit adds more than one fragment, the script orders them by name.
+
+To check the order by hand, read this log. It drops `-z`, the marker format, `--no-renames`, and `--no-show-signature` from the command above. Without `--no-renames`, git prints a renamed path as a rename, and `--diff-filter=A` leaves that line out, so this form misses a fragment that a commit renamed.
 
 ```bash
 git log --reverse --diff-filter=A --format= --name-only -- changes/
 ```
 
-To check the order by hand, read that log. Skip blank lines. Skip a path that is no longer a file. When the log lists a path more than once, the later line is the one that orders it.
+Skip blank lines. Skip a path that is no longer a file. When the log lists a path more than once, the later line is the one that orders it.
 
 The script exits 1 and changes nothing when one of these holds:
 
