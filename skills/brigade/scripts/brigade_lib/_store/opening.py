@@ -330,6 +330,9 @@ def rename_restaurant(root, args):
         meta = store.meta
         blocks = [f"{row['id']} is {row['state']}; finish or drop it first"
                   for row in store.rows("dishes.tsv") if row["state"] not in SETTLED_DISHES]
+        reports_to = (meta.get("reportsTo") or "").strip()
+        if reports_to:
+            blocks.append(f"reports to {reports_to}; clear it first")
         blocks.extend(_own_handoff_blocks(store.rows("rail.tsv")))
         blocks.extend(references)
         prefix = holder_prefix(meta)
@@ -346,13 +349,10 @@ def rename_restaurant(root, args):
                 meta = store.change_meta(restaurant=new_name)
             _restate_headings(store, (before, name), new_name)
             try:
-                target.mkdir()
-            except FileExistsError:
-                raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename") from None
-            try:
                 directory.rename(target)
-            except OSError:
-                target.rmdir()
+            except OSError as error:
+                if target.exists():
+                    raise BrigadeError(refused + f"{target} already holds a coordinator; pick another --rename") from None
                 raise
         except BaseException as error:
             _restore(directory, prior)

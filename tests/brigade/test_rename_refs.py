@@ -2,7 +2,7 @@ from .support import BrigadeTest, Path, SCRIPT, call_in_process, json, mock, run
 
 
 class RenameReferenceTest(BrigadeTest):
-    """A rename is refused while an executive admin request, a handoff, or another project root names the store."""
+    """A rename is refused while it reports to the executive admin, while an executive admin request, a handoff, or another project root names the store."""
 
     def rename(self, new="Speed", project_root=None, **kwargs):
         return self.brigade("open", "--project-root", str(project_root or self.project), "--name", "Perf",
@@ -44,6 +44,15 @@ class RenameReferenceTest(BrigadeTest):
         self.assertEqual(self.store_files(), store)
         self.assertFalse((self.at.parent / "speed").exists())
 
+    def test_rename_refuses_a_coordinator_that_reports_to_the_executive_admin(self):
+        self.open()
+        self.brigade("set", "--reports-to", "admin-thread-1")
+        store = self.store_files()
+        error = self.rename(code=1)
+        self.assertIn("reports to admin-thread-1", error)
+        self.assertEqual(self.store_files(), store)
+        self.assertFalse((self.at.parent / "speed").exists())
+
     def test_rename_refuses_a_ticket_it_handed_to_a_sibling(self):
         self.open()
         self.open_sibling("docs")
@@ -78,6 +87,20 @@ class RenameReferenceTest(BrigadeTest):
         error = self.rename(code=1)
         self.assertIn("T1 in docs is moved to perf", error)
         self.assertEqual(self.store_files(), store)
+        self.assertFalse((self.at.parent / "speed").exists())
+
+    def test_rename_refuses_a_ticket_it_took_from_a_sibling(self):
+        self.open()
+        self.open_sibling("docs")
+        self.run_at(self.at.parent / "docs", "ticket", "add", "--kind", "fix", "--summary", "two")
+        self.run_at(self.at.parent / "docs", "ticket", "move", "T1", "--to", "perf")
+        self.brigade("ticket", "take")
+        store = self.store_files()
+        sibling = self.files(self.at.parent / "docs")
+        error = self.rename(code=1)
+        self.assertIn("came from bridge-kit/docs/T1", error)
+        self.assertEqual(self.store_files(), store)
+        self.assertEqual(self.files(self.at.parent / "docs"), sibling)
         self.assertFalse((self.at.parent / "speed").exists())
 
     def test_rename_refuses_a_project_root_the_store_does_not_record(self):

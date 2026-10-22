@@ -1,3 +1,3 @@
 - kind feature
-- `brigade.py open --rename` rewrites a restaurant's stored name and its two heading lines, then moves the store to the new name's path; it refuses while an executive admin request, a rail handoff, a dish that is not merged or dropped, a landing lease, reservation, or queue entry under its holder prefix, a project root that is not the one recorded, or an existing target blocks it.
+- `brigade.py open --rename` rewrites a restaurant's stored name and its two heading lines, then moves the store to the new name's path; it refuses while it reports to the executive admin, while an executive admin request, a rail handoff, a dish that is not merged or dropped, a landing lease, reservation, or queue entry under its holder prefix, a project root that is not the one recorded, or an existing target blocks it.
 - Onboard reads an HTTP 404 from the branch protection read as unprotected with no required checks.
