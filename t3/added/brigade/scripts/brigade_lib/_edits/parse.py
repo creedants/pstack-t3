@@ -221,7 +221,7 @@ def parse_edits(text):
     if not edits:
         raise EditsRefused(EDITS_REFUSED["none"])
     edits = tuple(one_edit(number, parts) for number, parts in edits)
-    if any(not edit.path.lower().endswith(WORDING_SUFFIX) for edit in edits):
+    if any(not edit.path.endswith(WORDING_SUFFIX) for edit in edits):
         count = sum(changed_lines(edit.old, edit.new) for edit in edits)
         if count > SMALL_FIX_LINES:
             raise EditsRefused(EDITS_REFUSED["cap"].format(count=count, cap=SMALL_FIX_LINES))
