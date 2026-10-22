@@ -197,7 +197,7 @@ class CiJobsMixin:
             self.assertEqual(lines[start + 2], "  cancel-in-progress: true")
             return
         block = yaml.safe_load(text).get("concurrency")
-        self.assertIsNotNone(block, "concurrency pins the group and the cancel setting.")
+        self.assertIsNotNone(block, "concurrency block is present.")
         self.assertEqual(block["group"], "${{ github.workflow }}-${{ github.ref }}", "concurrency group pins the workflow and ref.")
         self.assertIs(block["cancel-in-progress"], True, "cancel-in-progress pins true.")
 
