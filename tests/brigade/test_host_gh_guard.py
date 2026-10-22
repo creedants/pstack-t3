@@ -1,6 +1,6 @@
 """The host-gh guard as a brigade case installs it, run through a nested case for its setup, cleanup, and PATH."""
 
-from .support import CaseBase, setUpModule
+from .support import CaseBase, LandingFlows, setUpModule
 
 import os
 import subprocess
@@ -10,13 +10,13 @@ from pathlib import Path
 from unittest import mock
 
 
-def run_case(body):
-    """Run body as the one test of a brigade case, and return that case's result.
+def run_case(body, bases=(CaseBase,)):
+    """Run body as the one test of a case over bases, and return that case's result.
 
     The case class is built inside this function, so module discovery collects no case that has no stub of its own.
     """
 
-    class Nested(CaseBase, unittest.TestCase):
+    class Nested(*bases, unittest.TestCase):
         def test_nested(self):
             body(self)
 
@@ -56,6 +56,17 @@ class BrigadeHostGhGuardTest(unittest.TestCase):
 
         result = run_case(body)
         self.assertEqual((result.failures, result.errors), ([], []))
+
+    def test_a_landing_case_whose_stub_has_no_answer_fails_at_cleanup_even_when_the_test_accepts_the_nonzero_exit(self):
+        def body(case):
+            result = subprocess.run(["gh", "pr", "list"], capture_output=True, text=True, env=case.land_env())
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(case.gh_guard.calls(), [])
+
+        result = run_case(body, (CaseBase, LandingFlows))
+        self.assertEqual(result.errors, [])
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("this brigade gh stub had no answer for ['pr', 'list']", self.failure_text(result))
 
 
 if __name__ == "__main__":
