@@ -43,6 +43,14 @@ class OnboardDetectTest(BrigadeTest):
         self.assertEqual(found["facts"]["models"], {"state": "missing", "value": "", "fix": "run setup-pstack"})
         self.assertEqual(found["missing"], ["restaurant", "mode", "models", "intake", "change_note_dir", "landing_mode"])
 
+    def test_onboard_reports_no_test_command_when_only_this_repository_script_exists(self):
+        self.git_project()
+        (self.project / "scripts").mkdir()
+        (self.project / "scripts" / "run_tests.py").write_text("")
+        found = self.detect()
+        self.assertEqual(found["facts"]["check_command"]["state"], "missing")
+        self.assertIn("check_command", found["missing"])
+
     def test_global_at_selects_the_existing_store(self):
         self.open()
         self.brigade("set", "--mode", "full")

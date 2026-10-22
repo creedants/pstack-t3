@@ -75,6 +75,15 @@ class OpenMixin:
         self.assertIn("only through the repository's landing queue", (self.at / "house-rules.md").read_text())
         self.assertIn("Never use them in replies", (self.at / "house-rules.md").read_text())
 
+    def test_a_new_store_house_rules_hold_no_pstack_t3_path_or_test_rule(self):
+        self.open()
+        text = (self.at / "house-rules.md").read_text()
+        for absent in ("run_tests.py", "scripts/build.py", "pstack-t3", "CHANGELOG.md"):
+            with self.subTest(absent=absent):
+                self.assertNotIn(absent, text)
+        self.assertIn("1. Write in plain engineering prose.", text)
+        self.assertIn("2. Work lands only through the repository's landing queue", text)
+
     def test_open_mode_records_light_and_set_mode_clears_it(self):
         self.assertEqual(self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--mode", "light"),
                          f"opened {self.at}")

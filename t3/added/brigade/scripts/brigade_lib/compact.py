@@ -109,9 +109,10 @@ def existing_cap(project_root):
 def drift_line(meta):
     """The one line naming a settings file that does not hold the effective cap, or None when it does.
 
-    None covers a provider that does not read as claude and a file that already holds the effective cap.
+    None covers a store that records no contextCap, a provider that does not read as claude, and a file that already
+    holds the effective cap.
     """
-    if effective_provider(meta) != "claude":
+    if "contextCap" not in meta or effective_provider(meta) != "claude":
         return None
     cap = effective_cap(meta)
     path = settings_path(meta["projectRoot"])
@@ -277,8 +278,8 @@ def _with_cap(text, cap):
 def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
 
-    Only two callers reach this. Creation with --context-cap, creation without --context-cap over a file that holds no
-    integer cap, and set --context-cap. Every other path leaves the settings file alone.
+    Only two callers reach this. Creation with --context-cap or --coordinator-provider, and set --context-cap. Every
+    other path leaves the settings file alone.
 
     A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
     resolved file that either lookup in _git_refusal reports as tracked or unreadable, and a git command that cannot
@@ -313,10 +314,12 @@ def _drift(path, cap):
 
 
 def status_lines(meta):
-    """At most one status line for the cap. An empty list means the file matches."""
+    """At most one status line for the cap. An empty list means no cap is recorded or the file matches."""
     cap = effective_cap(meta)
     if effective_provider(meta) != "claude":
         return [f"context cap {cap} is not enforced on this host"]
+    if "contextCap" not in meta:
+        return []
     path = settings_path(meta["projectRoot"])
     try:
         raw = path.read_bytes()

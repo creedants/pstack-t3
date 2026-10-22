@@ -4,7 +4,7 @@ from pathlib import Path
 from brigade_lib import seam
 from brigade_lib._store.restaurant import Restaurant
 from brigade_lib._store.vocab import ADMIN_DIR, ADMIN_NAME, TABLES
-from brigade_lib.compact import effective_provider, existing_cap, sync_meta
+from brigade_lib.compact import effective_provider, sync_meta
 from brigade_lib.shared import BrigadeError, slug
 
 MENU = """# Menu: {restaurant}
@@ -49,19 +49,6 @@ Paste these into every brief verbatim.
 
 1. Write in plain engineering prose. brigade's kitchen terms name its files and commands only. Never use them in replies, reports, commits, or PRs.
 2. Work lands only through the repository's landing queue (the landing skill). Workers never merge, rebase shared branches, or push trunk.
-
-- You may write the change yourself when it changes one file outside tests, the added and removed lines outside tests are about 40 or fewer across the whole item, and the contract does not call its guarantee safety, privacy, or integrity. Count those lines from `git diff --numstat` against the item's base commit, quote that output in the report, and treat every round and commit as one diff. Past that size, or more than one file outside tests, the code delegate writes the change. The claims check and the gate review are never skipped.
-
-1. A test earns its place when it fails for a defect that no other check reports; name that defect in the test name.
-2. A test that pins a reviewed defect stays; remove it only with a mutation that shows another check fails for the same change.
-3. Use a rule in the project's static check, when it has one, when the property is visible in the text or the tree without running the code, with one passing and one failing fixture test.
-4. Use a test when the property is behavior: exit codes, written files, ordering, refusals.
-5. Call the command in the test process through the project's in-process test helper, when it has one; start a process only for a race, a signal, exit status, the environment, or help output, and say which.
-6. Never assert a library's own wording.
-7. Add a case to an existing table when the setup is the same.
-8. A test that sleeps to order two processes names the review finding it pins.
-9. Do not add a test for what the project's build already refuses.
-10. The reviewer asks of each new test: which change to the code makes this fail and nothing else fail?
 """
 
 
@@ -169,19 +156,12 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         meta["coordinatorProvider"] = coordinator_provider
     if admin:
         meta["role"] = "admin"
-    # A refused settings write happens before the store is published, so it leaves no store behind and claims no intake.
-    if effective_provider(meta) == "claude":
-        # Creation without --context-cap adopts an integer cap the user already set and writes nothing.
-        # Creation with --context-cap, and creation with no integer cap in the file, writes it.
-        held = existing_cap(meta["projectRoot"]) if context_cap is None else None
-        if held is not None:
-            meta["contextCap"] = held
-        else:
-            try:
-                sync_meta(meta)
-            except BrigadeError:
-                directory.rmdir()
-                raise
+    if (context_cap is not None or coordinator_provider is not None) and effective_provider(meta) == "claude":
+        try:
+            sync_meta(meta)
+        except BrigadeError:
+            directory.rmdir()
+            raise
     for filename, template in (("menu.md", ADMIN_MENU if admin else MENU), ("house-rules.md", HOUSE_RULES)):
         seam.write_atomic(directory / filename, template.format(restaurant=name))
     for table in TABLES:
