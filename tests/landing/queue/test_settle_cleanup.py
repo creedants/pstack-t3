@@ -88,7 +88,7 @@ os.execv({real_git!r}, [{real_git!r}, *args])
         self.assertTrue(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
         self.assertIn("E1 bounced", self.land("status", "E1"))
 
-    def test_a_refused_delete_with_an_empty_listing_still_warns(self):
+    def test_a_refused_delete_still_warns(self):
         with self.fake_gh():
             hook = self.base / "origin.git" / "hooks" / "pre-receive"
             hook.write_text("#!/bin/sh\nwhile read old new ref; do\nif [ \"$ref\" = \"refs/heads/landing/e1\" ] && [ \"$new\" = \"0000000000000000000000000000000000000000\" ]; then\necho refusing >&2\nexit 1\nfi\ndone\nexit 0\n")
