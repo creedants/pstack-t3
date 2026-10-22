@@ -2,7 +2,7 @@ from ..support import os
 
 class EditsStatusMixin:
     def test_status_reports_a_drifted_missing_or_broken_settings_file(self):
-        self.open()
+        self.open_cap()
         clean = ("thread not recorded\nreporting: milestones, no landing contract\n"
                  "workers: 0 of 2 running, 2 idle, auto-start: normal\n"
                  "liveness: every 600000 ms (default for milestones)")
@@ -125,7 +125,7 @@ class EditsStatusMixin:
     def test_status_reports_an_unreadable_settings_file(self):
         if os.geteuid() == 0:
             self.skipTest("root reads through file permissions")
-        self.open()
+        self.open_cap()
         self.settings().chmod(0o000)
         try:
             drift = (f"{self.settings()} needs autoCompactWindow 300000; "

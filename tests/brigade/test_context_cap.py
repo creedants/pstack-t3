@@ -38,6 +38,10 @@ class ContextCapTest(BrigadeTest, CapOpenMixin, CapSetMixin, TrackedSettingsMixi
     def open(self, *extra, ok=True, code=None):
         return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, ok=ok, code=code)
 
+    def open_cap(self, *extra, ok=True, code=None):
+        """A creation that passes the cap, for a test whose point is the settings write."""
+        return self.open("--context-cap", "300000", *extra, ok=ok, code=code)
+
     def edits_store_with_settings(self, settings):
         """The edits fixture with .claude/settings.local.json in every commit and a coordinator that writes no file."""
         self.git_project()
@@ -87,7 +91,7 @@ class ContextCapTest(BrigadeTest, CapOpenMixin, CapSetMixin, TrackedSettingsMixi
         """A local landing contract and a store that records the thread t1."""
         self.init_landing()
         self.landing_env()
-        self.brigade("open", "--project-root", str(self.project), "--name", "Perf")
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--context-cap", "300000")
         self.brigade("set", "--thread", "t1")
 
     def store_a_cap_that_is_not_a_whole_number(self):

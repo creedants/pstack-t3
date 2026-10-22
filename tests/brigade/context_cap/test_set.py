@@ -9,14 +9,14 @@ class CapSetMixin:
         self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 120000\n}\n')
 
     def test_set_keeps_every_other_settings_key(self):
-        self.open()
+        self.open_cap()
         self.settings().write_text('{\n  "other": true,\n  "autoCompactWindow": 300000\n}\n')
         self.brigade("set", "--context-cap", "80000")
         self.assertEqual(self.settings().read_text(),
                          '{\n  "other": true,\n  "autoCompactWindow": 80000\n}\n')
 
     def test_set_updates_the_cap_without_rewriting_the_numbers_around_it(self):
-        self.open()
+        self.open_cap()
         self.settings().write_text('{\n  "overflow": 1e400,\n  "rounded": 1.0000000000000001,\n'
                                    '  "autoCompactWindow": 300000\n}\n')
         self.brigade("set", "--context-cap", "80000")
@@ -44,7 +44,7 @@ class CapSetMixin:
         self.assertEqual(self.settings().read_text(), '{\n  "autoCompactWindow": 50000\n}\n')
 
     def test_set_refuses_a_non_integer_cap_and_changes_nothing(self):
-        self.open()
+        self.open_cap()
         before = (self.at / "restaurant.json").read_bytes()
         error = self.brigade("set", "--context-cap", "abc", code=1)
         self.assertEqual(error, "brigade: --context-cap takes an integer of at least 50000, got 'abc'")
@@ -78,6 +78,7 @@ class CapSetMixin:
 
     def test_set_refuses_a_tracked_settings_file_and_changes_nothing(self):
         self.git_project()
+        self.write_settings('{\n  "autoCompactWindow": 300000\n}\n')
         self.open()
         before = self.settings().read_bytes()
         subprocess.run(["git", "-C", str(self.project), "add", ".claude/settings.local.json"], check=True,
@@ -113,7 +114,7 @@ class CapSetMixin:
         for text in ('{\n  "keep": NaN\n}\n', '{\n  "keep": Infinity\n}\n', '{\n  "keep": -Infinity\n}\n'):
             with self.subTest(text=text):
                 self.write_settings(text)
-                self.assertEqual(self.open(code=1),
+                self.assertEqual(self.open_cap(code=1),
                                  f"brigade: {self.settings()} holds invalid JSON; fix or remove it")
                 self.assertEqual(self.settings().read_text(), text)
                 self.assertFalse(self.at.exists())

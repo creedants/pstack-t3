@@ -19,7 +19,7 @@ class SetupBoundaryTest(BrigadeTest):
         return self.brigade("open", "--project-root", str(self.project), "--name", "Perf", *extra, **kwargs)
 
     def test_reopen_refuses_a_malformed_caps_and_writes_nothing(self):
-        self.open()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--context-cap", "300000")
         self.write_meta(caps="polish=1")
         self.settings().unlink()
         store = self.store_files()
@@ -29,7 +29,7 @@ class SetupBoundaryTest(BrigadeTest):
         self.assertFalse(self.settings().exists())
 
     def test_reopen_refuses_a_malformed_review_entry_and_writes_nothing(self):
-        self.open()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--context-cap", "300000")
         self.write_meta(review={"fix": "fullish"})
         self.settings().unlink()
         store = self.store_files()
@@ -50,7 +50,7 @@ class SetupBoundaryTest(BrigadeTest):
         self.assertFalse(self.settings().exists())
 
     def test_set_refuses_a_malformed_context_cap_while_changing_the_provider(self):
-        self.open()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--context-cap", "300000")
         self.write_meta(contextCap="400000")
         store, settings = self.store_files(), self.settings().read_bytes()
         error = self.brigade("set", "--coordinator-provider", "other", code=1)
@@ -60,7 +60,7 @@ class SetupBoundaryTest(BrigadeTest):
         self.assertEqual(self.settings().read_bytes(), settings)
 
     def test_set_refuses_a_malformed_coordinator_provider_while_changing_the_reporting(self):
-        self.open()
+        self.brigade("open", "--project-root", str(self.project), "--name", "Perf", "--context-cap", "300000")
         self.write_meta(coordinatorProvider="vm")
         store, settings = self.store_files(), self.settings().read_bytes()
         error = self.brigade("set", "--reporting", "digest", code=1)

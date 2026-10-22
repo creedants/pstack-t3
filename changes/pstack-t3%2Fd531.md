@@ -1,0 +1,2 @@
+- kind fix
+- `brigade.py open` writes nothing under the project root unless it passes `--context-cap` or `--coordinator-provider`, and brigade's shipped docs and templates name the repository's own hot files and test command rather than pstack-t3's.
