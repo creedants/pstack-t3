@@ -30,10 +30,12 @@ class BareItemsMixin:
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Correctness: Fix a.\n---\n- Safety: Fix b.\n", "--dry-run").splitlines(), [
             "would add from perf/reports/D1.md#1: Correctness: Fix a.",
             "not filed, D1.md takes one ticket per item: Safety: Fix b.",
+            "would note perf/reports/D1.md#2, no tracked path: Safety: Fix b.",
         ])
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\nCorrectness: Reword the gate.\n\n---\n\nSafety: Name the file.\n", "--dry-run").splitlines(), [
             "would add from perf/reports/D1.md#1: Correctness: Reword the gate.",
             "not filed, D1.md takes one ticket per item: Safety: Name the file.",
+            "would note perf/reports/D1.md#2, no tracked path: Safety: Name the file.",
         ])
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Correctness: Run it.\n\n```\n---\n```\n", "--dry-run").splitlines(), [
             "would add from perf/reports/D1.md#1: Correctness: Run it. ``` --- ```",

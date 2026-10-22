@@ -28,7 +28,9 @@ class FromReportMixin:
         self.assertEqual(self.follow_ups_in(BULLETS).splitlines(), [
             f"T2 added from perf/reports/D1.md#1: {first}",
             "not filed, D1.md takes one ticket per item: " + second,
+            "noted perf/reports/D1.md#2, no tracked path: " + second,
             "not filed, D1.md takes one ticket per item: " + third,
+            "noted perf/reports/D1.md#3, no tracked path: " + third,
         ])
         self.assertEqual(self.brigade("ticket", "list").splitlines()[-1],
                          f"T2 waiting low polish [report] {first} perf/reports/D1.md#1")
@@ -39,7 +41,9 @@ class FromReportMixin:
         self.assertEqual(self.follow_ups_in(BULLETS).splitlines(), [
             f"skipped perf/reports/D1.md#1, same text as T2 (waiting): {first}",
             "not filed, D1.md takes one ticket per item: " + second,
+            "already noted perf/reports/D1.md#2, no tracked path: " + second,
             "not filed, D1.md takes one ticket per item: " + third,
+            "already noted perf/reports/D1.md#3, no tracked path: " + third,
         ])
         self.assertEqual((self.at / "rail.tsv").read_bytes(), before_rail)
         self.assertEqual((self.at / "notes.tsv").read_bytes(), before_notes)
@@ -56,6 +60,7 @@ class FromReportMixin:
         self.assertEqual(self.follow_ups_in("## Follow-ups\n\n- Correctness: Fix a.\n- \n*   \n1. \n- Safety: Fix b.\n").splitlines(), [
             "T2 added from perf/reports/D1.md#1: Correctness: Fix a.",
             "not filed, D1.md takes one ticket per item: Safety: Fix b.",
+            "noted perf/reports/D1.md#2, no tracked path: Safety: Fix b.",
             "not filed, list item with no text",
             "not filed, list item with no text",
             "not filed, list item with no text",
@@ -91,7 +96,10 @@ class FromReportMixin:
     def test_from_report_skips_text_a_ticket_already_holds_whatever_its_spacing_and_case(self):
         self.fired_bug_fix()
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "Privacy: pr #87   was NOT commented on, approved, or closed.")
-        self.assertEqual(self.follow_ups_in(BULLETS).splitlines()[2],
-                         "skipped perf/reports/D1.md#3, same text as T2 (waiting): "
-                         "Privacy: PR #87 was not commented on, approved, or closed.")
+        self.assertEqual(self.follow_ups_in(BULLETS).splitlines(), [
+            "T3 added from perf/reports/D1.md#1: Correctness: A no-ref `--source user` add still has no CLI dedupe. The new Refusals rule tells the coordinator to read `ticket list` before refiling. A `brigade.py` guard would make that structural.",
+            "not filed, D1.md takes one ticket per item: Safety: `docs/guide.md` still describes intake as `gh issue list` and `gh pr list` when the standing orders name them. That file is outside this lease.",
+            "noted perf/reports/D1.md#2, no tracked path: Safety: `docs/guide.md` still describes intake as `gh issue list` and `gh pr list` when the standing orders name them. That file is outside this lease.",
+            "skipped perf/reports/D1.md#3, same text as T2 (waiting): Privacy: PR #87 was not commented on, approved, or closed.",
+        ])
         self.assertEqual(self.brigade("ticket", "list").splitlines()[-1].split(" ", 1)[0], "T3")

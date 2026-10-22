@@ -23,7 +23,9 @@ class ReportInputMixin:
         self.assertEqual([line.split(":")[0] for line in out.splitlines()],
                          ["would add from perf/reports/D1.md#1",
                           "not filed, D1.md takes one ticket per item",
-                          "not filed, D1.md takes one ticket per item"], err)
+                          "would note perf/reports/D1.md#2, no tracked path",
+                          "not filed, D1.md takes one ticket per item",
+                          "would note perf/reports/D1.md#3, no tracked path"], err)
 
     def test_from_report_skips_the_second_of_two_items_with_the_same_text(self):
         self.fired_bug_fix()
@@ -32,11 +34,13 @@ class ReportInputMixin:
             "would add from perf/reports/D1.md#1: Correctness: Same thing.",
             "skipped perf/reports/D1.md#2, same text as #1 above: Correctness: same  THING.",
             "not filed, D1.md takes one ticket per item: Correctness: Other thing.",
+            "would note perf/reports/D1.md#3, no tracked path: Correctness: Other thing.",
         ])
         self.assertEqual(self.follow_ups_in(twice).splitlines(), [
             "T2 added from perf/reports/D1.md#1: Correctness: Same thing.",
             "skipped perf/reports/D1.md#2, same text as T2 (waiting): Correctness: same  THING.",
             "not filed, D1.md takes one ticket per item: Correctness: Other thing.",
+            "noted perf/reports/D1.md#3, no tracked path: Correctness: Other thing.",
         ])
 
     def test_from_report_dry_run_prints_a_list_item_with_no_text_as_not_filed(self):

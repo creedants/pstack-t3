@@ -8,7 +8,10 @@ class BlocksMixin:
             "code-delegate line with the same missing step 5 pointer. It was outside the lease.",
             "not filed, D1.md takes one ticket per item: Correctness: **`WAIT_RULE` in `t3/added/brigade/scripts/brigade.py`.** It states only "
             "the ten-minute clock for worker briefs. Decide whether it should point at the new step 5 bullet.",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: **`WAIT_RULE` in `t3/added/brigade/scripts/brigade.py`.** It states only "
+            "the ten-minute clock for worker briefs. Decide whether it should point at the new step 5 bullet.",
             "not filed, D1.md takes one ticket per item: Correctness: No README or `docs/guide.md` edit is needed.",
+            "would note perf/reports/D1.md#3, no tracked path: Correctness: No README or `docs/guide.md` edit is needed.",
             "not filed, prose after the last list item: Scratch is under `~/.cache/d87`.",
         ])
 
@@ -22,8 +25,14 @@ class BlocksMixin:
             "not filed, D1.md takes one ticket per item: Correctness: **`docs/guide.md`.** Replace the first bullet under \"Known limits.\" "
             "(line 359) with this bullet, and keep the two bullets after it: ```markdown - An entry in a "
             "`.pstack-t3-scrap-*` directory is an unfinished copy. Delete it by hand. ```",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: **`docs/guide.md`.** Replace the first bullet under \"Known limits.\" "
+            "(line 359) with this bullet, and keep the two bullets after it: ```markdown - An entry in a "
+            "`.pstack-t3-scrap-*` directory is an unfinished copy. Delete it by hand. ```",
             "not filed, D1.md takes one ticket per item: Correctness: **Type the `side` that `holder_parents` yields**, from the comment review.",
+            "would note perf/reports/D1.md#3, no tracked path: Correctness: **Type the `side` that `holder_parents` yields**, from the comment review.",
             "not filed, D1.md takes one ticket per item: Correctness: **No test covers a skills directory inside the checkout**, which the "
+            "sweep skips because `layout` refuses it.",
+            "would note perf/reports/D1.md#4, no tracked path: Correctness: **No test covers a skills directory inside the checkout**, which the "
             "sweep skips because `layout` refuses it.",
             "not filed, prose that introduces a list: Other follow-ups:",
             "not filed, prose after the last list item: Scratch files for this run are under `/tmp/d105-repro/`: "
@@ -36,7 +45,9 @@ class BlocksMixin:
             "would add from perf/reports/D1.md#1: Correctness: `docs/light-mode.md`, in its review-file table, still describes one "
             "`<item>-review.md` file per item.",
             "not filed, D1.md takes one ticket per item: Correctness: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
             "not filed, D1.md takes one ticket per item: Correctness: `integration.head()` is still read inside two transactions.",
+            "would note perf/reports/D1.md#3, no tracked path: Correctness: `integration.head()` is still read inside two transactions.",
         ])
 
     def test_from_report_does_not_file_a_block_that_is_one_of_eight_no_work_phrases_and_nothing_more(self):
@@ -60,7 +71,10 @@ class BlocksMixin:
         first, *rest = LONGER_THAN_A_NO_WORK_PHRASE
         self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
             f"would add from perf/reports/D1.md#1: {first}",
-            *[f"not filed, D1.md takes one ticket per item: {text}" for text in rest],
+            *[line for number, text in enumerate(rest, 2) for line in (
+                f"not filed, D1.md takes one ticket per item: {text}",
+                f"would note perf/reports/D1.md#{number}, no tracked path: {text}",
+            )],
         ])
         for text in LONGER_THAN_A_NO_WORK_PHRASE[-3:]:
             self.assertEqual(self.follow_ups_in(f"## Follow-ups\n\n{text}\n", "--dry-run"),
@@ -75,6 +89,8 @@ class BlocksMixin:
             "returns a capped model.",
             "not filed, D1.md takes one ticket per item: Correctness: **Docs batch.** - Change 4's Files list in `docs/light-mode.md` should "
             "add `t3/scripts/roles.py`. - `docs/light-mode.md` is not leased.",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: **Docs batch.** - Change 4's Files list in `docs/light-mode.md` should "
+            "add `t3/scripts/roles.py`. - `docs/light-mode.md` is not leased.",
         ])
 
     def test_from_report_keeps_a_fenced_block_in_its_item_and_reads_no_heading_inside_it(self):
@@ -85,6 +101,8 @@ class BlocksMixin:
             "--set \"review backups=opencode/step-5-preview-free?variant=high\" ```",
             "not filed, D1.md takes one ticket per item: Correctness: `family()` keeps the provider path for namespaced ids such as "
             "`opencode/...`. The panel compares bare ids locally.",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: `family()` keeps the provider path for namespaced ids such as "
+            "`opencode/...`. The panel compares bare ids locally.",
         ])
 
     def test_from_report_files_each_paragraph_of_a_section_with_no_list(self):
@@ -93,7 +111,11 @@ class BlocksMixin:
             "would add from perf/reports/D1.md#1: Correctness: Schema setup in `land.py` still runs outside `BEGIN IMMEDIATE`.",
             "not filed, D1.md takes one ticket per item: Correctness: `integration.head()` is still read inside two transactions. "
             "Both sites predate this change.",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: `integration.head()` is still read inside two transactions. "
+            "Both sites predate this change.",
             "not filed, D1.md takes one ticket per item: Correctness: No test under `tests/` asserts these sentences. "
+            "That directory is outside this lease.",
+            "would note perf/reports/D1.md#3, no tracked path: Correctness: No test under `tests/` asserts these sentences. "
             "That directory is outside this lease.",
         ])
 
@@ -145,6 +167,7 @@ class BlocksMixin:
         self.assertEqual(self.follow_ups_in(body, "--dry-run").splitlines(), [
             "would add from perf/reports/D1.md#1: Correctness: fix a",
             "not filed, D1.md takes one ticket per item: Safety: fix b",
+            "would note perf/reports/D1.md#2, no tracked path: Safety: fix b",
             "not filed, prose that introduces a list: Lead in.",
             "not filed, heading inside the section: Parser",
             "not filed, heading inside the section: Docs",
@@ -178,6 +201,8 @@ class BlocksMixin:
             "empty value, because `--pr` defaults to `\"\"`.",
             "not filed, D1.md takes one ticket per item: Correctness: `--same-family` is not checked. It writes the `same model family;` note "
             "even when the families differ.",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: `--same-family` is not checked. It writes the `same model family;` note "
+            "even when the families differ.",
             "not filed, prose that introduces a list: The explainer found these in `brigade.py`. All are outside L81, "
             "so I did not fix them.",
         ])
@@ -189,6 +214,10 @@ class BlocksMixin:
             "`<item>-review.md` file per item.",
             "not filed, D1.md takes one ticket per item: Correctness: The panel sentences in step 7 still say \"handle the send-back below\" "
             "while that bullet sits above them.",
+            "would note perf/reports/D1.md#2, no tracked path: Correctness: The panel sentences in step 7 still say \"handle the send-back below\" "
+            "while that bullet sits above them.",
             "not filed, D1.md takes one ticket per item: Correctness: Decide whether `ticket move` should refuse a ticket of an item that owes "
+            "its decision.",
+            "would note perf/reports/D1.md#3, no tracked path: Correctness: Decide whether `ticket move` should refuse a ticket of an item that owes "
             "its decision.",
         ])

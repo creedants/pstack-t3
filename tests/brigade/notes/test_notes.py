@@ -17,6 +17,7 @@ class NotesTest(BrigadeTest):
         self.assertEqual(out.splitlines(), [
             "T2 added from perf/reports/D1.md#1: Correctness: First.",
             "not filed, D1.md takes one ticket per item: Safety: Second.",
+            "noted perf/reports/D1.md#2, no tracked path: Safety: Second.",
         ])
         self.assertEqual(self.brigade("ticket", "list", "--state", "waiting").splitlines(), [
             "T2 waiting low polish [report] Correctness: First. perf/reports/D1.md#1",

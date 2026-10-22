@@ -6,10 +6,19 @@ class QuotedPathsMixin:
         self.fired_bug_fix()
         printed = self.follow_ups_in("## Follow-ups\n\n" + "".join(f"- {text}\n" for text, _ in REAL_FOLLOW_UPS))
         first, *_ = REAL_FOLLOW_UPS
-        self.assertEqual(printed.splitlines()[0], f"T2 added from perf/reports/D1.md#1: {first[0]}")
-        self.assertEqual(printed.splitlines()[1:], [
-            f"not filed, D1.md takes one ticket per item: {text}" for text, _ in REAL_FOLLOW_UPS[1:]
-        ])
+        lines = printed.splitlines()
+        self.assertEqual(lines[0], f"T2 added from perf/reports/D1.md#1: {first[0]}")
+        index = 1
+        for number, (text, _) in enumerate(REAL_FOLLOW_UPS[1:], 2):
+            self.assertEqual(lines[index], f"not filed, D1.md takes one ticket per item: {text}")
+            index += 1
+            self.assertTrue(lines[index].startswith("noted "), lines[index])
+            self.assertIn(f"perf/reports/D1.md#{number}", lines[index])
+            self.assertTrue(lines[index].endswith(f": {text}"), lines[index])
+            index += 1
+            while index < len(lines) and lines[index].startswith("noted ") and f"perf/reports/D1.md#{number}" in lines[index]:
+                index += 1
+        self.assertEqual(index, len(lines))
         self.assertEqual(self.paths_cells(), {"T1": "", "T2": first[1]})
         rows = (self.at / "notes.tsv").read_text().splitlines()[1:]
         self.assertEqual(len(rows), len(REAL_FOLLOW_UPS) - 1 + sum(1 for _, paths in REAL_FOLLOW_UPS[1:] if not paths))
