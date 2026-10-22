@@ -1,2 +1,2 @@
 - kind fix
-- `brigade.py open` writes nothing under the project root unless it passes `--context-cap` or `--coordinator-provider`, and brigade's shipped docs and templates name the repository's own hot files and test command rather than pstack-t3's.
+- `brigade.py open` writes nothing under the project root unless it passes `--context-cap` or `--coordinator-provider`. The opening guide names the repository's own hot shared files, the house rules template holds no project test rules, the review reference names only shipped tools, and onboarding no longer detects `scripts/run_tests.py`.
