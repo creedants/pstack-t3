@@ -1,0 +1,2 @@
+- kind polish
+- brigade `CaseBase` and the subprocess classes in `tests/test_brigade.py` install `HostGhGuard`, so a brigade test that calls `gh` with no stub of its own fails with the guard's message instead of running the host `gh`
