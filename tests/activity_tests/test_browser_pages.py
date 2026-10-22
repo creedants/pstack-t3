@@ -40,7 +40,7 @@ class BrowserCase(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        required = os.environ.get("CI") == "true" or MACOS
+        required = os.environ.get("CI") == "true"
         self.browser, unavailable = select_browser(self.root, timeout=DARWIN_PROBE_TIMEOUT if MACOS else PROBE_TIMEOUT)
         if self.browser is None and required:
             self.browser, unavailable = select_browser(self.root, timeout=60)

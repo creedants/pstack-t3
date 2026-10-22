@@ -183,6 +183,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - name: Test part 1/4
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
@@ -212,6 +213,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - name: Test part 2/4
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
@@ -236,6 +238,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - name: Test part 3/4
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
@@ -260,6 +263,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
+      - *select_browser
       - name: Test part 4/4
         run: |
           log="$RUNNER_TEMP/macos-312.txt"
