@@ -54,8 +54,43 @@ class LandingFlows:
         run("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
 
 
+    def gh_stub(self):
+        """A gh stub under this case's temporary root, which is where the host-gh guard runs a test's own stub.
+
+        It answers the merge-method probe the way the landing tests' stub does. It writes every other call's arguments
+        to the guard's unanswered log before it exits 1.
+        """
+        bindir = Path(self.temporary.name) / "landing-gh"
+        if not bindir.exists():
+            bindir.mkdir()
+            script = bindir / "gh"
+            script.write_text(
+                f"#!{sys.executable}\n"
+                "import json, sys\n"
+                f"log = {str(self.gh_guard.unanswered)!r}\n"
+                "args = sys.argv[1:]\n"
+                'if args[:2] == ["repo", "view"] and "--json" in args and args.index("--json") + 1 < len(args):\n'
+                '    wanted = args[args.index("--json") + 1].split(",")\n'
+                '    if "mergeCommitAllowed" in wanted:\n'
+                "        print(json.dumps({'mergeCommitAllowed': True, 'squashMergeAllowed': True, "
+                "'rebaseMergeAllowed': True}))\n"
+                "        sys.exit(0)\n"
+                "with open(log, 'a') as calls:\n"
+                "    calls.write(json.dumps(args) + '\\n')\n"
+                'print(f"landing gh stub: no answer for {args}", file=sys.stderr)\n'
+                "sys.exit(1)\n")
+            script.chmod(0o755)
+        return bindir
+
+
     def land_env(self):
-        return dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"))
+        """The environment of a landing call, with the guard's shim first and this case's stub second on PATH."""
+        shim = str(self.gh_guard.script.parent)
+        stub = str(self.gh_stub())
+        entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+                   if entry and entry not in (shim, stub)]
+        return dict(os.environ, XDG_STATE_HOME=str(Path(self.temporary.name) / "state"),
+                    PATH=os.pathsep.join([shim, stub, *entries]))
 
 
     def land_repo(self, repo, *args, ok=True):

@@ -14,12 +14,15 @@ from unittest import mock
 from .names import CLAUDE, CODEX, ROOT, SCRIPT, SUPPORT, _owner_words
 from .inprocess import ProcessReason, _drop_entry, call, real_popen
 from .race_child import _race_args
+from tests.landing._support.host_gh_guard import HostGhGuard
 
 
 class CaseBase:
     def setUp(self):
         self.addCleanup(_drop_entry, self)
         self.temporary = tempfile.TemporaryDirectory()
+        # Cleanups run last registered first, so this one runs after every holder a test leaves running is stopped.
+        self.addCleanup(self.temporary.cleanup)
         # The product resolves the project root, so the fixture paths below come from one resolved root.
         self.root = Path(self.temporary.name).resolve()
         self.store = self.root / "store"
@@ -28,6 +31,10 @@ class CaseBase:
         self.at = self.store / "bridge-kit" / "perf"
         self.isolate_roles_config()
         self.isolate_t3_home()
+        self.gh_guard = HostGhGuard(self.temporary.name, label="brigade")
+        self.gh_guard.install()
+        self.addCleanup(self.gh_guard.assert_unused)
+        self.addCleanup(self.gh_guard.assert_answered)
 
 
     def isolate_roles_config(self):
@@ -42,10 +49,6 @@ class CaseBase:
         patcher = mock.patch.dict(os.environ, {"T3CODE_HOME": str(t3home)})
         patcher.start()
         self.addCleanup(patcher.stop)
-
-
-    def tearDown(self):
-        self.temporary.cleanup()
 
 
     def brigade(self, *args, ok=True, stdin=None, owner=True, code=None):
