@@ -2,7 +2,7 @@ from .support import BrigadeTest, Path, SCRIPT, datetime, json, runpy, subproces
 
 
 class RenameTest(BrigadeTest):
-    """A rename moves the store and names the new name everywhere, and is refused while any held work or the target path blocks it."""
+    """A rename moves the store and records the new name, and is refused while held work or the target path blocks it."""
 
     def rename(self, new="Speed", *extra, **kwargs):
         return self.brigade("open", "--project-root", str(self.project), "--name", "Perf",
