@@ -219,7 +219,7 @@ class OutsiderSmokeTest(unittest.TestCase):
 
     def test_every_required_step_prints_its_ok_line(self):
         # Review D306 round 1: a plan that dropped the roles step left every test green, because
-        # the expected lines came from the same plan. These five names come from this test.
+        # the expected lines came from the same plan. These names come from this test.
         with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
             (Path(canary) / CANARY).write_text("keep\n")
             result = run(canary, tmpdir)

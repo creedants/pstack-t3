@@ -47,7 +47,7 @@ class Layout:
 
 @dataclass(frozen=True)
 class Ref:
-    """A value captured from an earlier step's stripped stdout."""
+    """A value taken from an earlier step's stdout."""
 
     name: str
 
@@ -168,7 +168,7 @@ def _worker_script(layout):
 
 
 def _commands(layout):
-    """Every setup and step, in order. Executable and script paths are absolute."""
+    """Every setup and step, in order. Script paths are absolute, and git and sh come from PATH."""
     python = sys.executable
     document = json.dumps(_catalog_document(), indent=2) + "\n"
     return (

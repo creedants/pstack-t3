@@ -1,6 +1,6 @@
 # First coordinator
 
-This page takes a stranger from install to one landed change in about 20 minutes. It uses a throwaway repository and a throwaway bare remote, so nothing reaches a project you care about. The commands are the ones `scripts/outsider_smoke.py` runs in CI, and CI runs that smoke in `python:3.12-slim`. Every shell command below is a command the smoke executes. The smoke cannot start T3 threads, so the four steps that need T3 are marked `T3 action` and carry no command.
+This page takes a stranger from install to one landed change. The target is about 20 minutes. It uses a throwaway repository and a throwaway bare remote, so nothing reaches a repository you care about. The commands are the ones `scripts/outsider_smoke.py` runs in CI, and CI runs that smoke in `python:3.12-slim`. Every shell command below is a command the smoke executes. The smoke cannot start T3 threads, so the four steps that need T3 each carry a `T3 action` line.
 
 ## 1. Prepare the repository
 
@@ -97,7 +97,7 @@ SHA=$(git -C ~/work rev-parse HEAD)
 
 ## 9. Review the commit
 
-> **T3 action:** Ask another model family to review that commit. A pass needs a reviewer from a different model family.
+> **T3 action:** Ask another model family to review that commit. Recording a pass refuses a verifier from the author's model family unless you pass `--same-family`.
 
 Record the branch and the commit on the unit, then record the pass. `--author` and `--verifier` take provider and model names. The values below are the smoke's examples, so use the models you run.
 
@@ -113,7 +113,7 @@ The unit cannot move to merged until it has a pass at this commit.
 
 ## 10. Submit and land
 
-Submit the reviewed commit to the queue, then drain the queue. The queue checks the commit again and pushes trunk to `origin`.
+Submit the reviewed commit to the queue, then drain the queue. The queue runs the contract's checks and pushes trunk to `origin`. This walkthrough sets no check, so the contract's check list is empty.
 
 ```sh
 python3 skills/landing/scripts/land.py --repo ~/my-repo submit --holder smoke/D1 --branch smoke/d1 --sha $SHA --lease L1 --reviewer claude/claude-opus-5-5
