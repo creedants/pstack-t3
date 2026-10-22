@@ -1,0 +1,2 @@
+- kind polish
+- `README.md` and `docs/guide.md` point to `docs/first-coordinator.md` from the quick start and from the guide opening

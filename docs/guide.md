@@ -3,6 +3,8 @@
 This walks through installing pstack-t3, choosing models, and running real work in T3 Code. For the philosophy behind the workflows, Lauren Tan's [original pstack guide](../vendor/pstack/docs/guide/README.md) is the deep read. It is written for Cursor, but the ideas carry over unchanged.
 
 
+To land one change end to end on a throwaway repository, follow [First coordinator](first-coordinator.md).
+
 Part of the pstack-t3 docs. Each part below names its file. Read the part it names for the full rule.
 ## 1. Install (two minutes)
 
