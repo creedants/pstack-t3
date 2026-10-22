@@ -1,0 +1,2 @@
+- kind fix
+- the landing contract reference states the forge that merge and human mode need and the remote that push and local mode need, and the landing contract and size references name no pstack-t3 path
