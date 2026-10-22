@@ -111,7 +111,7 @@ class FireKindBMixin:
         self.two_goals()
         self.brigade("ticket", "add", "--summary", "a", "--kind", "feature", "--goal", "G2")
         self.brigade("fire", "--tickets", "T1", "--station", "feature", "--summary", "Do a")
-        self.assertEqual(len(self.follow_ups_in(BULLETS).splitlines()), 3)
+        self.assertEqual(len(self.follow_ups_in(BULLETS).splitlines()), 5)
         self.assertEqual(self.label("rail.tsv", "T2"), ("polish", "G2"))
         self.assertEqual(self.brigade("ticket", "list", "--state", "waiting").splitlines(), [
             f"T2 waiting low polish G2 [report] Correctness: A no-ref `--source user` add still has no CLI dedupe. The new Refusals rule tells the coordinator to read `ticket list` before refiling. A `brigade.py` guard would make that structural. perf/reports/D1.md#1",
