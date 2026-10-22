@@ -12,7 +12,7 @@ Issues and pull requests are welcome.
 
 ## For an outside contributor
 
-The full suite takes about 16 minutes in one process and about 5 minutes with `python3 scripts/run_tests.py`. While you work, run the module you changed, then `python3 -m unittest tests.test_pstack_t3`, `python3 scripts/build.py`, and `python3 scripts/check.py`.
+The full suite takes about 16 minutes in one process and about 14 minutes with `python3 scripts/run_tests.py`. A run at `-j 8` took 842 s for 3441 tests. While you work, run the module you changed, then `python3 -m unittest tests.test_pstack_t3`, `python3 scripts/build.py`, and `python3 scripts/check.py`.
 
 An outside pull request is ported into a reviewed branch. That branch credits the author with a `Co-authored-by` trailer. The original pull request is then closed rather than merged.
 
@@ -21,7 +21,7 @@ An outside pull request is ported into a reviewed branch. That branch credits th
 ```bash
 pip install pyyaml
 python3 scripts/build.py
-python3 scripts/run_tests.py
+PSTACK_TEST_REAL_PROCESS=1 python3 scripts/run_tests.py -j 8
 ```
 
 `scripts/run_tests.py` runs the tests under `tests/` in separate processes and prints one report. It treats the tests as trusted code, and `python3 scripts/run_tests.py --help` says what a run that exits 0 guarantees. `-j N` sets the largest number of worker processes that run at once. `python3 -m unittest discover -s tests` runs the same tests in one process.

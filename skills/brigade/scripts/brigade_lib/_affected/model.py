@@ -11,10 +11,13 @@ AFFECTED_KEY = "affectedTests"
 DEFAULT_SUITE = "python3 -m unittest discover -s tests"
 
 
-_LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "python", "importRoots")
+_LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "python", "importRoots", "env")
 
 
 _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 _PYTHON_NAME = re.compile(r"^python(\d+(?:\.\d+)?)$")
@@ -31,6 +34,7 @@ class Layout:
     import_roots are repo paths tried as prefixes for absolute imports, in candidate order after the loader directory and the root with every match kept.
     Relative imports never search them. They are normalized and deduped in order and never hold the root itself.
     An absent key means the directories of entry_points and helpers.
+    env holds (name, value) pairs, and the paragraph prints each one in front of every test command.
     """
     always: str
     workflow_module: str
@@ -39,6 +43,7 @@ class Layout:
     suite: str
     python: str
     import_roots: tuple
+    env: tuple = ()
 
 
 def _dotted(value):
@@ -70,6 +75,8 @@ def layout(meta):
     A present value that does not parse is refused through refuse_setting, so the message names the file,
     the key, and the value. python is an absolute path whose file name is python<major> or
     python<major>.<minor>, and a value that sets python also needs a suite that starts with python3.
+    env is an object of shell variable names to non-empty values without whitespace, and absent means
+    no assignment.
     """
     if not meta or AFFECTED_KEY not in meta:
         return None
@@ -117,7 +124,17 @@ def layout(meta):
             if normed not in seen:
                 seen.append(normed)
         roots = tuple(seen)
-    return Layout(always, workflow or "", tuple(entries), tuple(helpers), suite, python or "", roots)
+    env = value.get("env", {})
+    if not isinstance(env, dict):
+        refuse_setting(AFFECTED_KEY, value, "'env' needs an object of names to values")
+    for name, one in env.items():
+        if not isinstance(name, str) or not _ENV_NAME.match(name):
+            refuse_setting(AFFECTED_KEY, value, f"'env' needs a variable name for {name!r}")
+        if not isinstance(one, str) or not one or re.search(r"\s", one):
+            refuse_setting(AFFECTED_KEY, value,
+                           f"'env' needs a non-empty value without whitespace for {name!r}")
+    return Layout(always, workflow or "", tuple(entries), tuple(helpers), suite, python or "", roots,
+                  tuple(sorted(env.items())))
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,2 @@
+- kind fix
+- The affected verify paragraph now prints the environment the layout records in front of every test command, and `scripts/check.py` refuses a home directory path in a committed file outside `vendor/`.

@@ -21,6 +21,11 @@ def _alternate(command, python):
     return " ".join(words)
 
 
+def _with_env(layout, command):
+    """command with each of the layout's environment assignments in front, as NAME=value and one space."""
+    return "".join(f"{name}={value} " for name, value in layout.env) + command
+
+
 def _paragraph(result, land, layout, build, check):
     land_text = str(land)
     tail = [f"Run `python3 {land_text} slot -- {build}` and leave no regeneration diff. "] if build else []
@@ -30,17 +35,21 @@ def _paragraph(result, land, layout, build, check):
     if isinstance(result, _Full):
         names = ", ".join(f"`{name}`" for name in result.unmapped)
         head = [f"No affected mapping for {names}. ",
-                f"Run the full suite in the foreground as `python3 {land_text} slot --slots 2 -- {layout.suite}`. "]
+                f"Run the full suite in the foreground as `python3 {land_text} slot --slots 2 -- "
+                f"{_with_env(layout, layout.suite)}`. "]
         second = [f"Run the same suite on {_python_label(layout.python)} in the foreground as "
-                  f"`python3 {land_text} slot --slots 2 -- {_alternate(layout.suite, layout.python)}`. "] \
+                  f"`python3 {land_text} slot --slots 2 -- "
+                  f"{_with_env(layout, _alternate(layout.suite, layout.python))}`. "] \
             if layout.python else []
         return "".join(head + second + tail)
     names = ", ".join(f"`{name}`" for name in result.names)
     joined = " ".join(result.names)
+    modules = _with_env(layout, f"python3 -m unittest {joined}")
     head = [f"Affected test modules are {names}. ",
-            f"Run them in the foreground as `python3 {land_text} slot -- python3 -m unittest {joined}`. "]
+            f"Run them in the foreground as `python3 {land_text} slot -- {modules}`. "]
     second = [f"Run the same modules on {_python_label(layout.python)} in the foreground as "
-              f"`python3 {land_text} slot -- {layout.python} -m unittest {joined}`. "] if layout.python else []
+              f"`python3 {land_text} slot -- {_with_env(layout, f'{layout.python} -m unittest {joined}')}`. "] \
+        if layout.python else []
     return "".join(head + second + tail)
 
 
