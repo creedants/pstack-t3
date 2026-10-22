@@ -1,6 +1,8 @@
 """The outsider smoke catches a command a fresh HOME cannot run."""
 
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -21,7 +23,26 @@ AUTHOR = {
     "GIT_COMMITTER_EMAIL": "outsider@example.com",
 }
 CANARY = "canary.txt"
-REQUIRED_STEPS = ("install", "doctor", "roles", "brigade", "land")
+REQUIRED_STEPS = (
+    "install",
+    "doctor",
+    "roles",
+    "brigade",
+    "bind",
+    "land",
+    "ticket",
+    "fire",
+    "worker",
+    "dish",
+    "pass",
+    "submit",
+    "queue",
+    "trunk",
+    "merged",
+    "close",
+)
+PAGE = ROOT / "docs" / "first-coordinator.md"
+REF_MARK = "\0REF"
 
 
 def fence_git_environment():
@@ -79,6 +100,111 @@ def run(canary, tmpdir, *argv, overrides=None):
     ))
 
 
+def _norm_token(token):
+    if token.startswith("$") or token.startswith("~") or token == "...":
+        return token
+    if "python" in token.lower() and ("bin" in token or token.endswith("python3") or token == sys.executable):
+        return "python3"
+    if token.endswith(".py") and "/" in token:
+        for marker in ("skills/", "scripts/"):
+            at = token.find(marker)
+            if at != -1:
+                return token[at:]
+    return token
+
+
+def _plan_token(part):
+    if isinstance(part, outsider_smoke.Ref):
+        return REF_MARK
+    text = str(part)
+    if text == "-I":
+        return None
+    return _norm_token(text)
+
+
+def _expand_sh(argv):
+    if len(argv) >= 3 and argv[0] == "sh" and argv[1] == "-c":
+        found = []
+        for chunk in str(argv[2]).split(";"):
+            text = chunk.strip()
+            if not text or text == "set -e":
+                continue
+            found.append([_norm_token(t) for t in shlex.split(text)])
+        return found
+    tokens = []
+    for part in argv:
+        token = _plan_token(part)
+        if token is not None:
+            tokens.append(token)
+    return [tokens]
+
+
+def _plan_lists():
+    entries = outsider_smoke._commands(outsider_smoke._stand_in())
+    flat = []
+    for entry in entries:
+        flat.extend(_expand_sh(entry.argv))
+    return flat
+
+
+def _page_blocks(text):
+    return re.findall(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
+
+
+def _page_lists(text):
+    found = []
+    for block in _page_blocks(text):
+        for line in block.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            inner = stripped
+            match = re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\$\((.*)\)\s*$", stripped)
+            if match:
+                inner = match.group(1)
+            found.append([_norm_token(t) for t in shlex.split(inner)])
+    return found
+
+
+def _matches(page, plan):
+    if len(page) != len(plan):
+        return False
+    for have, want in zip(page, plan):
+        if have.startswith("$") or have.startswith("~") or have == "...":
+            continue
+        if have != want:
+            return False
+    return True
+
+
+def _unknown_page_commands(text):
+    plans = _plan_lists()
+    return [page for page in _page_lists(text) if not any(_matches(page, plan) for plan in plans)]
+
+
+def _missing_steps(text):
+    pages = _page_lists(text)
+    entries = [e for e in outsider_smoke._commands(outsider_smoke._stand_in()) if isinstance(e, outsider_smoke.Step)]
+    missing = []
+    for entry in entries:
+        wants = _expand_sh(entry.argv)
+        if entry.name == "worker":
+            wants = [tokens for tokens in wants if tokens and tokens[0] == "git"]
+        if not all(any(_matches(page, want) for page in pages) for want in wants):
+            missing.append(entry.name)
+    return missing
+
+
+def _t3_inside_fence(text):
+    inside = False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            inside = not inside
+        elif inside and "**T3 action:**" in line:
+            return True
+    return False
+
+
 class OutsiderSmokeTest(unittest.TestCase):
     def test_every_step_runs_against_the_home_the_script_made(self):
         # The script starts one process per step because the check is the environment that process
@@ -93,8 +219,6 @@ class OutsiderSmokeTest(unittest.TestCase):
             self.assertEqual(listing(Path(canary)), before)
 
     def test_every_required_step_prints_its_ok_line(self):
-        # Review D306 round 1: a plan that dropped the roles step left every test green, because
-        # the expected lines came from the same plan. These five names come from this test.
         with tempfile.TemporaryDirectory() as canary, tempfile.TemporaryDirectory() as tmpdir:
             (Path(canary) / CANARY).write_text("keep\n")
             result = run(canary, tmpdir)
@@ -174,3 +298,80 @@ class OutsiderSmokeTest(unittest.TestCase):
             self.assertEqual(listing(Path(canary)), before)
             self.assertNotIn(str(canary), "".join(transcripts))
             self.assertNotIn(str(canary), result.stdout + result.stderr)
+
+    def test_page_command_without_a_plan_command_is_refused(self):
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertEqual(_unknown_page_commands(text), [])
+        bogus = text + "\n```sh\npython3 scripts/not_a_command.py\n```\n"
+        self.assertIn(["python3", "scripts/not_a_command.py"], _unknown_page_commands(bogus))
+
+    def test_page_covers_every_step_the_plan_runs(self):
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertEqual(_missing_steps(text), [])
+
+    def test_t3_action_callout_stays_out_of_fences(self):
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertFalse(_t3_inside_fence(text))
+
+    def test_ref_names_a_capture_from_an_earlier_entry(self):
+        seen = set()
+        for entry in outsider_smoke._commands(outsider_smoke._stand_in()):
+            for part in entry.argv:
+                if isinstance(part, outsider_smoke.Ref):
+                    self.assertIn(part.name, seen)
+            if entry.capture:
+                seen.add(entry.capture)
+
+    def test_expect_reason_reports_both_kinds(self):
+        self.assertIsNone(outsider_smoke.Expect("is", "T1").reason("T1\n"))
+        self.assertIsNone(outsider_smoke.Expect("is", "T1").reason("T1"))
+        self.assertIsNotNone(outsider_smoke.Expect("is", "T1").reason("T2\n"))
+        self.assertIsNone(outsider_smoke.Expect("has", "merged: 1").reason("Since opening. merged: 1.\n"))
+        self.assertIsNotNone(outsider_smoke.Expect("has", "merged: 1").reason("nothing merged\n"))
+
+    def test_page_missing_a_step_fails_the_check(self):
+        text = PAGE.read_text(encoding="utf-8")
+        self.assertEqual(_missing_steps(text), [])
+        mutated = text.replace("close --dry-run", "close --to-file")
+        self.assertIn("close", _missing_steps(mutated))
+
+    def test_plan_binds_before_ticket_and_later_writes_except_close_carry_owner(self):
+        entries = outsider_smoke._commands(outsider_smoke._stand_in())
+        steps = [entry for entry in entries if isinstance(entry, outsider_smoke.Step)]
+        names = [step.name for step in steps]
+        self.assertLess(names.index("bind"), names.index("ticket"))
+        bind = steps[names.index("bind")]
+        words = [part for part in bind.argv if isinstance(part, str)]
+        self.assertIn("set", words)
+        self.assertIn("--thread", words)
+        self.assertIn(outsider_smoke.SMOKE_THREAD, words)
+        self.assertNotIn("--owner", words)
+        for step in steps[names.index("bind") + 1:]:
+            words = [part for part in step.argv if isinstance(part, str)]
+            if not any(word.endswith("brigade.py") for word in words):
+                continue
+            if step.name == "close":
+                self.assertNotIn("--owner", words)
+            else:
+                self.assertIn("--owner", words)
+                self.assertIn("smoke-thread@1", words)
+        submit = steps[names.index("submit")]
+        words = [part for part in submit.argv if isinstance(part, str)]
+        self.assertIn("--owner", words)
+        self.assertIn("smoke/@1", words)
+        plans = _plan_lists()
+        owners = [tokens[index + 1] for tokens in plans for index, token in enumerate(tokens) if token == "--owner" and index + 1 < len(tokens)]
+        self.assertIn("smoke-thread@1", owners)
+        self.assertIn("smoke/@1", owners)
+
+    def test_page_binds_with_thread_and_writes_except_close_carry_owner(self):
+        text = PAGE.read_text(encoding="utf-8")
+        pages = _page_lists(text)
+        for tokens in pages:
+            if "skills/brigade/scripts/brigade.py" in tokens and any(verb in tokens for verb in ("ticket", "fire", "dish", "pass")):
+                self.assertIn("--owner", tokens)
+                self.assertEqual(tokens[tokens.index("--owner") + 1], "$THREAD@1")
+        self.assertTrue(any("set" in tokens and "--thread" in tokens for tokens in pages))
+        owners = [tokens[index + 1] for tokens in pages for index, token in enumerate(tokens) if token == "--owner" and index + 1 < len(tokens)]
+        self.assertIn("$THREAD@1", owners)
+        self.assertIn("smoke/@1", owners)
