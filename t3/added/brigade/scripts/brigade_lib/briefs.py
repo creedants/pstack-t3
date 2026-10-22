@@ -115,6 +115,7 @@ def brief_dish(restaurant, ident, paths, lease, acceptance):
     if not thread:
         raise BrigadeError("no coordinator thread recorded; run brigade.py set --thread")
     menu_purpose(restaurant)
+    rules.house_rules(restaurant.dir / "house-rules.md")
     lines = house_rules_cap_lines(restaurant)
     if lines:
         raise BrigadeError("\n".join(lines))
@@ -265,6 +266,7 @@ def house_rules_cap_lines(restaurant):
 def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread,
                 picked_layout):
     ident = dish["id"]
+    standing_orders = rules.house_rules(restaurant.dir / "house-rules.md")
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
@@ -307,7 +309,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- If `t3_thread_send` returns thread_not_found, read the thread id again from this brief file, copy it exactly, and retry once; name both attempts in the final message.",
         "- Then end your turn with one line naming the report path.",
-        "", "STANDING ORDERS:", worker_house_rules((restaurant.dir / "house-rules.md").read_text()),
+        "", "STANDING ORDERS:", worker_house_rules(standing_orders),
     ]
     text = "\n".join(lines) + "\n"
     restaurant.write(contract_file(ident), contract + "\n")
