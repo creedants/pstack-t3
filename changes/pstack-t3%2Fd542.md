@@ -1,0 +1,2 @@
+- kind fix
+- `land.py init` and `land.py mode` refuse merge or human mode when the remote is not a GitHub URL, `gh` is missing, or `gh auth status` exits nonzero, and the refusal names push or local.

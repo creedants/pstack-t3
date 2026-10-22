@@ -72,7 +72,8 @@ class LandingTest(IdentityBase, LandingTestBase):
             sha = sh("git", "rev-parse", "w1", cwd=self.work)
             self.assertEqual(self.land("land"), self.foreign_bounce(sha))
         self.assertFalse(self.ref_exists("refs/heads/landing/e1", self.base / "origin.git"))
-        self.assertFalse((self.base / "gh-calls").exists())
+        calls = (self.base / "gh-calls").read_text() if (self.base / "gh-calls").exists() else ""
+        self.assertNotIn("pr create", calls)
 
     def test_human_mode_opens_a_pr_for_an_entry_by_the_configured_author(self):
         with self.fake_gh():

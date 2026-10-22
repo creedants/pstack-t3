@@ -44,9 +44,10 @@ class LandingTest(QueueBase, LandingTestBase):
             self.assertEqual(create[create.index("--body") + 1], "")
 
     def test_a_rerun_without_the_flag_keeps_pr_item_line_on(self):
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "on")
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1")
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "on")
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1")
         self.assertEqual(self.stored_pr_item_line(), "true")
         log = self.base / "gh-log"
         with self.fake_gh():
@@ -65,15 +66,17 @@ class LandingTest(QueueBase, LandingTestBase):
             self.assertEqual(create[create.index("--body") + 1], "Kind: polish. Goal: rules in the tool")
 
     def test_an_unknown_pr_item_line_value_is_refused_and_leaves_the_contract_unchanged(self):
-        self.init(mode="human")
-        before = self.queue_rows()
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "bogus", ok=False)
+        with self.fake_gh():
+            self.init(mode="human")
+            before = self.queue_rows()
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "bogus", ok=False)
         self.assertEqual(self.queue_rows(), before)
 
     def test_a_deleted_pr_item_line_key_reads_as_off(self):
-        self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "on")
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "human", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "on")
         with self.raw_db() as db:
             db.execute("DELETE FROM contract WHERE key = 'prItemLine'")
             db.commit()
