@@ -17,7 +17,7 @@ _LAYOUT_KEYS = ("always", "workflowModule", "entryPoints", "helpers", "suite", "
 _MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 _PYTHON_NAME = re.compile(r"^python(\d+(?:\.\d+)?)$")

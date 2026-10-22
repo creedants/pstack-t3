@@ -1,2 +1,2 @@
 - kind fix
-- The affected verify paragraph now prints the environment the layout records in front of every test command, and `scripts/check.py` refuses a home directory path in a committed file outside `vendor/`.
+- The affected verify paragraph now prints the environment the layout records in front of every test command, and `scripts/check.py` reports a `/home/<name>/` path in any file of the checkout except `vendor/`, `.git`, `__pycache__`, and seven test files that hold one as fixture data.
