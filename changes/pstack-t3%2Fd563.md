@@ -1,0 +1,2 @@
+- kind polish
+- The release script's refusal for unexpected `git log` output, and the matching `CONTRIBUTING.md` bullet, now ask the reader to report the printed line and `git --version` instead of pointing at git config.

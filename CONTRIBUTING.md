@@ -95,7 +95,7 @@ The script exits 1, names the fix, and changes nothing when one of these holds:
 - A fragment holds no bullet, not counting a first-line kind marker. A kind marker starts with `- ` and its remaining text after `str.strip()` is one of the five kind texts above.
 - A fragment holds a line that is not a bullet or a continuation line.
 - When `CHANGELOG.md` or `docs/changelog/` already holds a version, the version is not the one the fragment kinds give, which bumps the highest version's minor number and resets the patch number to zero when any fragment's first line starts with `- ` and its remaining text after `str.strip()` is `kind feature`, and otherwise bumps the highest version's patch number.
-- `git log` prints a line before the first commit marker, or a line that is neither a commit marker nor a path under `changes/`. Look in git config for a setting that adds output to `git log`.
+- `git log` prints a line before the first commit marker, or a line that is neither a commit marker nor a path under `changes/`. Report the printed line and the output of `git --version`.
 - The clone is shallow, or no commit added a fragment that sits in `changes/`.
 - A real run has no `--notes-file`.
 - A real run cannot read the notes file as UTF-8 or finds no `Stable check: T3 Code <version> passed` record in it.

@@ -377,7 +377,7 @@ def plan(version_text, date_text):
   at = added_at(git(*LOG))
  except ValueError as error:
   sys.exit(f"git log printed {str(error)!r}, which is not a commit marker or a path under changes/; "
-    "look in git config for a setting that adds output to git log")
+    "report the printed line and the output of git --version")
  for entry in entries:
   if entry.name not in at:
    sys.exit(f"git log shows no commit that added changes/{entry.name}; commit the fragment and rerun")
