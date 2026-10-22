@@ -33,12 +33,13 @@ class LandingTest(IdentityBase, LandingTestBase):
         self.assertEqual(self.stored_author_policy(), '"any"')
 
     def test_a_rerun_without_the_flag_keeps_a_stored_author_policy(self):
-        self.init(mode="push", author_policy="credited")
-        self.init(mode="push", author_policy=None)
-        self.assertEqual(self.stored_author_policy(), '"credited"')
-        sha = self.queue_one_by("Ann Lee <ann@example.com>", "-m", "port", author_policy=None)
-        self.assertEqual(self.land("land"), self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
-        self.assertEqual(self.origin_log(), ["init"])
+        with self.fake_gh():
+            self.init(mode="push", author_policy="credited")
+            self.init(mode="push", author_policy=None)
+            self.assertEqual(self.stored_author_policy(), '"credited"')
+            sha = self.queue_one_by("Ann Lee <ann@example.com>", "-m", "port", author_policy=None)
+            self.assertEqual(self.land("land"), self.foreign_bounce(sha, "Ann Lee <ann@example.com>"))
+            self.assertEqual(self.origin_log(), ["init"])
 
     def test_an_unknown_author_policy_is_refused_and_leaves_the_contract_unchanged(self):
         self.init(mode="push")
@@ -55,10 +56,11 @@ class LandingTest(IdentityBase, LandingTestBase):
         self.assertEqual(self.on_origin("log", "-1", "--format=%an <%ae>", "main"), "Ann Lee <ann@example.com>")
 
     def test_repo_status_names_each_author_policy_and_defaults_a_missing_key_to_any(self):
-        for policy in ("any", "configured", "credited"):
-            with self.subTest(policy=policy):
-                self.init(mode="push", author_policy=policy)
-                self.assertIn(f"author policy: {policy}", self.land("status"))
+        with self.fake_gh():
+            for policy in ("any", "configured", "credited"):
+                with self.subTest(policy=policy):
+                    self.init(mode="push", author_policy=policy)
+                    self.assertIn(f"author policy: {policy}", self.land("status"))
         with self.raw_db() as db:
             db.execute("DELETE FROM contract WHERE key = 'authorPolicy'")
             db.commit()

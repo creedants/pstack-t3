@@ -98,11 +98,12 @@ class LandingTest(QueueBase, LandingTestBase):
             self.assertEqual(create[create.index("--body") + 1], "")
 
     def test_repo_status_names_pr_item_line_only_when_on(self):
-        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "on")
-        self.assertIn("pr item line: on", self.land("status"))
-        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
-                  "--pr-item-line", "off")
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "on")
+            self.assertIn("pr item line: on", self.land("status"))
+            self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                      "--pr-item-line", "off")
         self.assertNotIn("pr item line", self.land("status"))
         with self.raw_db() as db:
             db.execute("DELETE FROM contract WHERE key = 'prItemLine'")
@@ -116,9 +117,10 @@ class LandingTest(QueueBase, LandingTestBase):
         self.assertNotIn("heartbeat", self.land("status"))
 
     def test_a_rerun_without_the_heartbeat_flags_keeps_the_stored_intervals(self):
-        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
-                  "--heartbeat-ms", "7200000", "--merge-heartbeat-ms", "1800000")
-        self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1")
+        with self.fake_gh():
+            self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1",
+                      "--heartbeat-ms", "7200000", "--merge-heartbeat-ms", "1800000")
+            self.land("init", "--trunk", "main", "--mode", "push", "--check", "./check.sh", "--batch", "1")
         self.assertEqual(self.stored_heartbeat_ms(), "7200000")
         self.assertEqual(self.stored_merge_heartbeat_ms(), "1800000")
         self.assertIn("heartbeat everyMs 7200000 merge wait 1800000", self.land("status"))

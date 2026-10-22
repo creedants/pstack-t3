@@ -29,6 +29,7 @@ from .shell import git_env, sh
 from .inprocess import ProcessReason, _run, drive, real_popen, real_process
 from . import paths
 from .paths import ADMIN, REVIEWER, ROOT, SCRIPT, repository_state, stamp_in
+from .host_gh_guard import HostGhGuard
 
 
 class CaseBase:
@@ -52,6 +53,9 @@ class CaseBase:
         self.commit("init")
         sh("git", "push", "-q", "origin", "main", cwd=self.work)
         self.install_github_remote()
+        self.gh_guard = HostGhGuard(self.base)
+        self.gh_guard.install()
+        self.addCleanup(self.gh_guard.assert_unused)
 
 
     def install_github_remote(self):

@@ -313,7 +313,8 @@ class LandingTest(QueueBase, LandingTestBase):
 
     def test_the_contract_refuses_a_conflicting_init_and_other_clones(self):
         self.init()
-        self.assertIn("already sets trunk='main'", self.land("init", "--trunk", "dev", "--mode", "auto", ok=False))
+        with self.fake_gh():
+            self.assertIn("already sets trunk='main'", self.land("init", "--trunk", "dev", "--mode", "auto", ok=False))
         sh("git", "clone", "-q", "origin.git", "other", cwd=self.base)
         _code, _out, err = self.run_land(self.base / "other", "status")
         self.assertIn("has no landing contract", err)

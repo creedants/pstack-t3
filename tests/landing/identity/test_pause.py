@@ -173,9 +173,10 @@ class LandingTest(IdentityBase, LandingTestBase):
             ["status", "--holder", "r/"],
         )
         printed = {}
-        for command in commands:
-            with self.subTest(command=command[:2]):
-                status, printed[command[0]], error = self.run_land(self.work, *command)
-                self.assertEqual((status, error), (0, ""))
+        with self.fake_gh():
+            for command in commands:
+                with self.subTest(command=command[:2]):
+                    status, printed[command[0]], error = self.run_land(self.work, *command)
+                    self.assertEqual((status, error), (0, ""))
         self.assertEqual(printed["land"], "landed E2 (r/D2)\n")
         self.assertEqual(self.stored_identity(), '["Owner", "owner@example.com"]')

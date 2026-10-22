@@ -107,7 +107,8 @@ class LandingTest(InProcessBase, LandingTestBase):
                  "changing trunk or remote needs a new repository contract\n")
         self.assertEqual(call([*base, "status", "E9"]), (1, "", "land: no E9\n"))
         assert_closed()
-        self.assertEqual(call([*base, "init", "--trunk", "other", "--mode", "auto"]), (1, "", clash))
+        with self.fake_gh():
+            self.assertEqual(call([*base, "init", "--trunk", "other", "--mode", "auto"]), (1, "", clash))
         assert_closed()
 
         with land.Store.for_repo(self.work) as store:
@@ -132,8 +133,9 @@ class LandingTest(InProcessBase, LandingTestBase):
         self.assertIs(failed.exception, broken)
         assert_closed()
 
-        self.assertEqual(call([*base, "init", "--trunk", "main", "--mode", "auto"]),
-                         (0, f"updated {directory}\n", ""))
+        with self.fake_gh():
+            self.assertEqual(call([*base, "init", "--trunk", "main", "--mode", "auto"]),
+                             (0, f"updated {directory}\n", ""))
         assert_closed()
 
     def test_a_store_close_after_a_directory_failure_raises_nothing(self):
