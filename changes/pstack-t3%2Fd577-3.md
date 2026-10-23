@@ -1,0 +1,2 @@
+- kind polish
+- `tests/brigade/affected/test_split1.py` copies every top-level entry except `tests`, `.git`, and `__pycache__` plus 17 fixed paths under `tests` for the `AffectedSplit1Test` archive
