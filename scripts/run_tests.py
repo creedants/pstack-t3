@@ -60,9 +60,9 @@ those process groups only, so it does not end a process that left the group of t
 Separately, where the platform offers prctl, each child asks the kernel, in the fork before it runs the
 runner, to send it SIGKILL when the runner process ends. A platform without prctl makes no such request. There
 the runner holds the write end of one pipe for its whole life and gives each worker the read end. As it
-starts, each worker forks a watcher into its own process group. The watcher sends that worker SIGKILL once the
-pipe reports that the runner process has ended, and it signals no other process. The runner SIGKILL to the
-worker process group ends the watcher. There the listing child and the processes a test starts run on after a
+starts, each worker forks a watcher into that worker's process group. The watcher sends that worker SIGKILL once the
+pipe reports that the runner process has ended, and it signals no other process. The runner ends the watcher with SIGKILL to the
+worker process group. There the listing child and the processes a test starts run on after a
 runner that never reached its own cleanup. On every platform a worker exits as it starts when its parent is not
 the runner that started it. The runner names its scratch directory
 with its own pid, so a run removes each scratch directory under the temp directory named after a pid that no

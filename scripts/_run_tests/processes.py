@@ -32,7 +32,7 @@ def lifeline() -> int | None:
 
 
 def _watch(lifeline_fd: int, worker: int) -> None:
-    """Block until the runner pipe reports EOF, then send the worker SIGKILL."""
+    """Block until the runner pipe reports EOF or fails, then send the worker SIGKILL."""
     try:
         while True:
             try:
@@ -50,7 +50,7 @@ def _watch(lifeline_fd: int, worker: int) -> None:
 
 
 def follow_runner(runner: int, lifeline_fd: int | None) -> bool:
-    """Start the lifeline watcher when the parent is the runner. Return whether to run."""
+    """Return False when the parent is not the runner. Otherwise start the watcher when a lifeline is given and return True."""
     if os.getppid() != runner:
         return False
     if lifeline_fd is None:

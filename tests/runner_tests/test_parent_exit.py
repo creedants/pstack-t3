@@ -78,8 +78,8 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         env["TMPDIR"] = str(self.scratch)
         return env
 
-    @unittest.skipUnless(LINUX, "the runner sweeps the processes below it on Linux only")
-    def test_startup_race_kills_worker_started_before_runner_death(self):
+    @unittest.skipUnless(LINUX, "the test needs /proc to see a zombie as gone")
+    def test_startup_race_exits_worker_started_before_runner_death(self):
         self.write("test_slow.py", """
             import time
             import unittest
@@ -103,7 +103,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         (self.proj / "go").touch()
         self.assertTrue(wait_gone(worker, 10.0), f"worker {worker} is still there after its runner died")
 
-    @unittest.skipUnless(LINUX, "the runner sweeps the processes below it on Linux only")
+    @unittest.skipUnless(LINUX, "the test needs /proc to see a zombie as gone")
     def test_gil_hold_kills_worker_in_catastrophic_backtrack(self):
         self.write("marks.py", MARKS)
         self.write("test_gil.py", """
@@ -130,7 +130,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         proc.wait()
         self.assertTrue(wait_gone(worker, 10.0), f"worker {worker} is still there after its runner died")
 
-    @unittest.skipUnless(LINUX, "the runner sweeps the processes below it on Linux only")
+    @unittest.skipUnless(LINUX, "the test needs /proc to see a zombie as gone")
     def test_watcher_cleanup_ends_watcher_with_worker(self):
         self.write("marks.py", MARKS)
         self.write("test_aaa_watcher.py", """
