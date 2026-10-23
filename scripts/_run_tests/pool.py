@@ -105,7 +105,7 @@ def make_scratch() -> Path:
     base = Path(tempfile.gettempdir())
     for entry in base.glob("run-tests-*"):
         parts = entry.name[len("run-tests-"):].split("-", 1)
-        if len(parts) != 2 or not parts[0].isdigit() or not parts[1]:
+        if len(parts) != 2 or not (parts[0].isascii() and parts[0].isdigit()) or not parts[1]:
             continue   # a name that is not run-tests-<pid>-<suffix> names no process this run can judge
         try:
             os.kill(int(parts[0]), 0)
