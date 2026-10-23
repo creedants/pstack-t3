@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from unittest import mock
 
-from ..support import BrigadeTest, setUpModule
+from ..support import BrigadeTest, SCRIPT, _owner_words, call, setUpModule
 from . import cap_refusal
 
 
@@ -72,8 +72,11 @@ class EditsInjectedGitTest(BrigadeTest):
                                      reviewed, head, "--", "tools/run0.py"],
                                     capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(naive_repo, "3\t3\ttools/run0.py")
-        with mock.patch.dict(os.environ, {"PSTACK_TEST_REAL_PROCESS": "1", "HOME": str(home_dir),
-                                           "GIT_CONFIG_GLOBAL": str(global_path)}):
-            self.assertEqual(self.verify(reviewed, head), (1, "", cap_refusal(24)))
+        with mock.patch.dict(os.environ, {"PSTACK_TEST_REAL_PROCESS": "1"}):
+            outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                         *_owner_words(self.at), "edits", "verify", "D1",
+                                         "--from", reviewed, "--to", head], env=with_global)
+        self.assertEqual((outcome.code, outcome.stdout_text().strip(), outcome.stderr_text().strip()),
+                         (1, "", cap_refusal(24)))
         self.assertEqual(self.edits_rows(), [])
         self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
