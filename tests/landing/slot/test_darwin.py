@@ -62,19 +62,19 @@ class LandingTest(SlotBase, LandingTestBase):
         """Each witness that is not a permitted target fails the command, and the Linux branch does the same."""
         self.governor(1)
         rows = (
-            ("live leader", dict(mode="always", probe="waitid"), True),
-            ("unknown witness", dict(mode="always", probe="failed"), True),
+            ("live leader", dict(mode="always", kills=True, probe="waitid"), True),
+            ("unknown witness", dict(mode="always", kills=True, probe="failed"), True),
             ("foreign uid", dict(mode="after-term", probe="foreign"), True),
             ("leader exits after a negative witness", dict(mode="always", kills=True, probe="waitid"), True),
             # darwin False keeps the host platform, so this row reaches the Linux branch on a Linux host.
-            ("linux", dict(mode="always", probe="waitid"), False),
+            ("linux", dict(mode="always", kills=True, probe="waitid"), False),
         )
         for label, options, darwin in rows:
             with self.subTest(witness=label):
-                # The command ends on its own, so a caller that never signals it cannot outlive the test.
+                # The stub kills the leader on every always row and the first SIGTERM kills the foreign row, so no command outlives the test.
                 result = self.run_exclusive(
-                    ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(0.6)"],
-                    cap=0.2, grace=0.05, timeout=20,
+                    ["slot", "--exclusive", "--", sys.executable, "-c", "import time; time.sleep(30)"],
+                    cap=4, grace=0.05, timeout=20,
                     main=_darwin_eperm_main(darwin=darwin, **options))
                 self.assertNotEqual(result.returncode, 0, result.stderr)
                 self.assertIn("PermissionError", result.stderr)
