@@ -75,8 +75,8 @@ def sweep_select(rows, labels, held, days, now):
 def changes_for(action, candidate):
     """The cells one apply writes for this candidate, or None when it changes nothing.
 
-    A drop always changes the ticket. A goal lands only when the ticket has none,
-    so it never overwrites an existing goal.
+    A drop always changes the ticket. A goal lands only when the ticket reads as unassigned,
+    so it never overwrites a goal in goals.tsv.
     """
     if isinstance(action, Drop):
         return {"state": "dropped"}

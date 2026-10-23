@@ -199,7 +199,7 @@ list waiting tickets filed more than N days ago that have no kind or no goal, or
 | --- | --- | --- | --- | --- |
 | `--older-than N` | yes |  |  | list tickets filed strictly more than this many days ago; takes 1 or more |
 | `--drop` |  |  |  | drop each listed ticket; needs the digest the list printed as --confirm |
-| `--goal G<n>` |  |  |  | give each listed ticket with no goal this open or paused goal; never overwrites a goal; needs the digest the list printed as --confirm |
+| `--goal G<n>` |  |  |  | give each listed ticket with no goal this open or paused goal; never overwrites a goal in goals.tsv; needs the digest the list printed as --confirm |
 | `--confirm DIGEST` |  |  |  | the digest the list printed; needs --drop or --goal, and refuses a stale digest |
 
 Give at most one of `--drop`, `--goal`.

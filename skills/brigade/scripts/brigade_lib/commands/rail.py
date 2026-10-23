@@ -107,7 +107,7 @@ def register_ticket(sub):
     picked.add_argument("--drop", action="store_true",
                         help="drop each listed ticket; needs the digest the list printed as --confirm")
     picked.add_argument("--goal", metavar="G<n>",
-                        help="give each listed ticket with no goal this open or paused goal; never overwrites a goal; "
+                        help="give each listed ticket with no goal this open or paused goal; never overwrites a goal in goals.tsv; "
                              "needs the digest the list printed as --confirm")
     a.add_argument("--confirm", metavar="DIGEST",
                    help="the digest the list printed; needs --drop or --goal, and refuses a stale digest")
