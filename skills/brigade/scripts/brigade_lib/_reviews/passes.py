@@ -127,7 +127,7 @@ def edits_gate(restaurant, dish_id, sha, report):
 
 
 def verify_edits(restaurant, dish_id, from_sha, to_sha):
-    """Called from run(), because it starts subprocesses. It reads projectRoot and the landing contract before taking the store lock. It holds the lock while checking tables and appending edits.tsv, and runs subprocesses outside the lock."""
+    """Called from handle(), because it starts subprocesses. It reads projectRoot and the landing contract before taking the store lock. It holds the lock while checking tables and appending edits.tsv, and runs subprocesses outside the lock."""
     contract = contract_check(restaurant.meta.get("projectRoot") or "")
     with restaurant.checked():
         restaurant.fence()
