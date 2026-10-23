@@ -1,0 +1,5 @@
+- kind fix
+- on Linux each worker asks the kernel to send it SIGKILL when the runner process ends
+- a run removes each scratch directory in the temp directory named after a pid that no process has, and a removal that fails leaves it
+- inside a `land.py` slot the job count is lowered to 4 for each slot the command holds, and a run outside a slot keeps the count it was given
+- `tests/runner_tests/test_lifecycle.py` pins the worker that ends with its runner, the scratch sweep, and the slot cap

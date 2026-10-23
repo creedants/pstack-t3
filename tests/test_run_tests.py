@@ -17,6 +17,7 @@ from tests.runner_tests.test_accounting import AccountMixin, ParseEventMixin
 from tests.runner_tests.test_ci_gates import CiGatesMixin
 from tests.runner_tests.test_ci_jobs import CiJobsMixin
 from tests.runner_tests.test_ids_and_fixtures import IdsFixturesMixin
+from tests.runner_tests.test_lifecycle import LifecycleMixin
 from tests.runner_tests.test_parts import BuildShardsMixin, PartsMixin
 from tests.runner_tests.test_result_files import ResultFilesMixin
 from tests.runner_tests.test_results import ResultsMixin
@@ -62,6 +63,10 @@ class RunTestsTest(
 
 
 class BuildShardsTest(BuildShardsMixin, unittest.TestCase):
+    pass
+
+
+class LifecycleTest(LifecycleMixin, RunnerCase, unittest.TestCase):
     pass
 
 

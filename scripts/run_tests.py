@@ -57,6 +57,11 @@ for a new session. The runner names each process still there after SWEEP_SECONDS
 change the exit status. When it finds a child, the runner prints one line that says so and does not try to
 become the child subreaper. There, and wherever it did not become the child subreaper, the runner signals
 those process groups only, so it does not end a process that left the group of the child that started it.
+Separately, where the platform offers prctl, each child asks the kernel, in the fork before it runs the
+runner, to send it SIGKILL when the runner process ends. A platform without prctl makes no such request, and a
+child there runs on after a runner that never reached its own cleanup. The runner names its scratch directory
+with its own pid, so a run removes each scratch directory under the temp directory named after a pid that no
+process has, and a removal that fails leaves it.
 """
 from __future__ import annotations
 
