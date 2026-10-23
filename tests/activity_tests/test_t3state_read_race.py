@@ -1,18 +1,11 @@
 import json
 import sqlite3
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from .support import ROOT, setUpModule
-
-SCRIPTS = ROOT / "t3/added/brigade/scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
-
-from activity_lib import t3state
+from .support import MOD, setUpModule
 
 OLD_TITLE = "old title " + "a" * 9000
 NEW_TITLE = "new title " + "b" * 9000
@@ -79,9 +72,9 @@ class T3StateReadRaceTest(unittest.TestCase):
 
         shim = mock.Mock(wraps=sqlite3)
         shim.connect = connect
-        with mock.patch.object(t3state, "sqlite3", shim):
-            connection = t3state.open_t3(path)
-            state = t3state.read_t3(connection, t3state.Window(0, 2e9), {"parent-thread"})
+        with mock.patch.dict(MOD["open_t3"].__globals__, {"sqlite3": shim}):
+            connection = MOD["open_t3"](path)
+            state = MOD["read_t3"](connection, MOD["Window"](0, 2e9), {"parent-thread"})
             connection.close()
         self.assertEqual(len(swapped), 1)
         self.assertIn(state.agents["child-thread"].title, (OLD_TITLE, NEW_TITLE),
