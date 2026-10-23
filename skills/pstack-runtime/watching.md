@@ -6,7 +6,7 @@ Read this file before linking a PR or waiting on its checks.
 
 After you open a PR or start driving an existing one, call `link_pull_request` with its full URL. For a stack, link every layer. Linking attaches the PR to the calling thread. When a child opens a PR, it links it and the parent links it too. When a launched thread opens a PR, it links it and the launcher or coordinator links it too. Linking twice is safe. Before finishing PR work, call `list_thread_pull_requests` and link any missing PR. Report a link failure instead of claiming the PR is linked.
 
-- On T3 Code 0.1.1-nightly.20261019.3360 or later, prefer the optional `pullRequests` array from `t3_thread_read` or `t3_thread_list` when reconstructing an owner's PR set. Treat a null state as unknown, not closed. A legacy `linkedPullRequest` can be null while the array is nonempty. Keep the final own-thread `list_thread_pull_requests` check. On T3 Code 0.1.0, call `list_thread_pull_requests` with the explicit owner `threadId`. When that read is refused, use recorded URLs. See [Host version](host.md#host-version) for the version read.
+- Prefer the optional `pullRequests` array from `t3_thread_read` or `t3_thread_list` when reconstructing an owner's PR set. Treat a null state as unknown, not closed. A legacy `linkedPullRequest` can be null while the array is nonempty. Keep the final own-thread `list_thread_pull_requests` check.
 
 ## Pull request watching
 
@@ -26,7 +26,7 @@ Call `unwatch_pull_request` when this thread stops driving the PR and hands that
 
 A merge ends the watch and does not wake the thread. A close ends the watch and does wake the thread. Watching also ends when the thread settles or is archived, when the user stops the thread, or when you call `unwatch_pull_request`. It also ends when T3 fails to read the PR 8 times in a row. A host rate limit only delays the next read. A watch ends after 10 wakes in a row that bring only comments, and that end posts a wake. Call `watch_pull_request` again after that wake when the loop is still running.
 
-- On T3 Code 0.1.1-nightly.20261018.3331 or later, a new watch starts from the last head check and conflict state of the ended watch. Rearming does not repeat a delivered check or conflict wake. Comment wakes start at the new call. Read the PR current state right after rearming and act on it now. Rearming never requests a repeat green check wake. Unlinking a PR that is not a stack layer clears remembered state, so never unlink to reset a watch. On T3 Code 0.1.0, a rearmed watch repeats a wake already handled. Read current state on every wake and skip done work. See [Host version](host.md#host-version) for the version read.
+- A new watch starts from the last head check and conflict state of the ended watch. Rearming does not repeat a delivered check or conflict wake. Comment wakes start at the new call. Read the PR current state right after rearming and act on it now. Rearming never requests a repeat green check wake. Unlinking a PR that is not a stack layer clears remembered state, so never unlink to reset a watch.
 
 Never settle an owner whose PR watch or `schedule_task` loop is still needed, because settling ends the watch.
 

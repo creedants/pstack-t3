@@ -8,7 +8,7 @@ To land one change end to end on a throwaway repository, follow [First coordinat
 Part of the pstack-t3 docs. Each part below names its file. Read the part it names for the full rule.
 ## 1. Install (two minutes)
 
-You need [T3 Code](https://github.com/pingdotgg/t3code/releases) `0.1.0` or later, which ships Orchestrator V2 and the pull request watching pstack-t3 relies on. The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`).
+You need [T3 Code](https://github.com/pingdotgg/t3code/releases) `0.1.2` or later, which ships Orchestrator V2 and the pull request watching pstack-t3 relies on. The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`).
 
 You also need git and Python 3.10 or later.
 

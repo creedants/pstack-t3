@@ -43,7 +43,7 @@ REQUIRED_TOOLS = {
     "poteto-mode/playbooks/orchestrate.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-full.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-stack.md": ("watch_pull_request",),
-    SETUP_GATE: ("watch_pull_request", "T3 Code 0.1.0 or later"),
+    SETUP_GATE: ("watch_pull_request", "T3 Code 0.1.2 or later"),
 }
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
 # A T3 thread link is `t3-thread://v1/<threadId>`. It names no file.

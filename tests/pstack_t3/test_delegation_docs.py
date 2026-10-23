@@ -151,14 +151,12 @@ class StalledChildDocTest(unittest.TestCase):
             "A stalled child",
         ):
             self.assertIn(phrase, section)
-        host = (ROOT / "t3/added/pstack-runtime/host.md").read_text()
-        nightlies = host.split("### Pre-0.1.0 nightlies", 1)[1].split("\n## ", 1)[0]
+        recovery = runtime_doc_section("failures.md", "### Recovery notes")
         for phrase in (
-            "0.0.46-nightly.20261008.2813",
-            "startup recovery",
-            "a turn held in a stopped queue does not count",
+            "A turn held in a stopped queue does not count",
+            "Startup recovery",
         ):
-            self.assertIn(phrase, nightlies)
+            self.assertIn(phrase, recovery)
         waiting = (ROOT / "t3/added/pstack-runtime/waiting.md").read_text()
         self.assertIn("`hasPendingChildRuns` does not change that.", waiting)
         step = runtime_doc_section("delegation.md", "5. Collect results.", "\n6. You own")
