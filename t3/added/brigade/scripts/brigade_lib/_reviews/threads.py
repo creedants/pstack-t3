@@ -118,6 +118,30 @@ def thread_binding(row):
     return (row["attempt"], row["role"], stored("threads.tsv", "thread", row["thread"]))
 
 
+def child_attempt(rows, thread):
+    """The attempt `write_threads` gives a CHILD_ROLES row for `thread`.
+
+    It counts worker rows on another thread, or 1 when none. `rows` holds the item's rows.
+    """
+    thread = stored("threads.tsv", "thread", thread)
+    used = sum(1 for row in rows if row["role"] in WORKER_ROLES and row["thread"] != thread)
+    return str(max(used, 1))
+
+
+def recorded_children(rows, children):
+    """Stored ids of `children` whose binding `rows` holds, in report order.
+
+    The binding is the attempt `child_attempt` gives, the role, and the stored thread.
+    """
+    held = {(row["attempt"], row["role"], stored("threads.tsv", "thread", row["thread"])) for row in rows}
+    found = []
+    for child in children:
+        thread = stored("threads.tsv", "thread", child["thread"])
+        if (child_attempt(rows, thread), child["role"], thread) in held:
+            found.append(thread)
+    return found
+
+
 def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     """The one writer of threads.tsv. Returns True when it wrote a row or closed one.
 
@@ -140,10 +164,13 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     for role, thread, seat in threads:
         thread = stored("threads.tsv", "thread", thread)
         worker = role in WORKER_ROLES
-        used = sum(1 for row in mine if row["role"] in WORKER_ROLES and row["thread"] != thread)
-        number = used + 1 if worker else max(used, 1)
         if worker:
-            role = "worker" if number == 1 else "fix worker"
+            used = sum(1 for row in mine if row["role"] in WORKER_ROLES and row["thread"] != thread)
+            number = str(used + 1)
+        else:
+            number = child_attempt(mine, thread)
+        if worker:
+            role = "worker" if number == "1" else "fix worker"
         if (str(number), role, thread) in held:
             continue
         held.add((str(number), role, thread))

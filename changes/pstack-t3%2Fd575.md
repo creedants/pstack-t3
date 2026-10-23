@@ -1,0 +1,4 @@
+- kind feature
+- `pass record` now archives helper threads the worker report lists.
+- `write_threads` now assigns child attempts through one helper.
+- The review doc now describes dry run and real run follow-up prefixes.

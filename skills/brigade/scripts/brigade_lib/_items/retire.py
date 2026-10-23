@@ -1,7 +1,8 @@
 import sys
 from brigade_lib import seam
 from brigade_lib._leases.claims import holder, holder_leases
-from brigade_lib.reviews import thread_binding, write_threads
+from brigade_lib._reviews.threads import recorded_children
+from brigade_lib.reviews import report_threads, thread_binding, worker_report, write_threads
 from brigade_lib.shared import BrigadeError, clean, stored
 from brigade_lib.store import IN_FLIGHT_STATES, WORKER_ROLES
 
@@ -31,14 +32,26 @@ def worker_bindings(restaurant, ident):
             if row["dish"] == ident and row["role"] in WORKER_ROLES and row["thread"]}
 
 
+def round_helpers(restaurant, dish_id):
+    """Stored helper threads the worker report lists and the table holds for this round."""
+    body = worker_report(restaurant, dish_id)
+    if not body:
+        return []
+    children, _ = report_threads(body)
+    if not children:
+        return []
+    rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
+    return recorded_children(rows, children)
+
+
 def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only=None):
     """Print one `archive thread: <id>` line on standard error for each thread to archive at a finish point.
 
-    `occasion` is "review" for the thread a `pass record` recorded, "replaced" for the worker a
-    `dish --thread` replaced, and "closed" for every worker thread a merged or dropped item used.
-    `thread` is the recorded id, or the id a new worker was bound to. `replaced` is the dish's thread
-    cell read before that write. `only` holds the ids the caller allows to print after an unlocked step.
-    None means no restriction.
+    `occasion` is "review" for the thread a `pass record` recorded and each helper thread its report lists,
+    "replaced" for the worker a `dish --thread` replaced, and "closed" for every worker thread a merged or
+    dropped item used. `thread` is the recorded id, or the id a new worker was bound to. `replaced` is the
+    dish's thread cell read before that write. `only` holds the ids the caller allows to print after an
+    unlocked step. None means no restriction.
     A set means only ids in it print. The coordinator's own thread, a thread another item in flight holds,
     a blank id, and a repeated id are left out. A review also leaves out the item's current worker and its
     open worker rows. The call writes no table.
@@ -46,7 +59,10 @@ def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only
     rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
     workers = [row["thread"] for row in rows if row["role"] in WORKER_ROLES and row["thread"]]
     if occasion == "review":
-        found = [thread]
+        if clean(thread):
+            found = [thread, *round_helpers(restaurant, dish_id)]
+        else:
+            found = [thread]
     elif occasion == "replaced":
         if replaced and replaced != thread:
             found = [replaced]
