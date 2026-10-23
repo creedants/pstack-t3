@@ -32,17 +32,14 @@ THREADS_REFUSED_LINE = "{dish}: reports/{name} cannot be read; {lines}; nothing 
 def threads_prose(line):
     """Whether a non-blank line of the ## Threads section is plain prose, so report_threads skips it.
 
-    A prose line starts, after any leading whitespace, with neither a list marker nor a `#`, holds no
-    backticked thread id, that is no backticked value holding a colon and holding no whitespace, and
-    names no child role, that is no lowercase code delegate, claims check, or architect runner. A list marker is a
+    A prose line starts, after any leading whitespace, with neither a list marker nor a `#`, and holds no
+    backticked thread id, that is no backticked value holding a colon and holding no whitespace. A list marker is a
     hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a closing parenthesis.
     """
     stripped = line.lstrip()
     if THREADS_ITEM_START.match(stripped) or stripped.startswith("#"):
         return False
-    if THREADS_ITEM_THREAD.search(line):
-        return False
-    return not any(role in line for role in CHILD_ROLES)
+    return not THREADS_ITEM_THREAD.search(line)
 
 
 def report_threads(text):
@@ -52,8 +49,8 @@ def report_threads(text):
     tuple of `(line number, reason)` pairs. A line that opens a fence after up to three spaces is
     skipped, and so is every line until the fence closes, so no fence line is read. A report with no ## Threads section holds no child. A line
     with no text is skipped, and so is a line of the section that is plain prose, that is a line that
-    starts, after any leading whitespace, with neither a list marker nor a `#`, holds no backticked thread
-    id, and names no lowercase child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number
+    starts, after any leading whitespace, with neither a list marker nor a `#`, and holds no backticked thread
+    id. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number
     followed by a dot or a closing parenthesis. A non-blank line that is read, is not prose and is not one
     item of the form - <role> `<thread id>` <seat> is reported by its number. A heading deeper than the section's own or a
     second ## Threads heading while the first is still open is reported by its number and ends the scan. An
