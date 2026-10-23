@@ -60,7 +60,7 @@ LOST_WORKER = """
             time.sleep(60)
 """
 
-# A worker that writes a mark from the numeric pid another process holds, as the mark writer did after the kernel gave that pid to the other process.
+# A worker that passes marks.mark only the numeric pid another process holds, which is what the pid becomes after the kernel gives it to that process.
 REUSE_BEFORE_MARK = """
     import unittest
     from pathlib import Path
