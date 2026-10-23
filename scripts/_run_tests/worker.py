@@ -3,28 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sys
-import threading
-import time
 import unittest
 from pathlib import Path
 
 from . import ENTRY
 from .events import SETUP, STATUSES, plural
-
-PARENT_POLL_SECONDS = 0.5
-
-
-def watch_parent() -> None:
-    """Start a daemon thread that exits this worker when os.getppid no longer matches the pid at entry."""
-    parent = os.getppid()
-
-    def check() -> None:
-        while True:
-            time.sleep(PARENT_POLL_SECONDS)
-            if os.getppid() != parent:
-                os._exit(1)
-
-    threading.Thread(target=check, daemon=True).start()
+from .processes import follow_runner
 
 def enter(start: Path) -> None:
     """Put the start directory and its parent first on sys.path and drop every other entry for this script's directory."""
@@ -132,8 +116,10 @@ def list_main(start: Path, out: Path) -> int:
 
 
 def worker_main(spec_path: Path) -> int:
-    watch_parent()
     spec = json.loads(spec_path.read_text())
+    if not follow_runner(spec["runner"], spec["lifeline"]):
+        print(f"run_tests: expected parent {spec['runner']}", file=sys.stderr)
+        return 1
     found = discover(Path(spec["start"]))
     mine, listed = [test.id() for test in found], [entry["id"] for entry in json.loads(Path(spec["plan"]).read_text())]
     if mine != listed:

@@ -14,7 +14,7 @@ from pathlib import Path
 from . import ACTIVE, POLL_SECONDS, PROGRESS_SECONDS
 from .events import OUTCOMES, Accounting, Channel, Ended, Interrupted, Ledger, Problem, Refusal, Running, Shard, Test, Verdict, exit_status, fails, kinds, plural
 from .plan import build_shards, launch_order, tests_in_part
-from .processes import Watch, child_env, start_child
+from .processes import Watch, child_env, lifeline, start_child
 from .report import account, render
 
 def kill_group(proc: subprocess.Popen) -> None:
@@ -58,10 +58,11 @@ def launch(shard: Shard, scratch: Path, start: Path) -> Running:
     home = scratch / f"s{shard.number:03d}"
     home.mkdir()
     channel = Channel(home / "results.jsonl")
+    pipe = lifeline()
     spec = {"start": str(start), "results": str(home / "results.jsonl"), "plan": str(scratch / "list" / "plan.json"),
-            "seqs": shard.seqs}
+            "seqs": shard.seqs, "runner": os.getpid(), "lifeline": pipe}
     (home / "spec.json").write_text(json.dumps(spec))
-    proc = start_child(["--worker", str(home / "spec.json")], home, start)
+    proc = start_child(["--worker", str(home / "spec.json")], home, start, lifeline=pipe)
     return Running(shard, proc, home, channel, time.monotonic())
 
 
