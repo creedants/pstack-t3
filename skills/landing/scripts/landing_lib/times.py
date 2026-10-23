@@ -113,10 +113,15 @@ def json_report(rows, times, skipped):
 def landing_times(repo, last, holder, as_json):
     if last < 1:
         raise seam.LandError("--last must be at least 1")
-    connection = open_read_only(database(repo))
+    path = database(repo)
+    connection = None
     try:
+        connection = open_read_only(path)
         rows, skipped = landings(connection, holder, last)
+    except sqlite3.DatabaseError as error:
+        raise seam.LandError(f"the landing database at {path} is locked or unreadable: {error}") from None
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
     times = summarize([row.minutes for row in rows])
     return json_report(rows, times, skipped) if as_json else text_report(rows, times, skipped)
