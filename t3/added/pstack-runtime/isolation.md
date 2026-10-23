@@ -8,11 +8,11 @@ Two writers never share a checkout (principle-separate-before-serializing-shared
 
 Before you end a worktree turn that can settle, read [Settle on turn end](host.md#settle-on-turn-end).
 
-Before you delegate a child that needs a chosen branch or a different base, read [Older hosts](host.md#older-hosts).
+Before you delegate a child that needs a chosen branch or a different base, read [Manual worktree](host.md#manual-worktree).
 
 - Read-only children share the current checkout.
 - A writing child that may overlap with another writer uses `delegate_task` with `isolation: "worktree"`. T3 branches from the parent's current local commit and runs project setup. Blocking setup finishes before the child starts. An async setup action can keep running. Uncommitted edits are not copied. The brief tells the child to report its branch and head SHA. Read the child's binding with `t3_thread_read` and check its diff before integrating.
-- `delegate_task` with `isolation` `worktree` returns `invalid_request` when the parent thread runs in its own worktree and the parent commit does not resolve in the project repository. Check the binding before you delegate. Bind the project to the actual repository. When the checkout is foreign, use the manual worktree in [Older hosts](host.md#older-hosts). Never use shared concurrent writing as a fallback. Two writers never share a checkout on any host.
+- `delegate_task` with `isolation` `worktree` returns `invalid_request` when the parent thread runs in its own worktree and the parent commit does not resolve in the project repository. Check the binding before you delegate. Bind the project to the actual repository. When the checkout is foreign, use the manual worktree in [Manual worktree](host.md#manual-worktree). Never use shared concurrent writing as a fallback. Two writers never share a checkout on any host.
 - Long-lived owners that should appear in T3's sidebar with their own binding (PR owners in Autopilot and Orchestrate) are top-level threads launched with a worktree strategy. See [Top-level threads](threads.md#top-level-threads).
 - T3 storage cleanup can remove that worktree after the thread ends. See [Local state](SKILL.md#local-state).
 - Uncommitted changes are not copied into new worktrees. Commit or stash first, or point the brief at a pushed branch.
