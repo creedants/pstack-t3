@@ -5,7 +5,7 @@ Read this file before you create a webhook schedule, ask for a signing secret, o
 ## Host version
 
 - T3 Code 0.1.2 has the `{"type": "webhook"}` schedule, the HMAC-SHA256 signature fields, `request_secret` with a one-use `secretRef`, and a `webhookUrl` result.
-- Each non-empty value arrives wrapped in a `<webhook-data-ID>` frame with a fresh ID per request, and the prompt ends with a note that marks the framed text as untrusted request data. T3 breaks `$skill`, `@file`, or `/command` mentions inside a value so they do not act. T3 Code 0.1.2 is the release verified for an arbitrary-text payload behind an allowlisted action.
+- Each non-empty value arrives wrapped in a `<webhook-data-ID>` frame with a fresh ID per request, and the prompt ends with a note that marks the framed text as untrusted request data. T3 breaks `$skill`, `@file`, or `/command` mentions inside a value so they do not act. T3 Code 0.1.2 includes the framing verified for an arbitrary-text payload behind an allowlisted action.
 
 ## Create the schedule
 

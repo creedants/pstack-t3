@@ -17,7 +17,7 @@ Write `~/.config/pstack-t3/roles.json`, the per-role seat table that every pstac
 
 Check the host's tool list for `watch_pull_request`. Accept the T3 harness prefixes described in [the runtime](../pstack-runtime/SKILL.md). A tool listed by name counts as present, including a harness prefix. A deferred `watch_pull_request` counts as present and does not fail this gate. If tools load lazily, use the host's tool discovery and make one bounded `orchestrator_capabilities` call before checking again. A provider catalog does not prove that the watch tool exists. Do not call `watch_pull_request` with a dummy PR to test it.
 
-If `watch_pull_request` is absent, stop setup before writing roles or a saved catalog. Say "Setup cannot finish. T3 Code 0.1.2 or later is required because this host does not expose watch_pull_request." Ask the user to update T3 Code and rerun setup. Do not report setup complete.
+If `watch_pull_request` is absent, stop setup before writing roles or a saved catalog. Say "Setup cannot finish. This host does not expose watch_pull_request, and pstack-t3 requires T3 Code 0.1.2 or later." Ask the user to update T3 Code and rerun setup. Do not report setup complete.
 
 The runtime host notes state the T3 Code version floor. See [host notes](../pstack-runtime/host.md).
 
