@@ -365,6 +365,14 @@ def _marker_from(marker):
         return None
 
 
+def _marker_is_empty(marker):
+    """Whether the marker is an empty file a kill left between its claim and its first write."""
+    try:
+        return marker.stat().st_size == 0
+    except OSError:
+        return False
+
+
 def _left_reservation(directory, target, marker):
     """Whether the marker and the target are the empty reservation an interrupted rename of this directory left."""
     try:
@@ -382,7 +390,7 @@ def _reserve_target(directory, target, refused):
     The caller holds the project directory lock, so no other open or rename creates or moves a directory at target
     until this call returns. A target is removed only when this run created it or adopted it from this directory's
     marker, and a marker is removed only when this run created or adopted it. A rerun adopts only its own recorded
-    empty reservation.
+    empty reservation, or an empty marker when the target is missing.
     """
     marker = target.parent / f".rename-{target.name}.json"
     try:
@@ -392,10 +400,13 @@ def _reserve_target(directory, target, refused):
         ours = False
         if _left_reservation(directory, target, marker):
             return marker
-        if _marker_from(marker) != directory.name:
-            raise BrigadeError(refused + f"{marker} is not this rename's record; remove it") from None
-        if target.exists() or target.is_symlink():
-            raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
+        if _marker_is_empty(marker) and not target.exists() and not target.is_symlink():
+            ours = True
+        else:
+            if _marker_from(marker) != directory.name:
+                raise BrigadeError(refused + f"{marker} is not this rename's record; remove it") from None
+            if target.exists() or target.is_symlink():
+                raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
     created = False
     try:
         marker.write_text(json.dumps({"from": directory.name}))
