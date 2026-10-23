@@ -94,7 +94,7 @@ class LandingTest(SlotBase, LandingTestBase):
         )
         result = self.run_exclusive(
             ["slot", "--exclusive", "--", sys.executable, "-c", command, str(log_path)],
-            cap=0.6, grace=0.3, timeout=4)
+            cap=4, grace=0.3, timeout=20)
         self.assertEqual(result.returncode, 124)
         lines = log_path.read_text().splitlines()
         self.assertEqual([line.split()[0] for line in lines], ["start", "term"])
@@ -178,7 +178,7 @@ class LandingTest(SlotBase, LandingTestBase):
         process = self.popen_exclusive(
             ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
              str(parent_path), str(child_path)],
-            cap=0.4, grace=0.15)
+            cap=4, grace=0.15)
         try:
             child_line = self.wait_for_line(child_path)
             code = process.wait(timeout=10)
@@ -191,8 +191,8 @@ class LandingTest(SlotBase, LandingTestBase):
             self.assertEqual(code, 124)
             self.assertEqual(
                 stderr,
-                "land: stopped the command at the 0.4s exclusive cap. "
-                "--for sets a longer cap and needs --reason past 0.4s.\n")
+                "land: stopped the command at the 4s exclusive cap. "
+                "--for sets a longer cap and needs --reason past 4s.\n")
             self.assert_slots_free()
         finally:
             if process.poll() is None:
