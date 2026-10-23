@@ -81,7 +81,7 @@ The escalation is durable. When rule 1, 2, or 3 first fires, `brigade.py` append
 
 ### What the agent says
 
-When light mode applies, the thread says so once, at the start, in two or three short sentences. One example is "Light mode is on, from this coordinator setting. This change gets one design sketch and no separate comment review. Tests, the build, and a review by another model family still run."
+When light mode applies, the thread says so once, at the start, in two or three short sentences. One example is "Light mode is on, from this coordinator setting. This change gets one design sketch and no separate comment review. Tests, the build, and review run, with a fallback if only the author's family can run."
 
 On an escalation it names the rule. One example is "This change runs in full mode because its lease covers `land.py`."
 
