@@ -51,7 +51,7 @@ class T3StateLockedTest(unittest.TestCase):
             str(raised.exception),
             "cannot read T3's database (database is locked); check that T3 Code is running and try again")
 
-    def test_a_lock_taken_after_open_t3_returns_does_not_interrupt_the_read_that_follows_it(self):
+    def test_the_read_after_open_t3_returns_is_not_interrupted_by_an_exclusive_lock_attempt(self):
         connection = MOD["open_t3"](self.path)
         self.addCleanup(connection.close)
         self.assertFalse(self.lock_is_free(), "the lock was granted, so the open held no read lock")
