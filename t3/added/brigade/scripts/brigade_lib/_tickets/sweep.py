@@ -102,8 +102,15 @@ def sweep_tickets(restaurant, days, action, confirm):
     An apply with no further change prints nothing to sweep and exits 0 before
     the digest compare. Any other apply writes only when confirm matches the
     digest of the same selector under the same lock hold, and a mismatch exits 1
-    with nothing changed. The goal is validated before any write.
+    with nothing changed. A repeated ticket id in rail.tsv refuses the list and
+    the apply with exit 1 and no change. The goal is validated before any write.
     """
+    rows = restaurant.rows("rail.tsv")
+    seen = set()
+    for row in rows:
+        if row["id"] in seen:
+            raise BrigadeError(f"duplicate ticket {row['id']} in rail.tsv; nothing changed")
+        seen.add(row["id"])
     labels = read_labels(restaurant, GOALS_ONLY)
     if isinstance(action, Assign):
         open_goal(labels, action.goal)
@@ -111,7 +118,7 @@ def sweep_tickets(restaurant, days, action, confirm):
     now = datetime.fromisoformat(seam.now().replace("Z", "+00:00"))
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    selected = sweep_select(restaurant.rows("rail.tsv"), labels, held, days, now)
+    selected = sweep_select(rows, labels, held, days, now)
     if action is None:
         return sweep_text(selected)
     planned = [(candidate, cells) for candidate in selected.candidates
