@@ -84,19 +84,22 @@ class LandingTest(SlotBase, LandingTestBase):
         slots.release(ordinary)
         self.assertEqual(slots.entries(), ["holder-0", "holder-1", "landing", "exclusive", "ordinary"])
 
-    def test_an_ordinary_caller_takes_a_free_worker_slot_while_an_exclusive_waits(self):
+    def test_a_worker_queued_after_a_waiting_exclusive_waits_for_the_drain(self):
         slots = SlotCallers(self, 2)
         holder = slots.enter(slots.start("holder"))
         exclusive = slots.start("exclusive", "--exclusive", stepped=True)
         self.assertEqual(slots.settle(exclusive), "waiting")
-        ordinary = slots.enter(slots.start("ordinary"))
+        ordinary = slots.start("ordinary", stepped=True)
+        self.assertEqual(slots.settle(ordinary), "waiting")
         self.assertFalse(exclusive.started)
         self.assertEqual(slots.step(exclusive), "waiting")
         slots.release(holder)
-        slots.release(ordinary)
         self.assertEqual(slots.step(exclusive), "started")
+        self.assertEqual(slots.step(ordinary), "waiting")
         slots.release(exclusive)
-        self.assertEqual(slots.entries(), ["holder", "ordinary", "exclusive"])
+        self.assertEqual(slots.step(ordinary), "started")
+        slots.release(ordinary)
+        self.assertEqual(slots.entries(), ["holder", "exclusive", "ordinary"])
 
     def test_an_exclusive_waiter_holds_no_slot_lock_while_it_waits(self):
         slots = SlotCallers(self, 2)

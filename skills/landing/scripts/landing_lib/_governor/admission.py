@@ -106,7 +106,9 @@ def _admit(demand, repo=None, command=None, cap=None, reason=None):
             waiting = _waiting(tickets, number)
             earlier = {waiter for _, waiter in waiting if _conflicts(waiter, kind)}
             taken = None
-            if not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
+            if kind == "worker" and "exclusive" in earlier:
+                pass
+            elif not any(_can_satisfy(waiter, handles, slots) for waiter in earlier):
                 taken = _try_take(demand, handles, slots)
             if taken is not None:
                 acquired = seam._cap_monotonic()
@@ -155,7 +157,8 @@ def _hide_hold():
 @contextlib.contextmanager
 def exclusive_slot(repo=None, command=None, cap=None, reason=None):
     """Hold every slot, landing included, so a benchmark runs on a quiet machine.
-    It waits without holding any slot, so other callers keep taking free slots until every slot is free at once.
+    It waits without holding any slot.
+    A worker demand queued after its ticket never takes a slot while its ticket is waiting.
     A later conflicting caller that waits on this governor leaves the slots when this caller could take every one of them."""
     if os.environ.get("LAND_SLOT"):
         raise seam.LandError("an exclusive slot must be the outermost slot; this command already runs inside one")
@@ -171,6 +174,7 @@ def slot(pool="worker", repo=None, command=None, *, count=1):
     """Hold `count` worker slots, or one slot of another pool. Landing checks use their own one-slot pool so workers never starve the queue.
     A command already inside a slot (LAND_SLOT set) runs without taking another, whatever its count, so nesting cannot deadlock.
     A caller that shares this governor leaves a free slot for an earlier conflicting ticket that can take it.
+    A worker demand queued after a waiting exclusive ticket never takes a slot while that ticket is waiting.
     A count above one locks that many worker files in one admission or none."""
     if os.environ.get("LAND_SLOT"):
         yield
