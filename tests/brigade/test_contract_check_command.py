@@ -10,7 +10,7 @@ from .support import BrigadeTest, setUpModule
 
 
 class ContractCheckCommandTest(BrigadeTest):
-    """The affected reader takes the landing contract's one check when no matching store records one, and edits verify takes it when the dish's store records none."""
+    """The affected reader takes the landing contract's one check when no matching store records one, and edits verify takes it when its store's `checkCommand` is absent or blank."""
 
     CONTRACT_CHECK = "make lint"
 

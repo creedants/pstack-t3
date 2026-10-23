@@ -145,7 +145,7 @@ def contract_check(root):
     """The landing contract's check command for root, or an empty string.
 
     It reads the checks value from the contract table of the land.db whose commonDir resolves to root's common git directory.
-    Each candidate is read through a read-only URI, and one the read cannot open is skipped.
+    It reads a candidate through a read-only URI, skipping one whose log has no index beside it and one the read cannot open.
     It returns that value stripped when it is a list of exactly one string other than "none", and an empty string in every other case.
     """
     common = _common_dir(root)
