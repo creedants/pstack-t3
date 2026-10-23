@@ -1,0 +1,2 @@
+- kind polish
+- `docs/light-mode/changes.md` qualifies the never-cut review item with a same-family read when only the author's family has a runnable seat, in the wording `t3/added/pstack-runtime/light.md` uses

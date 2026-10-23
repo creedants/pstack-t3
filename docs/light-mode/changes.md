@@ -53,7 +53,7 @@ A send-back in light mode is a fix attempt with a fresh worker. Its brief carrie
 
 - Tests and the build gate. The worker runs the project test command and build before the gate. The queue runs its configured checks.
 - The landing queue checks. `land.py` spends no model usage. Light mode has nothing to gain there.
-- One review by another model family at every head SHA. [The gate review](#the-gate-review) defines it for brigade and for standalone playbooks.
+- One review by another model family at every head SHA, or a same-family read when only the author's family has a runnable seat. [The gate review](#the-gate-review) defines it for brigade and for standalone playbooks.
 - Re-review of every fix attempt. A review reads the whole diff against its base on round one. A later round reads the fix diff since the last reviewed SHA, per [Never cut](../../t3/runtime.md#never-cut).
 - Owner fences. Leases, the `--owner` generation, worktrees, and the pass-at-head gate are code, and they cost nothing.
 - A fresh worker for every send-back. See [The fresh-worker rule](rules.md#the-fresh-worker-rule).
