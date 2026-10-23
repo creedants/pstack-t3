@@ -1,0 +1,3 @@
+- kind fix
+- `scripts/_run_tests/worker.py` starts a daemon thread in `worker_main` that exits the worker when `os.getppid` no longer matches the pid at entry, so a worker ends after its runner dies where `prctl` is absent
+- `tests/runner_tests/test_parent_exit.py` pins a worker started without `preexec_fn` that exits within 10 seconds after its parent is killed
