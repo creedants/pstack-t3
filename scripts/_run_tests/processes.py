@@ -18,6 +18,58 @@ except (ImportError, OSError, AttributeError):
     _prctl = None
 
 
+_lifeline: tuple[int, int] | None = None
+
+
+def lifeline() -> int | None:
+    """Return the read end of the runner lifeline pipe. Return None where prctl is present."""
+    if _prctl is not None:
+        return None
+    global _lifeline
+    if _lifeline is None:
+        _lifeline = os.pipe()
+    return _lifeline[0]
+
+
+def _watch(lifeline_fd: int, worker: int) -> None:
+    """Block until the runner pipe reports EOF or fails, then send the worker SIGKILL."""
+    try:
+        while True:
+            try:
+                chunk = os.read(lifeline_fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+    finally:
+        try:
+            os.kill(worker, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os._exit(0)
+
+
+def follow_runner(runner: int, lifeline_fd: int | None) -> bool:
+    """Return False when the parent is not the runner. Otherwise start the watcher when a lifeline is given and return True."""
+    if os.getppid() != runner:
+        return False
+    if lifeline_fd is None:
+        return True
+    assert os.getpid() == os.getpgrp()
+    worker = os.getpid()
+    first = os.fork()
+    if first != 0:
+        _, status = os.waitpid(first, 0)
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            raise RuntimeError("run_tests: the lifeline watcher failed to start")
+        os.close(lifeline_fd)
+        return True
+    second = os.fork()
+    if second != 0:
+        os._exit(0)
+    _watch(lifeline_fd, worker)
+
+
 def die_with_parent() -> None:
     """Ask the kernel to send this process SIGKILL when the runner ends. Does nothing where prctl is absent."""
     if _prctl is not None:
@@ -112,7 +164,7 @@ def child_env(environ: dict[str, str], home: Path, start: Path) -> dict[str, str
     return env
 
 
-def start_child(args: list[str], home: Path, start: Path) -> subprocess.Popen:
+def start_child(args: list[str], home: Path, start: Path, lifeline: int | None = None) -> subprocess.Popen:
     for name in ("tmp", "state", "config"):
         (home / name).mkdir(parents=True)
     # A file, not a pipe. A process that outlives its test cannot hold the runner's read open.
@@ -121,4 +173,5 @@ def start_child(args: list[str], home: Path, start: Path) -> subprocess.Popen:
         return subprocess.Popen([sys.executable, str(ENTRY), *args], cwd=start.parent,
                                 env=child_env(dict(os.environ), home, start), stdin=subprocess.DEVNULL,
                                 stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
-                                preexec_fn=die_with_parent)
+                                preexec_fn=die_with_parent,
+                                pass_fds=(lifeline,) if lifeline is not None else ())

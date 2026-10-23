@@ -1,0 +1,7 @@
+- kind fix
+- `scripts/_run_tests/processes.py` holds the write end of one pipe in the runner for its whole life and gives each worker the read end where prctl is absent
+- `scripts/_run_tests/pool.py` writes the runner pid and the lifeline read end into each worker spec and passes the read end through pass_fds
+- `scripts/_run_tests/worker.py` exits as it starts when its parent is not the runner that started it
+- `scripts/_run_tests/worker.py` where prctl is absent forks a watcher into that worker's process group and the watcher sends that worker SIGKILL once the pipe reports the runner process has ended and it signals no other process
+- `scripts/run_tests.py` states the pipe rule and that the listing child and the processes a test starts run on after a runner that never reached its own cleanup
+- `tests/runner_tests/test_parent_exit.py` pins a startup race exit within 10 seconds and a GIL hold kill within 10 seconds and a watcher that ends with its worker
