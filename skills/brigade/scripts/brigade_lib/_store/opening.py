@@ -380,8 +380,8 @@ def _reserve_target(directory, target, refused):
     """Claim the marker beside target and create the empty directory this rename fills, or adopt the one it left.
 
     The caller holds the project directory lock, so no other open or rename creates or moves a directory at target
-    until this call returns. A target is removed only when this call created it or adopted it from this directory's
-    marker, and a marker is removed only when this call created or adopted it. A rerun adopts only its own recorded
+    until this call returns. A target is removed only when this run created it or adopted it from this directory's
+    marker, and a marker is removed only when this run created or adopted it. A rerun adopts only its own recorded
     empty reservation.
     """
     marker = target.parent / f".rename-{target.name}.json"
