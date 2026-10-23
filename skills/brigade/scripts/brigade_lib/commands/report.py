@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._reporting.status import claims_cap_reports
 from brigade_lib.compact import status_lines
 from brigade_lib.leases import contract_mode, running_workers, workers_line
 from brigade_lib.reporting import REPAIR, log_rulings, report, reporting_of, status_label_lines, status_line, unclaimed_reports, walk
@@ -129,6 +130,9 @@ def handle_locked(restaurant, args, view):
                       file=sys.stderr)
         for ident, state in unclaimed_reports(restaurant):
             print(f"brigade: warning: reports/{ident}.md has no Claims check line; {ident} is {state}", file=sys.stderr)
+        for ident, runs in claims_cap_reports(restaurant):
+            print(f"brigade: warning: reports/{ident}.md names {runs} claims check runs; the cap is two per round",
+                  file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
         return text

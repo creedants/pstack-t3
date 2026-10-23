@@ -196,7 +196,8 @@ def verify_rule(land, picked_layout):
         "Run the full verification chain once, after the last commit. ",
         "The chain is the first bullet of this section. ",
         "A later commit that changes only prose does not rerun it. ",
-        "Run the claims check again after any later edit to prose. ",
+        "The claims check runs at most twice per round, the first check and one recheck after fixing what it flagged. "
+        "Prose edited after the recheck is settled by the worker, and each flag kept is listed with one line of reason in the report. ",
         "Prose is a change note, a comment, a docstring, help text, or a report sentence the check covered. ",
     ])
     if picked_layout is not None:

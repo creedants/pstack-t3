@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam, spend
 from brigade_lib.leases import holding_blocks
-from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES
+from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, report_threads
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural
 from brigade_lib.store import CLOSED_GOAL_STATES, KINDS, Restaurant, holder_prefix, is_admin, parse_row, reporting_of, siblings, store_path
 from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell
@@ -142,5 +142,28 @@ def unclaimed_reports(restaurant):
         if not CLAIMS_LINE.search(text):
             unclaimed.append((dish["id"], dish["state"]))
     return unclaimed
+
+
+CLAIMS_CHECK_ROLE = "claims check"
+CLAIMS_RUN_CAP = 2
+
+
+def claims_cap_reports(restaurant):
+    """(id, count) of each dish in CLAIMS_STATES whose reports/<id>.md ## Threads section holds more claims check children than CLAIMS_RUN_CAP.
+
+    The report is decoded as UTF-8 with replacement. An entry that report_stat does not call a `file` is not read.
+    A child comes from report_threads, so a line of the section that names no child is not counted.
+    """
+    over = []
+    for dish in restaurant.rows("dishes.tsv"):
+        name = f"{dish['id']}.md"
+        if dish["state"] not in CLAIMS_STATES or seam.report_entry(restaurant, name) != "file":
+            continue
+        text = (restaurant.dir / "reports" / name).read_bytes().decode("utf-8", "replace")
+        children, _ = report_threads(text)
+        runs = sum(1 for child in children if child["role"] == CLAIMS_CHECK_ROLE)
+        if runs > CLAIMS_RUN_CAP:
+            over.append((dish["id"], runs))
+    return over
 
 
