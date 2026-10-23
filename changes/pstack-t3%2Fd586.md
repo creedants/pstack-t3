@@ -1,4 +1,0 @@
-- kind fix
-- A late verdict writes no helper row of `threads.tsv`, so a helper the next attempt reports is announced at that attempt's verdict instead of staying unannounced.
-- The reviewer row a late verdict writes is unchanged, and a late verdict still prints no helper line.
-- `tests/brigade/reviews/test_late_helper_rows.py` pins the late verdict case and a stale report whose helper a member row bound at the current attempt.

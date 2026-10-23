@@ -1,0 +1,5 @@
+- kind fix
+- True starts collapse consecutive in-progress dish log rows and keep the first of each run.
+- The current worker attempt maps to its true start by position, or to the last true start when the attempt outnumbers them.
+- An earlier helper row with a smaller attempt and a time at or after that true start is late-written and is ignored in the earlier-row check only.
+- All other earlier helper rows still suppress the current attempt announcement.

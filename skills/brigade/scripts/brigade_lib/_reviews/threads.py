@@ -128,14 +128,15 @@ def child_attempt(rows, thread):
     return str(max(used, 1))
 
 
-def recorded_children(rows, children, sha="", late=False):
+def recorded_children(rows, children, sha="", late=False, ignored=()):
     """Stored ids of `children` whose binding `rows` holds for the reviewed attempt, in report order.
 
     A late verdict announces no helper. An empty SHA announces no helper. The current attempt is
     the max worker attempt in `rows`, or 1 when none holds a worker row. Each child attempt comes
     from `child_attempt`. A child is kept only when its attempt equals the current attempt, when
     its binding rows hold, and when no earlier row holds the same role and stored thread at a
-    smaller attempt. The earlier row check excludes helpers with an earlier same-role row.
+    smaller attempt. The earlier row check skips bindings in `ignored`. All other earlier rows
+    still suppress.
     """
     if late:
         return []
@@ -144,6 +145,7 @@ def recorded_children(rows, children, sha="", late=False):
     worker_attempts = [int(row["attempt"]) for row in rows if row["role"] in WORKER_ROLES]
     current = str(max(worker_attempts)) if worker_attempts else "1"
     held = {(row["attempt"], row["role"], stored("threads.tsv", "thread", row["thread"])) for row in rows}
+    skip = set(ignored)
     found = []
     for child in children:
         thread = stored("threads.tsv", "thread", child["thread"])
@@ -153,7 +155,9 @@ def recorded_children(rows, children, sha="", late=False):
         if (attempt, child["role"], thread) not in held:
             continue
         if any(row["role"] == child["role"] and stored("threads.tsv", "thread", row["thread"]) == thread
-               and int(row["attempt"]) < int(attempt) for row in rows):
+               and int(row["attempt"]) < int(attempt)
+               and (str(row["attempt"]), row["role"], stored("threads.tsv", "thread", row["thread"])) not in skip
+               for row in rows):
             continue
         found.append(thread)
     return found

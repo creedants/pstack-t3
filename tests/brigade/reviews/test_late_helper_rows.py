@@ -9,6 +9,7 @@ from ..support import (
     THREAD_C,
     THREAD_D,
     call,
+    json,
     _owner_words,
 )
 
@@ -56,3 +57,25 @@ class LateHelperRowTest(BrigadeTest):
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}"])
+
+    def test_late_helper_thread_stays_in_spend_after_report_replaced(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back")
+        self.brigade("dish", "D1", "--thread", THREAD_D)
+        self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
+        self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--author", CLAUDE, "--verifier", CODEX,
+                                       "--reviewer-thread", THREAD_C, "--late"),
+                         [f"archive thread: {THREAD_C}"])
+        late = json.loads(self.brigade("spend", "--json"))
+        self.assertEqual(late["rows"][0]["threads"], 4)
+        self.assertIn(THREAD_B, (self.at / "threads.tsv").read_text())
+        self.attempt_report("findings\n")
+        self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--author", CLAUDE, "--verifier", CODEX,
+                                       "--reviewer-thread", THREAD_C),
+                         [f"archive thread: {THREAD_C}"])
+        current = json.loads(self.brigade("spend", "--json"))
+        self.assertEqual(current["rows"][0]["threads"], 4)
+        self.assertIn(THREAD_B, (self.at / "threads.tsv").read_text())

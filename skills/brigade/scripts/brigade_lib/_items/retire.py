@@ -6,7 +6,7 @@ from brigade_lib._leases.claims import holder, holder_leases
 from brigade_lib._reviews.threads import recorded_children
 from brigade_lib.reviews import report_threads, thread_binding, worker_report, write_threads
 from brigade_lib.shared import BrigadeError, clean, stored
-from brigade_lib.store import IN_FLIGHT_STATES, WORKER_ROLES
+from brigade_lib.store import CHILD_ROLES, IN_FLIGHT_STATES, WORKER_ROLES
 
 def retired_worker_threads(restaurant, ident):
     """Worker thread ids this dish already used on an earlier attempt."""
@@ -41,7 +41,11 @@ def round_helpers(restaurant, dish_id, sha="", late=False):
     only when reports/<dish>.md exists and its mtime is at or after the last attempt start.
     Attempt starts are the dish in-progress log rows, oldest first, or the dish at when none exists, from
     brigade_lib._items.rounds.attempt_starts, the same rule report_is_current uses. A stale report
-    announces no helper. Otherwise each child attempt comes from child_attempt through
+    announces no helper. True starts collapse consecutive in-progress log rows and keep the first
+    of each run. The current attempt maps to its true start by position, or to the last true start
+    when the attempt outnumbers them. An earlier helper row with a smaller attempt and a time at
+    or after that true start is late-written and is ignored in the earlier-row check only. All other
+    earlier rows still suppress. Otherwise each child attempt comes from child_attempt through
     recorded_children with the SHA and late context.
     """
     if late:
@@ -65,7 +69,52 @@ def round_helpers(restaurant, dish_id, sha="", late=False):
     if not children:
         return []
     rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
-    return recorded_children(rows, children, sha, late)
+    worker_attempts = [int(row["attempt"]) for row in rows if row["role"] in WORKER_ROLES]
+    current = str(max(worker_attempts)) if worker_attempts else "1"
+    starts = _true_attempt_starts(restaurant, dish_id)
+    current_start = starts[min(int(current) - 1, len(starts) - 1)]
+    ignored = _late_written(rows, current, current_start)
+    return recorded_children(rows, children, sha, late, ignored)
+
+
+def _stamp(text):
+    """Parse an ISO timestamp as UTC."""
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _true_attempt_starts(restaurant, dish_id):
+    """First in-progress log time of each consecutive run for the dish, oldest first."""
+    _, dish = restaurant.find("dishes.tsv", dish_id)
+    dish_rows = [row for row in restaurant.rows("log.tsv") if row["kind"] == "dish" and row["id"] == dish_id]
+    starts = []
+    prev = ""
+    for row in dish_rows:
+        if row["state"] == "in-progress" and prev != "in-progress":
+            starts.append(_stamp(row["at"]))
+        prev = row["state"]
+    if not starts:
+        starts = [_stamp(dish["at"])]
+    return starts
+
+
+def _late_written(rows, current, start):
+    """Bindings of earlier helper rows written at or after the current attempt start."""
+    found = set()
+    for row in rows:
+        if row["role"] not in CHILD_ROLES:
+            continue
+        if int(row["attempt"]) >= int(current):
+            continue
+        try:
+            written = _stamp(row["at"])
+        except ValueError:
+            continue
+        if written >= start:
+            found.add((str(row["attempt"]), row["role"], stored("threads.tsv", "thread", row["thread"])))
+    return found
 
 
 def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only=None, sha="", late=False):

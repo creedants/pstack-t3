@@ -91,9 +91,7 @@ def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note=""
                                    "author": author, "verifier": verifier, "note": note, "report": report,
                                    "member": "yes" if member else "", "reason": reason})
     rows = [("reviewer", reviewer_thread, verifier)] if reviewer_thread else []
-    # A late verdict announces no helper, so it records no helper row.
-    if not late:
-        rows += [(child["role"], child["thread"], child["seat"]) for child in children]
+    rows += [(child["role"], child["thread"], child["seat"]) for child in children]
     write_threads(restaurant, dish_id, rows)
     if member:
         return f"{dish_id}: member {verdict} on record; {dish_id} stays {dish['state']}"
