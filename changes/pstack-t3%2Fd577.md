@@ -1,0 +1,3 @@
+- kind polish
+- Move five archive cases out of `tests/brigade/affected/test_split1.py` into `tests/brigade/affected/test_split1b.py` through `tests/brigade/affected/test_split1f.py` with one case in each file.
+- Keep every assertion in the moved cases unchanged.
