@@ -1,12 +1,12 @@
 import sys
 from datetime import datetime, timezone
 from brigade_lib import seam
-from brigade_lib._items.rounds import attempt_starts
+from brigade_lib._items.rounds import ATTEMPT_AFTER, attempt_starts
 from brigade_lib._leases.claims import holder, holder_leases
 from brigade_lib._reviews.threads import recorded_children
 from brigade_lib.reviews import report_threads, thread_binding, worker_report, write_threads
 from brigade_lib.shared import BrigadeError, clean, stored
-from brigade_lib.store import IN_FLIGHT_STATES, WORKER_ROLES
+from brigade_lib.store import CHILD_ROLES, IN_FLIGHT_STATES, WORKER_ROLES
 
 def retired_worker_threads(restaurant, ident):
     """Worker thread ids this dish already used on an earlier attempt."""
@@ -39,10 +39,21 @@ def round_helpers(restaurant, dish_id, sha="", late=False):
 
     A late verdict announces no helper. An empty SHA announces no helper. The report is current
     only when reports/<dish>.md exists and its mtime is at or after the last attempt start.
-    Attempt starts are the dish in-progress log rows, oldest first, or the dish at when none exists, from
-    brigade_lib._items.rounds.attempt_starts, the same rule report_is_current uses. A stale report
-    announces no helper. Otherwise each child attempt comes from child_attempt through
-    recorded_children with the SHA and late context.
+    Attempt starts come from brigade_lib._items.rounds.attempt_starts. The same rule decides
+    report currency. A stale report announces no helper. A departure
+    is a dish log row whose state is in ATTEMPT_AFTER. record_pass calls write_threads, then
+    restaurant.update unless the verdict is late or a member. A send-back verdict that is not late
+    and not a member writes helper rows before its own departure in the same command. A late verdict
+    writes helper rows and adds no departure in the same command. Block, resume and worker replacement
+    are not departures. An earlier helper row is
+    ignored in the earlier-row check only when a selected departure lies at or after the start of
+    that row own attempt and strictly before that row written time. When no worker row with that
+    attempt holds a parsable start, any departure strictly before that row written time selects the
+    row. The start of an attempt is the minimum parsable start among worker rows with that attempt
+    number that hold a start. The start is None when no row qualifies. The selected departure is
+    the departure that meets the applicable bounds for that row. The ignored binding is the row attempt, role
+    and stored thread. All other earlier rows still suppress. Otherwise each child attempt comes
+    from child_attempt through recorded_children with the SHA and late context.
     """
     if late:
         return []
@@ -65,7 +76,76 @@ def round_helpers(restaurant, dish_id, sha="", late=False):
     if not children:
         return []
     rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
-    return recorded_children(rows, children, sha, late)
+    worker_attempts = [int(row["attempt"]) for row in rows if row["role"] in WORKER_ROLES]
+    current = str(max(worker_attempts)) if worker_attempts else "1"
+    departures = _departures(restaurant, dish_id)
+    ignored = _late_written(rows, current, departures)
+    return recorded_children(rows, children, sha, late, ignored)
+
+
+def _stamp(text):
+    """Parse an ISO timestamp as UTC."""
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _attempt_start(rows, attempt):
+    """Minimum parsable start among worker rows with this attempt that hold a start. It returns None when no row qualifies."""
+    starts = []
+    for row in rows:
+        if row["role"] not in WORKER_ROLES:
+            continue
+        if str(row["attempt"]) != str(attempt):
+            continue
+        if not row["start"]:
+            continue
+        try:
+            starts.append(_stamp(row["start"]))
+        except ValueError:
+            continue
+    return min(starts) if starts else None
+
+
+def _departures(restaurant, dish_id):
+    """Departure times for the dish."""
+    found = []
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] != "dish" or row["id"] != dish_id:
+            continue
+        if row["state"] not in ATTEMPT_AFTER:
+            continue
+        try:
+            found.append(_stamp(row["at"]))
+        except ValueError:
+            continue
+    return found
+
+
+def _late_written(rows, current, departures):
+    """Earlier helper bindings with a departure before their write and, when known, at or after their worker start."""
+    found = set()
+    for row in rows:
+        if row["role"] not in CHILD_ROLES:
+            continue
+        if int(row["attempt"]) >= int(current):
+            continue
+        try:
+            written = _stamp(row["at"])
+        except ValueError:
+            continue
+        begun = _attempt_start(rows, row["attempt"])
+        selected = False
+        for departure in departures:
+            if begun is not None and departure < begun:
+                continue
+            if departure < written and (begun is None or begun <= departure):
+                selected = True
+                break
+        if selected:
+            found.add((str(row["attempt"]), row["role"], stored("threads.tsv", "thread", row["thread"])))
+    return found
 
 
 def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only=None, sha="", late=False):
