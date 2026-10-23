@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime, timedelta, timezone
 
 from ..support import BrigadeTest
 
@@ -149,6 +150,69 @@ class SweepMixin:
                                       ok=False),
                          "brigade: duplicate ticket T1 in rail.tsv; nothing changed")
         self.assertEqual(self.store_files(), before)
+
+    def test_sweep_excludes_a_ticket_filed_just_under_n_days_ago(self):
+        self.open()
+        ident = self.old_untagged(summary="edge", days=40)
+        stamp = (datetime.now(timezone.utc) - timedelta(days=30) + timedelta(minutes=1)).isoformat()
+        self.hand_edit("rail.tsv", ident, at=stamp)
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30"), "nothing to sweep")
+
+    def test_sweep_lists_a_ticket_filed_just_over_n_days_ago(self):
+        self.open()
+        ident = self.old_untagged(summary="past", days=30)
+        digest = hashlib.sha256(ident.encode()).hexdigest()[:32]
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30"),
+                         f"{ident} 30d: past\n1 ticket; digest {digest}")
+
+    def test_sweep_refuses_a_malformed_filed_date_with_nothing_changed(self):
+        self.open()
+        self.old_untagged(days=40)
+        self.hand_edit("rail.tsv", "T1", at="not-a-date")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30", ok=False),
+                         "brigade: bridge-kit/perf/rail.tsv line 2 is malformed; fix or remove it")
+        self.assertEqual(self.store_files(), before)
+
+    def test_sweep_refuses_a_missing_filed_date_with_nothing_changed(self):
+        self.open()
+        self.old_untagged(days=40)
+        self.hand_edit("rail.tsv", "T1", at="")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30", "--drop", "--confirm", "0" * 32,
+                                      ok=False),
+                         "brigade: bridge-kit/perf/rail.tsv line 2 is malformed; fix or remove it")
+        self.assertEqual(self.store_files(), before)
+
+    def test_sweep_apply_refuses_a_missing_or_stale_owner_while_list_writes_nothing(self):
+        self.open()
+        self.old_untagged(days=40)
+        digest = self.sweep_digest(self.brigade("ticket", "sweep", "--older-than", "30"))
+        self.brigade("set", "--thread", "t1")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30", owner=False),
+                         f"T1 40d: old work\n1 ticket; digest {digest}")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30", "--drop", "--confirm", digest,
+                                      owner=False, ok=False),
+                         "brigade: this store is owned by t1@1; pass --owner <thread>@<generation> from status")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.run_at(self.at, "--owner", "other@1", "ticket", "sweep", "--older-than", "30",
+                                     "--drop", "--confirm", digest, owner=False, ok=False),
+                         "brigade: owner other@1 is stale; this store is owned by t1@1")
+        self.assertEqual(self.store_files(), before)
+
+    def test_sweep_lists_a_ticket_with_a_dangling_goal_and_assigns_over_it(self):
+        self.open()
+        self.goal("first")
+        ident = self.old_untagged(summary="stray", days=40)
+        self.hand_edit("rail.tsv", ident, goal="G9")
+        digest = hashlib.sha256(ident.encode()).hexdigest()[:32]
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30"),
+                         f"{ident} 40d: stray\n1 ticket; digest {digest}")
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30", "--goal", "G1", "--confirm", digest),
+                         f"{ident} goal G1")
+        self.assertEqual(self.table_row(self.at, "rail.tsv", ident)["goal"], "G1")
 
     def test_sweep_refuses_confirm_without_action_and_action_without_confirm(self):
         self.open()
