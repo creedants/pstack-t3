@@ -323,7 +323,7 @@ class RunnerCase:
         return RAN.search(self.serial().stderr).group(1)
 
     def track(self, proc):
-        """Record a process the test started with subprocess.Popen. Cleanup ends it through a pidfd taken here. The platform offers a pidfd on Linux only."""
+        """Record a process the test started with subprocess.Popen. Cleanup ends it through a pidfd taken here where /proc reports a start time and the platform offers a pidfd."""
         self.remember(proc.pid)
         self.addCleanup(self.end, proc.pid)
 
@@ -368,7 +368,7 @@ class RunnerCase:
             os.close(handle)
 
     def pid_from(self, name, limit=30):
-        """Return the pid code in the temporary project wrote with marks.mark. Record the process only where the mark carries the start time /proc still reports for it, and cleanup ends it through the pidfd taken here."""
+        """Return the pid code in the temporary project wrote with marks.mark. Record the process only where the mark carries the start time /proc still reports for it, and cleanup ends it through the pidfd taken here where the platform offers one."""
         path = self.proj / name
         deadline = time.monotonic() + limit
         while not path.exists():

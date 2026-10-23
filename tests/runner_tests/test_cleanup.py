@@ -133,6 +133,7 @@ class CleanupTest(RunnerCase, unittest.TestCase):
     def test_cleanup_leaves_a_pid_whose_recorded_start_time_differs(self):
         """Cleanup signals no process for a record whose start time /proc does not report for that pid, and the sleeper answers after end."""
         sleeper = self.responder()
+        self.remember(sleeper.pid)
         self.starts[sleeper.pid] = "0"
         self.end(sleeper.pid)
         self.assert_answers(sleeper)
@@ -147,7 +148,7 @@ class CleanupTest(RunnerCase, unittest.TestCase):
 
     @unittest.skipUnless(LINUX, "the test reads /proc")
     def test_cleanup_leaves_a_pid_whose_mark_carries_no_start_time(self):
-        """A mark that carries no start time names no process the test started. Cleanup reads that mark as a pid it cannot attribute, records nothing, and the sleeper answers after end."""
+        """A mark that carries no start time cannot be tied to the process the test started. Cleanup records nothing from it, and the sleeper answers after end."""
         sleeper = self.responder()
         (self.proj / "worker").write_text(str(sleeper.pid))
         worker = self.pid_from("worker")
