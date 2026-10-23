@@ -105,7 +105,7 @@ class SweepMixin:
         self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["state"], "waiting")
         self.assertEqual(self.table_row(self.at, "rail.tsv", "T2")["state"], "waiting")
 
-    def test_sweep_refuses_a_stale_digest_when_the_id_lists_share_only_eight_digits_of_their_sha256(self):
+    def test_sweep_refuses_a_stale_digest_when_the_id_lists_share_their_first_eight_sha256_hex_digits(self):
         self.open()
         for number in range(1, 25):
             self.old_untagged(summary=f"work {number}", days=40)
