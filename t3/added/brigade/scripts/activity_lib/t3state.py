@@ -159,15 +159,16 @@ def t3_database(flag, environ, home):
 
 
 def open_t3(path):
-    """With a write-ahead log and its index beside the database, mode=ro reads the log and creates no file.
-    With no log, mode=ro would create both files, so the database is opened immutable.
+    """mode=ro reads T3's database through SQLite's locks, so the read is one committed snapshot and changes no committed data.
+    A read-only open can create an empty log and index beside a database whose last writer just closed.
+    With a write-ahead log and its index beside the database, the read reads that log.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
     """
     log, index = Path(f"{path}-wal").exists(), Path(f"{path}-shm").exists()
     if log and not index:
         raise SourceError("T3's database has a write-ahead log with no index beside it; start T3 Code and run this again")
     try:
-        connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro" + ("" if log else "&immutable=1"), uri=True, timeout=2, isolation_level=None)
+        connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True, timeout=2, isolation_level=None)
     except sqlite3.Error as error:
         raise unreadable(error, path) from None
     try:
