@@ -1,0 +1,2 @@
+- kind fix
+- `brigade.py open --rename` adopts an empty reservation marker when the target is missing, so a rerun after a kill between the marker claim and its first write moves the store.
