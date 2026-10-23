@@ -48,3 +48,32 @@ class HelperArchiveTest(BrigadeTest):
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}"])
+
+    def test_late_verdict_at_old_sha_announces_no_replacement_helper(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.record("abc", "send-back", "--note", "the attempt")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.brigade("dish", "D1", "--thread", THREAD_D)
+        self.attempt_report("findings\n\n## Threads\n\n"
+                            f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n")
+        self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--author", CLAUDE, "--verifier", CODEX,
+                                       "--reviewer-thread", THREAD_C, "--late"),
+                         [f"archive thread: {THREAD_C}"])
+
+    def test_stale_report_does_not_reannounce_helper(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.attempt_report("findings\n\n## Threads\n\n"
+                            f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n")
+        self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--author", CLAUDE, "--verifier", CODEX,
+                                       "--reviewer-thread", THREAD_C),
+                         [f"archive thread: {THREAD_C}", f"archive thread: {THREAD_B}"])
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.brigade("dish", "D1", "--thread", THREAD_D)
+        self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--author", CLAUDE, "--verifier", CODEX,
+                                       "--reviewer-thread", THREAD_C),
+                         [f"archive thread: {THREAD_C}"])

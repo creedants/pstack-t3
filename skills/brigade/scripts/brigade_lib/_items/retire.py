@@ -1,5 +1,7 @@
 import sys
+from datetime import datetime, timezone
 from brigade_lib import seam
+from brigade_lib._items.rounds import attempt_starts
 from brigade_lib._leases.claims import holder, holder_leases
 from brigade_lib._reviews.threads import recorded_children
 from brigade_lib.reviews import report_threads, thread_binding, worker_report, write_threads
@@ -32,8 +34,30 @@ def worker_bindings(restaurant, ident):
             if row["dish"] == ident and row["role"] in WORKER_ROLES and row["thread"]}
 
 
-def round_helpers(restaurant, dish_id):
-    """Stored helper threads the worker report lists and the table holds for this round."""
+def round_helpers(restaurant, dish_id, sha="", late=False):
+    """Stored helper threads the worker report lists and the table holds for the reviewed attempt.
+
+    A late verdict announces no helper. An empty SHA announces no helper. The report is current
+    only when reports/<dish>.md exists and its mtime is at or after the last attempt start.
+    Attempt starts are the dish in-progress log rows, oldest first, from
+    brigade_lib._items.rounds.attempt_starts, the same rule report_is_current uses. A stale report
+    announces no helper. Otherwise each child attempt comes from child_attempt through
+    recorded_children with the SHA and late context.
+    """
+    if late:
+        return []
+    if not sha:
+        return []
+    _, dish = restaurant.find("dishes.tsv", dish_id)
+    path = restaurant.dir / "reports" / f"{dish_id}.md"
+    if not path.exists():
+        return []
+    written = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    start = attempt_starts(restaurant, dish)[-1]
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if written < start:
+        return []
     body = worker_report(restaurant, dish_id)
     if not body:
         return []
@@ -41,10 +65,10 @@ def round_helpers(restaurant, dish_id):
     if not children:
         return []
     rows = [row for row in restaurant.rows("threads.tsv") if row["dish"] == dish_id]
-    return recorded_children(rows, children)
+    return recorded_children(rows, children, sha, late)
 
 
-def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only=None):
+def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only=None, sha="", late=False):
     """Print one `archive thread: <id>` line on standard error for each thread to archive at a finish point.
 
     `occasion` is "review" for the thread a `pass record` recorded and each helper thread its report lists,
@@ -52,6 +76,8 @@ def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only
     dropped item used. `thread` is the recorded id, or the id a new worker was bound to. `replaced` is the
     dish's thread cell read before that write. `only` holds the ids the caller allows to print after an
     unlocked step. None means no restriction.
+    `sha` is the reviewed SHA. `late` marks a late verdict. A review announces helpers only when the
+    report belongs to the reviewed attempt.
     A set means only ids in it print. The coordinator's own thread, a thread another item in flight holds,
     a blank id, and a repeated id are left out. A review also leaves out the item's current worker and its
     open worker rows. The call writes no table.
@@ -60,7 +86,7 @@ def announce_archive(restaurant, dish_id, occasion, thread="", replaced="", only
     workers = [row["thread"] for row in rows if row["role"] in WORKER_ROLES and row["thread"]]
     if occasion == "review":
         if clean(thread):
-            found = [thread, *round_helpers(restaurant, dish_id)]
+            found = [thread, *round_helpers(restaurant, dish_id, sha, late)]
         else:
             found = [thread]
     elif occasion == "replaced":
