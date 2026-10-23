@@ -1,5 +1,6 @@
 import argparse
 import enum
+import errno
 import fcntl
 import http.server
 import json
@@ -164,9 +165,12 @@ def open_t3(path):
     A read-only open can create a log with no frames and a shared-memory index beside a database whose last writer just closed.
     With a write-ahead log and its index beside the database, the read reads that log.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
+    With a log and no index, the refusal names a conflicting write lock held by another process when the probe finds one.
     """
     log, index = Path(f"{path}-wal").exists(), Path(f"{path}-shm").exists()
     if log and not index:
+        if held_exclusively(path):
+            raise SourceError("another process holds T3's database exclusively; wait for it to finish and run this again")
         raise SourceError("T3's database has a write-ahead log with no index beside it; start T3 Code and run this again")
     try:
         connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True, timeout=2, isolation_level=None)
@@ -181,6 +185,25 @@ def open_t3(path):
         connection.close()
         raise unreadable(error, path) from None
     return connection
+
+
+def held_exclusively(path):
+    """True when another process holds a write lock on the database file.
+
+    SQLite takes POSIX record locks on that file. A shared lock that is refused at once reports the writer's lock.
+    The shared lock is released by the close, and the probe creates no index, writes nothing, and reads no log.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        fcntl.lockf(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError as error:
+        return error.errno in (errno.EACCES, errno.EAGAIN)
+    finally:
+        os.close(descriptor)
+    return False
 
 
 def unreadable(error, path):
