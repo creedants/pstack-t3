@@ -1,6 +1,6 @@
 ---
 name: statechart
-description: "Draw how any system moves between states, such as a product flow, a protocol, or a service, as a Mermaid statechart from a TLA+ model. Each invariant bug is a numbered path with blue borders to a state that breaks a rule. Use for /statechart, to show a bug as a path through states, or to turn an agreed chart into a TLA+ skeleton."
+description: "Draw how any system moves between states, such as a product flow, a protocol, or a service, as a Mermaid statechart from a TLA+ model. Each invariant bug is a numbered path to a state that breaks a rule. Use for /statechart, to show a bug as a path through states, or to turn an agreed chart into a TLA+ skeleton."
 ---
 
 # Statechart
@@ -9,7 +9,7 @@ Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers
 
 The chart shows how a system moves between states, in the words of the person who reads it. The scripts call that person the reader, as in `readerActions` and reader steps. The reader decides whether the behavior is right. The reader can be a PM who reads a product flow, an engineer who reads a protocol or a service, or a reviewer who reads a design. Label each state with what the reader can observe or cares about, such as "Paying" in an app or "Lease held, write pending" in a lock service. Label each step with the event that moves the system, such as "tap Pay" in an app, "the request reads the count" in a service, or "the lease expires" in a lock service. Keep variable and action names out of labels.
 
-Run `node <skill dir>/scripts/statechart.mjs --help` for the commands and for how to read a chart. Work in a scratch folder outside the repo. The command writes its files next to its input by default: the `NAME-statechart` output folder, and `NAME.tla`, `NAME.cfg`, and `NAME.map.mjs` for `from-chart`. `--out DIR` sets the output folder. The first run installs TLC and Java with mise, which downloads about 305 MB and needs the network. The help's TLC section tells how to use a TLC and Java that you have.
+Run `node <skill dir>/scripts/statechart.mjs --help` for the commands and for how to read a chart. Work in a scratch folder outside the repo. The command writes its files next to its input by default: the `NAME-statechart` output folder, and `NAME.tla`, `NAME.cfg`, and `NAME.map.mjs` for `from-chart`. `--out DIR` sets the output folder for `from-spec` and `from-chart`, and `render --out FILE` names the PNG. The first run installs TLC and Java with mise, which downloads about 305 MB and needs the network. The help's TLC section tells how to use a TLC and Java that you have.
 
 ## Pick the direction
 
