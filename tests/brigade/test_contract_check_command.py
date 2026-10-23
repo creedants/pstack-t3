@@ -21,7 +21,7 @@ class ContractCheckCommandTest(BrigadeTest):
     def affected(self):
         return self.brigade("affected", "--root", str(self.project), "--paths", "src/a.py")
 
-    def test_affected_names_the_contract_check_when_the_store_records_none_fails_when_the_store_alone_is_read(self):
+    def test_affected_names_the_contract_check_when_the_store_records_no_check_fails_when_the_store_alone_is_read(self):
         # Processes: git and land build the fixture project and its contract.
         self.contract(self.CONTRACT_CHECK)
         self.open()
@@ -29,7 +29,7 @@ class ContractCheckCommandTest(BrigadeTest):
         self.assertIn(f"slot -- {self.CONTRACT_CHECK}`", out)
         self.assertNotIn("No verify command is set", out)
 
-    def test_edits_verify_runs_its_contract_check_when_the_store_records_none_fails_when_the_store_alone_is_read(self):
+    def test_edits_verify_runs_its_contract_check_when_the_store_records_no_check_fails_when_the_store_alone_is_read(self):
         # Processes: git and land build the fixture project and its contract; edits verify runs its tools' scripts.
         self.contract(self.CHECK_COMMAND)
         reviewed = self.edits_store()

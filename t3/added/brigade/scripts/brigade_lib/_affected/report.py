@@ -106,7 +106,9 @@ def records_check(meta):
 
 
 def _common_dir(root):
-    """The repository's git common directory for root as a resolved Path, or None."""
+    """The repository's git common directory for root as a resolved Path, or None when root is empty or git cannot name one."""
+    if not str(root or "").strip():
+        return None
     try:
         r = subprocess.run(
             ["git", "-C", str(root), "--work-tree=.", "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -172,7 +174,7 @@ def _settings(root, meta, store=None):
     When meta is given that store supplies the layout, the build command, the check command, and the change note directory, except that the check command is the landing contract's when the store records no checkCommand.
     Otherwise matching stores are every readable restaurant.json under store root in sorted path order whose projectRoot resolves to root.
     Unreadable or non JSON stores are skipped.
-    Build and check take the first string that is non-empty after stripping and is not "none".
+    Build and check take a store's string only when it is non-empty after stripping and is not "none", and the scan takes the first such string.
     When no matched store records a checkCommand the check command is the landing contract's.
     The landing contract supplies the check command only when it records exactly one check.
     Later different values are ignored without warning.
