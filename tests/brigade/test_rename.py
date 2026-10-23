@@ -78,7 +78,7 @@ class RenameTest(BrigadeTest):
                                       "--name", "Perf", "--rename", "Speed"], signal)
 
     def open_child(self):
-        """An open --name Speed, which needs no store and no owner."""
+        """An open --name Speed, which needs no --at and no --owner."""
         return self.race_child("open", ["--store", str(self.store), "open",
                                         "--project-root", str(self.project), "--name", "Speed"])
 

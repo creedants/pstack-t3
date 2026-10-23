@@ -203,8 +203,8 @@ class RenameReferenceTest(BrigadeTest):
         self.assertEqual(self.store_files(), store)
         self.assertFalse((self.at.parent / "speed").exists())
 
-    def test_an_open_started_before_the_move_waits_and_then_finds_the_moved_store(self):
-        """D554 review 3 blocker 1: an open that arrives before the move waits on the project lock, then initializes nothing."""
+    def test_an_open_started_before_the_move_finds_the_moved_store(self):
+        """D554 review 3 blocker 1: an open whose process starts before the move completes finds the moved store and initializes nothing."""
         self.open()
         self.brigade("set", "--thread", "coordinator")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
