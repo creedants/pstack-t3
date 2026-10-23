@@ -1,0 +1,2 @@
+- kind fix
+- `t3/added/brigade/scripts/brigade_lib/_affected/report.py` and `t3/added/brigade/scripts/brigade_lib/_reviews/passes.py` take the landing contract's check command when no matching store records `checkCommand`, and the contract supplies it only when it records exactly one check.
