@@ -260,7 +260,7 @@ def _read_checks(c):
  t,u=_read_trunk(c)
  if t!="detected":return("unknown",u or"no trunk")
  o,e=_gh("api","repos/"+r+"/branches/"+u+"/protection")
- if e:return("unknown",e)
+ if e:return("unprotected",[])if"HTTP 404"in e else("unknown",e)
  try:p=json.loads(o)
  except ValueError:return("unknown",0)
  n=[]

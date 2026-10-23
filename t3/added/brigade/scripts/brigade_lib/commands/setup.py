@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._store.opening import rename_restaurant
 from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.items import doc_policy
@@ -93,6 +94,7 @@ def register_open(sub):
     p = sub.add_parser("open", help="create a restaurant, or print an existing one")
     p.add_argument("--project-root", required=True)
     p.add_argument("--name")
+    p.add_argument("--rename", metavar="NAME", help="rename the --name restaurant and move its store; refused while landing work or an item is held")
     p.add_argument("--admin", action="store_true", help="open the repository's executive admin at <project>/.admin; takes no --name")
     p.add_argument("--reporting", choices=REPORTING, default="milestones",
                    help="how often the coordinator replies (default: milestones)")
@@ -196,6 +198,8 @@ def handle_open(args, root):
         raise BrigadeError("open --admin takes no --name")
     if not args.admin and not args.name:
         raise BrigadeError("open needs --name, or --admin")
+    if args.rename is not None:
+        return rename_restaurant(root, args)
     require_workers(args.workers)
     context_cap = None
     if args.context_cap not in (None, ""):
