@@ -1,2 +1,0 @@
-- kind polish
-- `ops/t3-archive-threads.py` names T3 Code 0.1.2-nightly.20261022.3541 as the build where a native Claude session was observed without `T3_CODE_MCP_AUTHORIZATION` set, and keeps the `--selection-only` advice.

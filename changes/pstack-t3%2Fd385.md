@@ -1,2 +1,0 @@
-- kind feature
-- `README.md` adds `## What it is` before `## What it does` and deletes `## Continuous integration`

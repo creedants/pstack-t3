@@ -1,3 +1,0 @@
-- kind fix
-- `scripts/install.py` tries `renameat2` then Darwin `renamex_np` with `RENAME_EXCL`, so macOS gets a no-replace rename
-- `tests/test_install.py` drives the Darwin branch on Linux with a fake libc that has only `renamex_np`, proving it takes flag 4 and that directory and file restores place the backup and remove it

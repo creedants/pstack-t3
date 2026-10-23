@@ -1,2 +1,0 @@
-- kind feature
-- The outsider smoke lands one commit on a throwaway local bare remote, checks the landed file, the merged unit, and the report, and `docs/first-coordinator.md` walks a stranger from install to that landed change using the smoke's commands

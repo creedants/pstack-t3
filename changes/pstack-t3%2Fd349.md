@@ -1,5 +1,0 @@
-- kind fix
-- The `macos_312` job in `.github/workflows/ci.yml` carries no `if`, so it runs on a pull request and on a push to main, and it keeps the name `macOS (3.12)`.
-- Every step of that job carries `continue-on-error: true`, including the checkout, Python setup, and `pip install pyyaml` steps, so no step failure makes the job check fail.
-- Its test step runs `python3 scripts/run_tests.py` with no `--part`, which selects the whole suite with the same runner the Linux part jobs call with `--part i/4`.
-- The job runs the generated skills check step the Linux gate jobs run.

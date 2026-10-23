@@ -1,3 +1,0 @@
-- kind polish
-- `t3/added/brigade-admin/SKILL.md` `Admin first service` step 2 says to read `<level>` for the three schedule prompts from the admin store's `restaurant.json` key `reporting`, the same value `$B status` prints after `reporting:`.
-- The regenerated `skills/brigade-admin/SKILL.md` carries the same sentence.

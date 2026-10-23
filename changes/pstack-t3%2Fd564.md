@@ -1,2 +1,0 @@
-- kind polish
-- `docs/skills.md` lists `statechart`, `create-formal-verification-skill`, and `maintain-formal-verification-skill` under `## Verify`, because `scripts/catalog.py` now names them in the `Verify` group

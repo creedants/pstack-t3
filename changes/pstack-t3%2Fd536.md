@@ -1,2 +1,0 @@
-- kind fix
-- A local run without a working headless browser skips the browser page tests on every OS, a run under `CI` still fails when no browser starts, and each macOS CI job runs the browser preflight before its tests.

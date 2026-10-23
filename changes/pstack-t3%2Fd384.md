@@ -1,2 +1,0 @@
-- kind polish
-- Rename `test_a_macos_result_other_than_success_fails_the_312_gate` in `tests/test_run_tests.py` to `test_a_macos_failure_cancelled_skipped_or_an_empty_result_fails_the_312_gate`. The new name lists the four macOS results the test covers.

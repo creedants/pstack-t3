@@ -1,3 +1,0 @@
-- kind polish
-- `dish --branch` prints `$B dish <id> --add-paths <fragment>` for an uncovered fragment on a non-submitted lease.
-- The submitted-lease message is unchanged.

@@ -1,2 +1,0 @@
-- kind fix
-- `.github/workflows/ci.yml` sets a top-level `concurrency` group of `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true`, so a newer run on a ref cancels an older run on that same ref.

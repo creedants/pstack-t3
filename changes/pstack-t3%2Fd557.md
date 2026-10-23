@@ -1,2 +1,0 @@
-- kind fix
-- `brief` exits 1 with one line on stderr naming the missing `house-rules.md` and writes no brief

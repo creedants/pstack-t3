@@ -1,2 +1,0 @@
-- kind polish
-- Correct `docs/light-mode.md` so its Never cut bullet and its gate review sentence state the round-one whole-diff scope and the later-round fix-diff scope, per `t3/runtime.md`'s Never cut section.

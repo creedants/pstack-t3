@@ -1,4 +1,0 @@
-- kind polish
-- `size-limit.md` gains a Raise the limit paragraph after Split that names the queue refusals and the outside-queue human raise with `init` keeping or changing the maximum.
-- The human-raise sentence moves from the trusted-policy paragraph into that paragraph so it appears once.
-- `SKILL.md` points size bounces at `size-limit.md` and shortens the bounced bullet to hold the skill at or below 24121 bytes.

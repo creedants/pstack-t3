@@ -1,4 +1,0 @@
-- kind fix
-- `t3/added/brigade/scripts/brigade_lib/briefs.py` prints the whole-suite sentence, its governor sentence, and the affected-module slot sentence only when the store records an `affectedTests` layout, so a brief of a store without one names no suite command.
-- `t3/added/brigade/scripts/brigade_lib/briefs.py` stops appending the worker size limit and the test standard after the house rules in every brief.
-- `t3/added/brigade/scripts/brigade_lib/store.py` writes the worker size limit and the test standard into a new store's `house-rules.md`, where the user can edit or delete them.

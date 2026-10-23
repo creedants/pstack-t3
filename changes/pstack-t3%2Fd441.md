@@ -1,2 +1,0 @@
-- kind fix
-- `scripts/run_tests.py` ignores `PermissionError` from `os.killpg` in `kill_group` the same way it ignores `ProcessLookupError`

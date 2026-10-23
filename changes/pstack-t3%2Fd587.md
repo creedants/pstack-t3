@@ -1,4 +1,0 @@
-- kind polish
-- the Multi-phase verification row in `docs/light-mode/changes.md` names the same-family read as the fallback for its audit lane when only the author's family has a runnable seat
-- the Autopilot verification row names the same fallback for its audit lane
-- the gate review paragraph now states when the gate takes a same-family seat and when the verdict is `blocked`, matching step 1 of `t3/added/pstack-runtime/light.md`

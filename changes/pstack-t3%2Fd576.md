@@ -1,3 +1,0 @@
-- kind fix
-- `tests/landing/slot/test_darwin.py` in `test_an_exclusive_darwin_eperm_is_reraised_when_the_witness_is_not_a_permitted_target` raises the exclusive cap to 4 seconds and the command sleep to 30 seconds, and sets kills on every always row
-- No row in that test runs under a cap below 4 seconds

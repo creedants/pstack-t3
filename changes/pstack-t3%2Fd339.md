@@ -1,4 +1,0 @@
-- kind polish
-- `CONTRIBUTING.md` states the full-suite time and the quick subset to run while working, drops the coordinator wording from the doc-edit rule, and explains that an outside pull request is ported into a reviewed branch that credits the author with a `Co-authored-by` trailer and is then closed.
-- `tests/test_roles_cli.py` points the `D25_BRIEF` fixture at neutral `/tmp/pstack-work/` paths.
-- `.github/ISSUE_TEMPLATE/feature-request.md` and `.github/ISSUE_TEMPLATE/question.md` use the same `name` and `about` frontmatter and bold-label prompts as `bug.md`.

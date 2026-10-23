@@ -1,2 +1,0 @@
-- kind polish
-- `docs/operations.md` names `tests/ops_tests/` as the suite that runs the archive script against a stand-in

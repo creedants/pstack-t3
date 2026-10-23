@@ -1,2 +1,0 @@
-- kind polish
-- `docs/guide.md`, `docs/how-it-works.md`, and `docs/multi-coordinator.md` name the liveness cadence the default for its reporting level, with `brigade.py set --liveness-ms` storing another interval

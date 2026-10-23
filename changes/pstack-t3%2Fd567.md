@@ -1,2 +1,0 @@
-- kind polish
-- `tests/pstack_t3/test_changelog.py` now compares `CONTRIBUTING.md` against the command built from `LOG` in `scripts/release.py`, so the doc's copy of the command the script runs cannot drift from it.

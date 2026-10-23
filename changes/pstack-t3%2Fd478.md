@@ -1,4 +1,0 @@
-- kind polish
-- `tests/test_check_size.py` copies `tests/landing/support.py`, the `upstream.json` version, and the `README.md` badge so the scratch `check.py` run reports only the size refusal
-- the missing-trunk test asserts exit 1 with stdout exactly `size-baseline.json: size baseline at trunk tip cannot be read`
-- the present-trunk test with branch `main` at HEAD asserts exit 0 with stdout `ok`

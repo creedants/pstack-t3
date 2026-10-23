@@ -1,7 +1,0 @@
-- kind upkeep
-- Move `vendor/pstack` to upstream commit 88d47514b8 at version 0.15.29.
-- Refresh `upstream.json` and the README badge to that commit and version.
-- Update `skills/sharpen/SKILL.md` from the new vendored file with no override.
-- Carry upstream wording into `t3/overrides/poteto-help/SKILL.md` and `t3/overrides/poteto-help/references/recipes.md` with `$` prefix.
-- Refresh `t3/overrides.lock.json` after review of both re-ports.
-- `python3 scripts/check.py` reports no Cursor leftovers.

@@ -1,3 +1,0 @@
-- kind polish
-- `size-baseline.json` caps `t3/overrides/poteto-mode/SKILL.md` at the vendored SKILL.md tokens plus a 300 token margin.
-- `size-baseline.json` caps `t3/overrides/poteto-mode/playbooks/orchestrate.md` at the vendored orchestrate.md tokens plus a 500 token margin.

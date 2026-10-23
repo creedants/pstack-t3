@@ -1,2 +1,0 @@
-- kind fix
-- `t3/added/brigade/opening.md` step 5 gains `When a house rule already states the mode, report the duplicate, say that the landing contract wins, and leave the rule in place unless the user says to remove it.` in place of `A restaurant whose house rules already state the mode deletes that rule on its next service.`

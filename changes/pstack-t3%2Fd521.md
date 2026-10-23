@@ -1,4 +1,0 @@
-- kind feature
-- a `size-baseline.json` entry may be `{"relativeTo": "<path>", "margin": <tokens>}`, whose allowance is the reference file's tokens from the same source plus the margin
-- the queue refuses adding a relative entry, changing an entry between forms, changing a reference, raising a margin, and removing a relative entry, and allows lowering a margin on the same reference
-- `tests/check_tests/test_size_relative.py` and `tests/landing/token_limit/test_relative.py` pin the six refusals, the lowered margin, each invalid object form on worktree, index, and candidate judging, and a missing reference on all three

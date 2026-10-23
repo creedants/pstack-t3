@@ -1,2 +1,0 @@
-- kind fix
-- The `brigade.py open --context-cap` help now says a plain open writes nothing under the project root, creation with a cap or an explicit provider writes the cap to `.claude/settings.local.json` when the provider is claude and replaces any autoCompactWindow there, and an existing store is left alone; the `brigade.py set --context-cap` help now names the claude provider for that write.

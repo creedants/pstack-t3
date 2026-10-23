@@ -1,2 +1,0 @@
-- kind polish
-- `CONTRIBUTING.md` names the `git log` command `scripts/release.py` runs, flag for flag, and labels the shorter form for the hand check as one that misses a renamed fragment

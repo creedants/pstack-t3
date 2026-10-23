@@ -2,6 +2,14 @@
 
 ## Archive
 
+- [0.8.0](docs/changelog/0.8.0.md)
+- [0.8.0-2](docs/changelog/0.8.0-2.md)
+- [0.8.0-3](docs/changelog/0.8.0-3.md)
+- [0.8.0-4](docs/changelog/0.8.0-4.md)
+- [0.8.0-5](docs/changelog/0.8.0-5.md)
+- [0.8.0-6](docs/changelog/0.8.0-6.md)
+- [0.8.0-7](docs/changelog/0.8.0-7.md)
+- [0.8.0-8](docs/changelog/0.8.0-8.md)
 - [0.7.0](docs/changelog/0.7.0.md)
 - [0.7.0-2](docs/changelog/0.7.0-2.md)
 - [0.7.0-3](docs/changelog/0.7.0-3.md)

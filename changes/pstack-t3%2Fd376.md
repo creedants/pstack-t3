@@ -1,4 +1,0 @@
-- kind fix
-- Remove `continue-on-error: true` from every step of `macos_312_1` through `macos_312_4` in `.github/workflows/ci.yml`.
-- Add `macos_312_1`, `macos_312_2`, `macos_312_3`, and `macos_312_4` to the `needs` of `test_312` and require `test "${{ needs.macos_312_N.result }}" = success` for each part.
-- State in `README.md` that every pull request runs the suite on macOS with Python 3.12 in four parts and that `test (3.12)` fails unless each part succeeds.

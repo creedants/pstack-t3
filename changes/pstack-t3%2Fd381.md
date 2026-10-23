@@ -1,2 +1,0 @@
-- kind polish
-- In `tests/test_install.py`, the completed-copy swap regression reads the retained original backup with `assert_displaced(backup, kind)` in every cell.

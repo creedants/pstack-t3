@@ -1,3 +1,0 @@
-- kind feature
-- activity.py places a coordinator child under one work item when its request name holds that item id by the existing part match or its branch tail as a hyphen or slash delimited run
-- activity.py keeps the recorded thread mapping first and places a coordinator child matching two items under none

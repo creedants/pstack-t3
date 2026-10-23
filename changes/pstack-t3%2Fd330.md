@@ -1,4 +1,0 @@
-- kind fix
-- `startable` previews a blocked ticket with the saved fire paths and the saved `doc_item` flag only when the saved paths are nonempty after normalization and prints `--doc-item` after its paths only for those tickets
-- a ticket with no blocked note or with empty saved paths after normalization keeps its rail paths and no flag
-- `tests/brigade/test_fire_layout.py` pins normalized dot-path overlap with its derived `fire` lease and pathless blocked notes previewing rail after `ticket set --paths`

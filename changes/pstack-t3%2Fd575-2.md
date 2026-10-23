@@ -1,3 +1,0 @@
-- kind feature
-- `pass record --reviewer-thread` announces a helper only when the verdict is not late, the SHA is present, the worker report is current for the reviewed attempt, the helper attempt equals the current attempt, and no earlier same-role row holds that thread at a smaller attempt.
-- The review doc now lists `already noted` with dry run and real run follow-up prefixes.

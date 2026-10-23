@@ -1,7 +1,0 @@
-- kind fix
-- A departure is a dish log row whose state is in ATTEMPT_AFTER.
-- record_pass calls write_threads, then restaurant.update unless the verdict is late or a member. A send-back verdict that is not late and not a member writes helper rows before its own departure in the same command. A late verdict writes helper rows and adds no departure in the same command.
-- Block, resume and worker replacement are not departures.
-- An earlier helper row is ignored in the earlier-row check only when a selected departure lies at or after the start of that row own attempt and strictly before that row written time. When no worker row with that attempt holds a parsable start, any departure strictly before that row written time selects the row.
-- The start of an attempt is the minimum parsable start among worker rows with that attempt number that hold a start. It returns None when no row qualifies.
-- The ignored binding is the row attempt, role and stored thread. All other earlier rows still suppress.

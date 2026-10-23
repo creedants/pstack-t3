@@ -1,2 +1,0 @@
-- kind polish
-- Contested and Usage limit recovery bullets skip the one `dish --add-paths` command `dish --branch` prints when the lease does not cover the new fragment and is not submitted
