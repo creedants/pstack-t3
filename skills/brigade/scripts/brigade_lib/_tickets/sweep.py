@@ -35,9 +35,9 @@ class Sweep:
 
     @property
     def digest(self):
-        """The first 8 hex digits of the sha256 of the newline joined ids."""
+        """The first 32 hex digits of the sha256 of the newline joined ids."""
         joined = "\n".join(candidate.id for candidate in self.candidates)
-        return hashlib.sha256(joined.encode()).hexdigest()[:8]
+        return hashlib.sha256(joined.encode()).hexdigest()[:32]
 
 
 def filed_at(row):
