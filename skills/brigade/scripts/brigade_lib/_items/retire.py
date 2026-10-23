@@ -40,17 +40,18 @@ def round_helpers(restaurant, dish_id, sha="", late=False):
     A late verdict announces no helper. An empty SHA announces no helper. The report is current
     only when reports/<dish>.md exists and its mtime is at or after the last attempt start.
     Attempt starts come from brigade_lib._items.rounds.attempt_starts. The same rule decides
-    report currency. A stale report announces no helper. An attempt ends at a departure. A departure
+    report currency. A stale report announces no helper. A departure
     is a dish log row whose state is in ATTEMPT_AFTER. record_pass calls write_threads, then
     restaurant.update unless the verdict is late or a member. A send-back verdict that is not late
     and not a member writes helper rows before its own departure in the same command. A late verdict
-    writes helper rows and adds no departure in the same command. Block, resume and worker An earlier helper row is
+    writes helper rows and adds no departure in the same command. Block, resume and worker replacement
+    are not departures. An earlier helper row is
     ignored in the earlier-row check only when a selected departure lies at or after the start of
     that row own attempt and strictly before that row written time. When no worker row with that
     attempt holds a parsable start, any departure strictly before that row written time selects the
     row. The start of an attempt is the minimum parsable start among worker rows with that attempt
     number that hold a start. The start is None when no row qualifies. The selected departure is
-    the departure that meets both bounds for that row. The ignored binding is the row attempt, role
+    the departure that meets the applicable bounds for that row. The ignored binding is the row attempt, role
     and stored thread. All other earlier rows still suppress. Otherwise each child attempt comes
     from child_attempt through recorded_children with the SHA and late context.
     """
@@ -123,7 +124,7 @@ def _departures(restaurant, dish_id):
 
 
 def _late_written(rows, current, departures):
-    """Bindings of earlier helper rows a selected departure separates from their attempt start."""
+    """Earlier helper bindings with a departure before their write and, when known, at or after their worker start."""
     found = set()
     for row in rows:
         if row["role"] not in CHILD_ROLES:
