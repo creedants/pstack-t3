@@ -15,8 +15,11 @@ Read this file before you run `set` on a store key it names.
 | `suite` | Optional whole-suite command. |
 | `python` | Optional absolute path of the second interpreter. |
 | `importRoots` | Optional list of repository paths tried as prefixes for absolute imports. |
+| `env` | Optional object of shell variable names to string values printed in front of each command. |
 
 The second interpreter file name is `python<major>` or `python<major>.<minor>`. The paragraph names it by that version. A layout that sets `python` needs a `suite` that starts with `python3`. That interpreter replaces the leading `python3`. `importRoots` is tried in candidate order after the loader directory and the root with every match kept. Relative imports never search it. Roots are normalized and deduped in order and never hold the root itself. An absent `importRoots` means the directories of `entryPoints` and `helpers`.
+
+`env` is an optional object of shell variable names to string values. A name matches `[A-Za-z_][A-Za-z0-9_]*`. A value matches `[A-Za-z0-9_.,:/+=@%-]+`, so it is never empty. `set` refuses an `env` that is not an object, a name that does not match the name pattern, and a value that does not match the value pattern. An absent `env` means no assignment. The paragraph prints `env NAME=value ...` in front of the affected-module command and the whole-suite command, and in front of their second interpreter copies, with the pairs sorted by name.
 
 ## sharedDocs and docTimebox
 
