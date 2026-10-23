@@ -125,9 +125,11 @@ class ContractCheckCommandTest(BrigadeTest):
         self.crash_left(database, lambda db: db.execute(
             "INSERT OR REPLACE INTO contract (key, value) VALUES ('noted', '1')"))
         before = database.read_bytes()
+        log = Path(f"{database}-wal")
+        log_before = log.read_bytes()
         out = self.affected()
         self.assertEqual(database.read_bytes(), before)
-        self.assertTrue(Path(f"{database}-wal").exists())
+        self.assertEqual(log.read_bytes(), log_before)
         self.assertFalse(Path(f"{database}-shm").exists())
         self.assertIn("No verify command is set", out)
 
