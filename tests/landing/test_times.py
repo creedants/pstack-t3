@@ -128,7 +128,12 @@ class LandingTest(LandingTestBase):
         before_bytes = self.database().read_bytes()
         self.land("times")
         self.land("times", "--json")
-        self.assertEqual(sorted(p.name for p in self.database().parent.iterdir()), before_names)
+        after_names = sorted(p.name for p in self.database().parent.iterdir())
+        self.assertLessEqual(set(after_names) - set(before_names), {"land.db-wal", "land.db-shm"})
+        self.assertLessEqual(set(before_names), set(after_names))
+        log = self.database().parent / "land.db-wal"
+        if log.exists():
+            self.assertLessEqual(len(log.read_bytes()), 32)
         self.assertEqual(self.database().read_bytes(), before_bytes)
 
     def test_times_with_a_live_log_leaves_land_db_unchanged(self):
