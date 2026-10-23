@@ -33,6 +33,6 @@
     <path d="M760 228 L805 264 M870 228 L885 264 M980 228 L965 264 M1090 228 L1045 264" stroke="#52525b" stroke-width="2" fill="none"/>
     <rect x="745" y="264" width="360" height="44" rx="12" fill="#27272a" stroke="#52525b"/>
     <text x="925" y="292" fill="#f5f5f7" font-weight="600">landing queue · checks · trunk</text>
-    <text x="925" y="336" fill="#71717a" font-size="15">one model writes, another family reviews, the queue lands</text>
+    <text x="925" y="336" fill="#71717a" font-size="15">one writes, another family reviews if runnable, queue lands</text>
   </g>
 </svg>

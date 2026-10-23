@@ -2,7 +2,7 @@ Part of [the guide](../guide.md).
 
 ## 8. Open a standing coordinator
 
-A coordinator is a pinned T3 thread for one project or one focus area. It takes requests, hands each unit of work to a playbook, has another model family review the result, and lands what passes. It never writes code. For one finite program with a done condition, use `$poteto-mode`. Its Orchestrate playbook stops when that work is done.
+A coordinator is a pinned T3 thread for one project or one focus area. It takes requests, hands each unit of work to a playbook, has another model family review the result, or a same-family read when only the author's family has a runnable seat, and lands what passes. It never writes code. For one finite program with a done condition, use `$poteto-mode`. Its Orchestrate playbook stops when that work is done.
 
 Every command and flag of `activity.py`, `brigade.py`, `land.py`, and `roles.py`, with its choices and defaults, is in the [command-line reference](../cli/README.md). This guide shows the commands you need and does not list every flag.
 

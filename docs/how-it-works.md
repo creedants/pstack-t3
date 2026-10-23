@@ -63,7 +63,7 @@ Ask a coordinator what its agents are doing and it shows the activity page. `act
 
 ## How work lands
 
-A writer claims a lease on the paths it will change before it starts. An overlapping claim is refused. The writer commits in its own worktree and stops. It never merges, rebases a shared branch, or pushes trunk. A reviewer from another model family checks that exact commit. The queue lands that commit, and bounces it when the rebased result differs from the reviewed one. Whoever runs `land.py land` while the lock is free drains the queue. Builds and tests run under `land.py slot`, which limits how many heavy commands run at once.
+A writer claims a lease on the paths it will change before it starts. An overlapping claim is refused. The writer commits in its own worktree and stops. It never merges, rebases a shared branch, or pushes trunk. A reviewer from another model family checks that exact commit, or a same-family read when only the author's family has a runnable seat. The queue lands that commit, and bounces it when the rebased result differs from the reviewed one. Whoever runs `land.py land` while the lock is free drains the queue. Builds and tests run under `land.py slot`, which limits how many heavy commands run at once.
 
 The mode is one per repository. It decides what reaches trunk and whether you are a gate. The four modes are in [Landing modes](guide.md#landing-modes).
 

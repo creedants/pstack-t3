@@ -1,6 +1,6 @@
 ---
 name: brigade
-description: "Give a project or a focus area its own standing head chef. It is one long-lived T3 thread that holds a purpose, takes incoming work, delegates it to pstack playbooks, reviews every result against the purpose with another model family, and reports what landed. Use for 'brigade', 'open a restaurant', 'head chef for X', 'chief of staff for this project', 'a standing coordinator for this goal', or running one of those threads. For an executive admin over the coordinators on one repository, use brigade-admin. For one finite program with a done predicate, use poteto-mode's Orchestrate playbook."
+description: "Give a project or a focus area its own standing head chef. It is one long-lived T3 thread that holds a purpose, takes incoming work, delegates it to pstack playbooks, reviews every result against the purpose with another model family, or a same-family read when only the author's family has a runnable seat, and reports what landed. Use for 'brigade', 'open a restaurant', 'head chef for X', 'chief of staff for this project', 'a standing coordinator for this goal', or running one of those threads. For an executive admin over the coordinators on one repository, use brigade-admin. For one finite program with a done predicate, use poteto-mode's Orchestrate playbook."
 ---
 
 # Brigade
@@ -46,7 +46,7 @@ These words name files, commands, and steps. They never appear in speech. Replie
 ## Operating stance
 
 - Run to the next real blocker. "Should I continue" is never a question. Reply as Run a service step 9 says for this restaurant's reporting level.
-- A real decision is a product or preference call no evidence settles, an irreversible action the menu does not authorize, or a contradiction between the menu and reality. Park it with `86 add`, give a default, route other work around it, and keep going. An item decision (`--dish`) uses as its default the option that keeps the item parked, and only another listed option closes it.
+- A real decision is a product or preference call no evidence settles, an irreversible action the menu does not authorize, or a contradiction between the menu and reality. Park it with `86 add`, give a default, and route other work around it. An item decision (`--dish`) uses as its default the option that keeps the item parked, and only another listed option closes it.
 - Raise a decision once, in the reply where you park it. After that it appears only in reports, where `close` lists every open decision. Never repeat it as "still open" in other replies.
 - Delete only what this restaurant created: its dish branches, its worktrees, and the queue's `landing/e<n>` branches, including a leftover `landing/q<n>`. Ask before deleting any other branch, even one fully merged.
 - Never write code yourself. Grouping tickets, claiming leases, writing briefs, reviewing evidence, and submitting to the landing queue are your work. Code changes and conflict fixes are dishes.
@@ -55,7 +55,7 @@ These words name files, commands, and steps. They never appear in speech. Replie
 
 ## The script
 
-`<skills>/brigade/scripts/brigade.py`, where `<skills>` is the directory holding this skill. Every command but `open` and `walk` takes `--at <restaurant dir>` or `BRIGADE_DIR`. It prints one line or a short block, in plain prose.
+`<skills>/brigade/scripts/brigade.py`, where `<skills>` holds this skill. Every command but `open` and `walk` takes `--at <restaurant dir>` or `BRIGADE_DIR`. It prints one line or a short block, in plain prose.
 
 ```bash
 B="python3 <skills>/brigade/scripts/brigade.py --at <restaurant dir> --owner <thread>@<generation>"   # the token from status
@@ -65,7 +65,7 @@ $B fire --tickets T1,T3 --station bug-fix --summary "<outcome>" --paths src/a,sr
 L="python3 <skills>/landing/scripts/land.py --repo <project root>"   # leases and the landing queue
 ```
 
-Read [script.md](script.md) when a `$B` command refuses, prints a line this skill does not name, or needs a flag the block above does not show. `$B <command> --help` prints every flag.
+Read [script.md](script.md) when a `$B` command refuses, prints a line this skill does not name, or needs a flag the block above does not show.
 
 Each intake source has one owner. `set --intake` refuses to drop a source while a `waiting` or `assigned` ticket came from it. The ref stays unchanged through every `ticket move` and `ticket take`. Read [Intake and refs](script.md#intake-and-refs) and [commands](reference/commands.md) before filing, updating a ticket, or changing intake.
 
@@ -103,9 +103,9 @@ Follow this section before each `ticket add` for a user request or a supplier fi
 
 Every wake runs this: a user message, a worker's report-back, a verifier's completion, a schedule, or a `watch_pull_request` wake.
 
-0. **Next.** Run `$B next` first with the wake name. Read [service](reference/service.md) for the wake table before step 1.
+0. **Next.** Run `$B next` with the wake name. Read [service](reference/service.md) for the wake table before step 1.
 
-1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. `$B status` prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no further command. Read [service](reference/service.md) before step 2.
+1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. `$B status` prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn. Read [service](reference/service.md) before step 2.
 
 2. **Take tickets.** Start with `$B inbox take`. Read [Filing tracker work](#filing-tracker-work) and [service](reference/service.md) for routing and handoff.
 
@@ -122,7 +122,7 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
 
 5. **End the turn** while dishes run. Read [service](reference/service.md) for the report-back and liveness backstop.
 
-6. **Review.** A held item gets no verifier and no review, including on a late worker report-back. Read [review](reference/review.md#review-preflight) before examining the report or spawning the verifier. Read its report and diff. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier with `delegate_task`, `mode: "async"`, from `verifiers` on another family. Right after the spawn, confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts, per [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation). Read [review](reference/review.md) for the brief, rounds, and checks. Record every round, pass or fail, with `$B pass record` at the reviewed SHA and `--report <that file>`.
+6. **Review.** A held item gets no verifier and no review, including on a late worker report-back. Read [review](reference/review.md#review-preflight) before examining the report or spawning the verifier. Read its report and diff. Run `$B dish <id> --state in-review --sha <head>`. Spawn one verifier with `delegate_task`, `mode: "async"`, from `verifiers` on another family, or a same-family seat when only the author's family has a runnable seat. Right after the spawn, confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts, per [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation). Read [review](reference/review.md) for the brief, rounds, and checks. Record every round, pass or fail, with `$B pass record` at the reviewed SHA and `--report <that file>`.
 
    **Contested.** When a worker reports `Contested: <reason>` under its status line, do not mark the dish in review and spawn no verifier. Follow [Contested](recovery.md#contested).
 
@@ -142,13 +142,13 @@ At `digest`, write every reply for a person who has not followed the work. Read 
 
 ## Git and PR housekeeping
 
-The head chef owns every git and PR chore its work creates. Read [housekeeping](reference/housekeeping.md) before merging or cleaning. Call `unwatch_pull_request` only when this thread stops driving that PR.
+The head chef owns every git and PR chore it creates. Read [housekeeping](reference/housekeeping.md) before merging or cleaning. Call `unwatch_pull_request` only when this thread stops driving that PR.
 
 ## Liveness check
 
 Run on the liveness schedule, and at the start of any service while work is in progress.
 
-1. `$B watch`. The reference lists its output. On `handed to you`, run `$B ticket take`. On `unblocked`, run the printed `fire` command. Read [liveness](reference/liveness.md) for every watch line before acting.
+1. `$B watch`. On `handed to you`, run `$B ticket take`. On `unblocked`, run the printed `fire` command. Read [liveness](reference/liveness.md) for every watch line before acting.
    When `watch`, `pass record`, or a worker's report prints a line this section does not name, find that line in [recovery.md](recovery.md) and follow its step.
 
 2. Read [liveness](reference/liveness.md) for the report-written check.
