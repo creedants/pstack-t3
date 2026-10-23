@@ -209,9 +209,6 @@ class RenameTest(BrigadeTest):
                     process.kill()
                     process.communicate()
         speed = self.at.parent / "speed"
-        self.assertEqual(opener.returncode, 0, open_out + open_err)
-        self.assertIn("exists", open_out)
-        self.assertNotIn("opened", open_out + open_err)
         self.assertEqual((speed / "rail.tsv").read_bytes(), rail)
         self.assertIn(b"T1\t", rail)
         moved = json.loads((speed / "restaurant.json").read_text())
@@ -219,6 +216,9 @@ class RenameTest(BrigadeTest):
         self.assertEqual(moved["thread"], meta["thread"])
         self.assertEqual(moved["generation"], meta["generation"])
         self.assertFalse((self.at.parent / ".rename-speed.json").exists())
+        self.assertEqual(opener.returncode, 0, open_out + open_err)
+        self.assertIn("exists", open_out)
+        self.assertNotIn("opened", open_out + open_err)
 
     def test_a_rename_that_cannot_write_its_marker_keeps_an_existing_empty_target(self):
         """D554 review 3 blocker 1: a marker write that fails removes no directory the rename did not create."""
