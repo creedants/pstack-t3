@@ -1,2 +1,0 @@
-- kind fix
-- ten landing tests that initialize again stub the merge-method `gh repo view` query with `self.fake_gh()`, and `tests/landing/_support/host_gh_guard.py` puts a gh shim first on `PATH` that runs a gh resolved inside the test's temporary directory or `tests/`, records any other call or a missing gh as one JSON line and exits 127, and `CaseBase` fails the test when a call is recorded

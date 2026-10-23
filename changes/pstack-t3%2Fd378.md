@@ -1,3 +1,0 @@
-- kind polish
-- `tests/test_activity_render.py` keeps any diagnostic that shares a stderr line with the `CVDisplayLinkCreateWithCGDisplay failed` warning sentence and drops only the warning sentence with its CVReturn clause, plus its bracket log prefix when only the prefix comes before the warning.
-- `tests/test_activity_render.py` runs the missed-probe skip-or-fail cases against `RenderHeightTest` and `LiveAttemptFoldTest`.

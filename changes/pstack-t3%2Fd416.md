@@ -1,2 +1,0 @@
-- kind polish
-- `t3/added/landing/scripts/landing_lib/__init__.py` drops `GENERATED_PATHS` from the `foundation` tuple of `AREAS`, since `foundation.py` no longer defines that name.

@@ -1,2 +1,0 @@
-- kind polish
-- `CONTRIBUTING.md` adds six release refusals to the list of cases where `scripts/release.py` exits 1 before writing, a version that is not `X.Y.Z`, a `--date` that is not a real `YYYY-MM-DD` date, a version that already has a heading in `docs/changelog/`, a first-line bullet whose text starts with `kind` but is not one of the five, a fragment with no bullet, not counting its kind line, and a version the fragment kinds do not give when an earlier version exists

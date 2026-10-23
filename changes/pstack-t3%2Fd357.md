@@ -1,4 +1,0 @@
-- kind fix
-- `tests/landing/test_slot.py` `test_a_reporting_probe_cannot_let_a_later_landing_caller_pass_an_earlier_exclusive` settles the landing caller's first attempt after the reporting probe is resumed with the gate write and before the probe process is stopped
-- the live probe unlocks the free slot inside its `slow_busy` probe and returns, and `_admit` unlocks the turn mutex after that, so the landing caller blocked on that mutex wakes with the free slot released and yields to the earlier exclusive
-- stopping the probe before that attempt leaves when each lock is released up to the kernel, so the attempt can land on either side of the free slot's release and on the early side it takes `landing-0`

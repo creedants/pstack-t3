@@ -1,2 +1,0 @@
-- kind polish
-- Pin the `set --context-cap` help text in `tests/test_brigade.py` next to `OpenFlagHelpTest`, so one changed word in that help fails a test.

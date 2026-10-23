@@ -1,2 +1,0 @@
-- kind polish
-- `changes/pstack-t3%2Fd569.md` now quotes `brigade: warning: reports/<id>.md names <n> new claims check runs for this round; the cap is two per round`.

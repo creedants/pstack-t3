@@ -1,4 +1,0 @@
-- kind upkeep
-- `skills/ketchup` lists every item waiting on the user with what they need to decide it from the reply alone.
-- `skills/ketchup` never cuts items or shrinks them to stay under a word count.
-- `skills/poteto-help` carries the new ketchup row wording with the `$ketchup` link.

@@ -1,2 +1,0 @@
-- kind polish
-- `tests/brigade/support.py` drops the class constant `HELD_BACK`, which no test read and which no longer matched the shipped reserve rule in `t3/added/brigade/scripts/brigade_lib/leases.py`.

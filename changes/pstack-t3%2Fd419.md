@@ -1,3 +1,0 @@
-- kind polish
-- `docs/multi-coordinator.md` in the admin's `Its services` section now says the opener asks for the intake interval in whole minutes and the morning and evening times as `HH:MM`, refuses an interval above 120 minutes, and takes `3600000` ms, `09:00`, and `18:30` as the defaults for a start message that carries no value, matching the brigade-admin skill's `Open an executive admin` step 5 and `Admin first service` step 2.
-- The same paragraph says the morning service runs routing and checks and the evening update runs after the coordinators' 18:00 reports, instead of stating `09:00` and `18:30` as fixed times.

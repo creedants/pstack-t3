@@ -1,2 +1,0 @@
-- kind fix
-- `brigade.py open --help` for `--context-cap` now names the project's `.claude/settings.local.json` and its integer `autoCompactWindow`, scopes adoption and settings writes to `claude`, and states that reopening leaves an existing store alone

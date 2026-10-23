@@ -1,2 +1,0 @@
-- kind polish
-- `docs/assets/activity-view.png` shows the demo coordinator day with dark theme values at 1400 wide, cropped to content.

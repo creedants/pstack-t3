@@ -1,2 +1,0 @@
-- kind fix
-- With no runnable seat from a family other than the author's, the gate review takes a same-family seat when one is available and marks the verdict `same-family`, and a catalog with no runnable seat at all still returns `blocked`. `setup-pstack` states that case and names no pstack-t3 script as an escalation example.

@@ -1,4 +1,0 @@
-- kind feature
-- `pass record --reviewer-thread` now prints `archive thread:` lines for helper threads the worker report lists and the table holds for the reviewed attempt.
-- `write_threads` now assigns child attempts through one helper.
-- The review doc now describes dry run and real run follow-up prefixes.

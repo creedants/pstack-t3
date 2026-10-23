@@ -1,4 +1,0 @@
-- kind polish
-- `tests/landing/test_generated.py` requires a hard `RLIMIT_NOFILE` of 1032 for `test_build_watch_supports_descriptors_above_1024`, not 1100, so the test runs under a hard limit below 1100 that still fits the runner above descriptor 1024. The test raises the soft limit to `min(1100, hard)`.
-- The fill loop holds one descriptor per pass, so the next pipe is at 1025 and 1026 with nothing open above 1024, and the runner's wake pipe, selector, and subprocess pipes end at 1031.
-- `tests/test_activity.py` drops `test_live_page_with_no_value_polls_default_loopback`. Its setup and its default-origin assertion repeat `test_the_live_wrapper_holds_the_token_url_the_collapse_rule_and_both_buttons`, which stays.

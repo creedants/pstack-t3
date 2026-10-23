@@ -1,2 +1,0 @@
-- kind fix
-- The review step in `docs/multi-coordinator/live-run.md` now names the same-family fallback that the runtime's Gate review defines

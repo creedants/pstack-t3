@@ -1,4 +1,0 @@
-- kind fix
-- `tests/landing/test_slot.py` `test_a_sigkill_waiter_under_umask_0o444_does_not_stop_later_callers` failed once on macOS 3.12 in CI (PR 413, run 39038649914, job macOS (3.12, 4/4)) with `(False, [0, 0])` at `oct(mode)` 0o222, because the test read `ticket.stat().st_mode` after `ticket.exists()`, and `exists()` fires on the directory entry that the creating `open` publishes before the next statement sets the mode
-- `t3/added/landing/scripts/landing_lib/governor.py` `_mint_ticket` creates the ticket with `open(..., "x")` under a temporary 0o077 umask, so the 0o666 request leaves 0o600 and the name is owner-readable from the moment it exists
-- `_mint_ticket` no longer calls `os.fchmod`, and the assertion checks the exact mode 0o600 instead of the owner-read bit

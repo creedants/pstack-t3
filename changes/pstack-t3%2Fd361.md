@@ -1,2 +1,0 @@
-- kind fix
-- `tests/test_install.py` counts the descriptors open on the state lock by comparing `os.fstat(fd)` with `os.stat(state)` on `(st_dev, st_ino)`, with candidates from `os.listdir('/dev/fd')` when that succeeds and from `range(min(os.sysconf('SC_OPEN_MAX'), 4096))` when it raises `OSError`.

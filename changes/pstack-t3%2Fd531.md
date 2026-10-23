@@ -1,2 +1,0 @@
-- kind fix
-- `brigade.py open` writes nothing under the project root unless it passes `--context-cap` or `--coordinator-provider`. The opening guide tells the coordinator to name the repository's own hot shared files, the house rules template holds no project test rules, the review reference no longer names a script install does not ship, and onboarding no longer detects `scripts/run_tests.py`.

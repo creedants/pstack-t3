@@ -1,2 +1,0 @@
-- kind fix
-- `t3/added/brigade/scripts/brigade_lib/commands/setup.py` `validate_settings` calls `layout` from `brigade_lib/affected.py`, so `set` refuses a stored `affectedTests` that does not parse before it writes. The refusal names restaurant.json, affectedTests, and the value, exits 1, and leaves restaurant.json unchanged. A store with no `affectedTests` or a valid one is unaffected.

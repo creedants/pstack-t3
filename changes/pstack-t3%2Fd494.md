@@ -1,8 +1,0 @@
-- kind polish
-- `tests/test_activity.py` is a shim under 2000 bytes and re-exports the shared kit
-- `tests/test_activity_render.py` is a shim under 1000 bytes and re-exports the browser entry
-- `tests/activity_tests/support.py` owns the on-disk world and the run helpers
-- `tests/activity_tests/pages.py` owns the page builders and the render mixin
-- `tests/activity_tests/browser.py` owns the headless probing and the page builders
-- `tests/activity_tests/prior_one.py` and `prior_two.py` hold the prior halves and decode to the same bytes
-- each new test file stays under 20000 bytes and keeps every assertion exactly

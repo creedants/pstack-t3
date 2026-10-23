@@ -1,3 +1,0 @@
-- kind polish
-- `tests/brigade/edits_code/test_binary_cap.py` refuses a binary file over the cap by the every-line count, writes no verification row, and refuses the later pass without a second review
-- `tests/brigade/edits_code/test_injected_git.py` covers a text attribute on a binary path and a diff algorithm config that would lower the naive diff, and asserts the applied count stays 24 with no verification row and a refused later pass

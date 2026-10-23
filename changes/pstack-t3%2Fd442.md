@@ -1,3 +1,0 @@
-- kind fix
-- `t3/added/brigade/scripts/brigade_lib/commands/setup.py` `validate_settings` checks the stored `sharedDocs` and `docTimebox` with `items.doc_policy`, so `brigade.py set` with any flag refuses a malformed hand-written value with the key named and writes nothing.
-- `tests/brigade/test_items.py` covers a malformed `sharedDocs` and a malformed `docTimebox` each making `set` exit nonzero, naming the key, and leaving `restaurant.json` byte-identical, and a valid pair still letting `set` write.

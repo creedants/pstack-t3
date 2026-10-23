@@ -1,7 +1,0 @@
-- kind upkeep
-- `vendor/pstack` matches upstream `cursor/plugins` at `6b78e9f4e46c`, and `upstream.json` names that commit at version `0.15.27`.
-- `t3/setup.md` gains step 8, which offers a formal verification skill once when the project has none.
-- `t3/overrides/poteto-help/SKILL.md` gains the no-formal-verification state bullet and names both verification offers on `setup-pstack`.
-- `t3/overrides/poteto-help/references/recipes.md` gains the `$create-formal-verification-skill` and `$ketchup` prompts.
-- `skills/create-formal-verification-skill/SKILL.md` states TLA+ as the default for an ordering question and names the no-verifier fallback.
-- `t3/overrides.lock.json` records the reviewed `poteto-help` overrides.

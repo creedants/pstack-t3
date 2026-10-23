@@ -1,4 +1,0 @@
-- kind fix
-- A rerun of `land.py init` keeps the stored checks, setup, batch and timeout whose flag is omitted, and fills a default only for a key the contract does not hold.
-- With `--merge-method` omitted, it keeps a stored merge method while the repository allows it or when `gh` cannot report the allowed methods, picks an allowed method when the stored one is not allowed, and refuses when the repository allows none.
-- The mode-merge race in `tests/landing/test_contests.py` plants a stored `rebase` while the child waits in `gh repo view`, drops `rebase` from the allowed list, and expects the child to store `merge`.

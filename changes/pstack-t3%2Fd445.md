@@ -1,4 +1,0 @@
-- kind upkeep
-- `vendor/pstack/` is the `pstack/` tree from the repository in `upstream.json` at 0317eb8b858c991c57721358daaee19dbe8c814d, and `upstream.json` pins that commit and version 0.15.25
-- between 182f2ce414e83224915c190d2f63239c1608d0a5 and 0317eb8b858c991c57721358daaee19dbe8c814d, upstream changes `pstack/skills/typescript-best-practices/SKILL.md` and `pstack/skills/typescript-best-practices/references/patterns.md`, and those are the only paths that differ under `vendor/pstack/`
-- no override or persona changed, `t3/overrides.lock.json` is unchanged, and `python3 scripts/build.py` regenerates `skills/typescript-best-practices/SKILL.md` and `skills/typescript-best-practices/references/patterns.md`

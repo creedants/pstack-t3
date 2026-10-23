@@ -1,3 +1,0 @@
-- kind fix
-- `check_tree` in `scripts/check.py` strips a destination query before resolving the path. A link whose destination is a file plus a query is not reported as broken when that file exists.
-- `tests/test_check.py` covers a query-bearing file link to an existing file.

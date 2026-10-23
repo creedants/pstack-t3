@@ -1,5 +1,0 @@
-- kind polish
-- `t3/added/brigade/scripts/brigade_lib/scope.py` removes the dead `generated.read` preflight from `gate_outside` so a mapless contract still reaches review and submit.
-- `t3/added/brigade/scripts/brigade_lib/generated.py` documents ancestor matching for `expand` with no change to expansion results.
-- `tests/brigade/test_gate_parity.py` covers mapless review plus submit.
-- `tests/brigade/test_generated_map.py` pins vendor ancestor index expansion with a subTest table.

@@ -1,2 +1,0 @@
-- kind polish
-- `tests/test_roles_cli.py` starts the keep preserve pin from full so only a preserve passes.

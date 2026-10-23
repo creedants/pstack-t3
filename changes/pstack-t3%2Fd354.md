@@ -1,3 +1,0 @@
-- kind fix
-- `scripts/measure_capacity.py` reads process data through `PSTACK_CAPACITY_PROC_ROOT`, `/proc` by default, so a run whose process directory is missing prints its header and a row per sample with `na` in every column but `label` and `ts`, and exits 0, instead of crashing before its header
-- `tests/test_check.py`'s `SamplerOutputTest` runs the sampler with `PSTACK_CAPACITY_PROC_ROOT` at a missing directory and pins the exit status, the header, one row, `label` as `x`, and `na` in every column but `label` and `ts`

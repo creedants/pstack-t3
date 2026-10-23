@@ -1,3 +1,0 @@
-- kind polish
-- `t3/added/brigade/opening.md` keeps `### The questions` as a pointer to `reference/onboard.md` for the question detail
-- `t3/added/brigade/reference/onboard.md` holds the moved question paragraphs under `# Onboard questions`

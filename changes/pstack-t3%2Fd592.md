@@ -1,2 +1,0 @@
-- kind fix
-- A worker demand queued after a waiting exclusive ticket never takes a slot while that ticket is waiting.

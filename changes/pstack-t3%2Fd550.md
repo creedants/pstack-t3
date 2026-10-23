@@ -1,2 +1,0 @@
-- kind fix
-- The brigade skill's `ticket add --from-report` line now says the command files at most one waiting ticket per item, for the first follow-up marked `Safety:`, `Privacy:`, or `Correctness:` whose text is not already on the rail, and only when no ticket from that report exists yet in any state, and that `not filed` covers rejected blocks and marked follow-ups it does not file.

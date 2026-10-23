@@ -1,5 +1,0 @@
-- kind fix
-- `watch` prints `cannot see worker runs:` when the activity query fails, including a threads table without `updated_at`
-- `watch` leaves the dish line unchanged when the activity query fails
-- `dish_progress` drops its unused `runs` parameter
-- `tests/brigade/test_watch_idle.py` drops `updated_at` and pins the diagnostic plus the running line

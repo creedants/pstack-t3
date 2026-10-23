@@ -1,3 +1,0 @@
-- kind fix
-- `t3/added/landing/scripts/landing_lib/queue.py` passes each configured generated root to git as a literal pathspec in the generated snapshot, the removal, each clean, and each generated-path `git add`, so a root named `out*` matches its own path and not the source directory `out1`
-- `tests/landing/test_generated.py` lands a change that touches the source directory `out1` beside the generated root `out*`, and checks `out1` is not removed or snapshotted

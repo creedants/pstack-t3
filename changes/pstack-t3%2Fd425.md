@@ -1,2 +1,0 @@
-- kind polish
-- `README.md` points its activity screenshot at `docs/assets/activity-view-dark.png`, which holds the same bytes as the file renamed from `docs/assets/activity-view.png`.

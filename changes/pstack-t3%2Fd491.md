@@ -1,2 +1,0 @@
-- kind polish
-- tests/landing keeps every file under 5000 tokens

@@ -1,2 +1,0 @@
-- kind fix
-- `tests/release_tests` is the release test package renamed from `tests/release` and leaves the `release` module name for `scripts/release.py`.

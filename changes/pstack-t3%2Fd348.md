@@ -1,3 +1,0 @@
-- kind fix
-- `tests/brigade/test_fire_layout.py` pins a saved scope pair where only the first scope holds the repository root and a pair where only the second scope holds it
-- each pair previews the second ticket as `blocked, starts after` the first, because the preview's overlap check reads an empty canonical part as the whole repository

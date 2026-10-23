@@ -1,3 +1,0 @@
-- kind fix
-- `tests/test_pstack_t3.py`'s `WorktreeAuditTest` resolves its temporary root, so each worktree mark key is the physical path git records
-- `tests/brigade/test_context_cap.py`'s `ContextCapTest` resolves its project directory, so each expected string that names a project or settings path holds the resolved path the code prints

@@ -1,5 +1,0 @@
-- kind feature
-- `edits verify` refuses an applied change over 20 counted lines, and counts, for each changed file, the largest added plus deleted total `git diff --numstat` reports between the reviewed file and the edited file under `myers`, `minimal`, `patience`, and `histogram`
-- the count is git's own total for those algorithms, and every line of both files counts when git calls either one binary
-- a path ending in `.md` and a `.py` path whose AST is the same once its docstrings are removed are not counted
-- `tests/brigade/edits_code/` refuses the repeated-block applied change and the earlier refused ones, writes no verification row, and refuses the later pass without a second review

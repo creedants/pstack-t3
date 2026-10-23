@@ -1,3 +1,0 @@
-- kind polish
-- The housekeeping bullet for finishing with the old worker points at drop steps 1 and 2 in Run a service step 7 instead of repeating the interrupt and the wait, so the drop steps keep one source.
-- The bullet keeps its hang condition for a run still open after the report-back, its archive condition of a terminal run with no pending child work, and its later-service cleanup on a timeout or pending child work.

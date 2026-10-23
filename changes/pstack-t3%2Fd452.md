@@ -1,2 +1,0 @@
-- kind fix
-- pull request CI exports PSTACK_TEST_REAL_PROCESS as 1 and runs every test without the real-process share.

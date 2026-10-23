@@ -1,9 +1,0 @@
-- kind feature
-- `set --affected-tests`, `set --shared-docs`, and `set --doc-timebox` record `affectedTests`, `sharedDocs`, and `docTimebox`, and empty string clears each one
-- text starting with `{` or `[` parses as inline JSON, any other text reads as a UTF-8 file, and `-` reads stdin
-- a parse or read failure refuses with the flag name and writes nothing. A file read catches ValueError plus OSError. A parse catches ValueError.
-- `validate_settings` judges each value with `layout` and `doc_policy`, so a refused value writes nothing
-- `store-config.md` holds the three keys and example values. The `affectedTests` block is a key fragment. Save its inner object to a file and pass that file with `set --affected-tests`, or pipe that object. Replace the placeholder interpreter path. The `sharedDocs` block equals `DOC_SETTINGS`. `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment. `fire` always reads `sharedDocs` and `docTimebox` and never reads `affectedTests`. `SKILL.md` links to it with no template
-- the `dish --state in-review` paragraph matches `gate_outside`, `gate_recheck`, and `handle_dish`
-- `tests/brigade/test_setup.py` covers a non-UTF-8 file and a NUL path. `tests/brigade/test_items.py` reads `store-config.md` for the sharedDocs value
-- the NUL path test in `tests/brigade/test_setup.py` calls `_read_json_setting` directly, names `--affected-tests`, and writes nothing

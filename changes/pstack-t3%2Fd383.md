@@ -1,3 +1,0 @@
-- kind polish
-- In `tests/test_activity.py`, `test_live_page_help_says_the_no_value_address_does_not_follow_serve` asserts `which does not follow --serve.` in the parser's description and `and does not follow --serve,` in the `--live-page` action's help.
-- The test previously asserted `does not follow --serve` in `format_help()`, where both sentences supply the phrase, so it failed only when both were removed. Removing either sentence alone now fails it.

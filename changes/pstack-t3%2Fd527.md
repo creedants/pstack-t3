@@ -1,2 +1,0 @@
-- kind polish
-- `t3/added/landing/scripts/landing_lib/leases.py` moves `in_flight`, `holders_of`, `lease_paths`, `held_on`, `standing`, `taken_ids`, `add_taken`, `counts`, `under`, `reserved_for`, `arm_reservations`, `admission`, `take`, `wanted_paths` to `t3/added/landing/scripts/landing_lib/_leases/store.py` and `parse_owner`, `check_owner`, `check_ruling_owner`, `holder_prefix`, `raise_floor` to `t3/added/landing/scripts/landing_lib/_leases/owner.py` with each moved body unchanged and re-exports every moved name from `landing_lib.leases`
