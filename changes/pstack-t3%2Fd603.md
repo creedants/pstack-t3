@@ -1,2 +1,2 @@
 - kind fix
-- `open_t3` refuses a T3 database that another process holds in exclusive locking mode with a message that names the held lock, and keeps the missing-index refusal for a log with no index and no holder.
+- `open_t3` refuses a T3 database whose write-ahead log has no index while another process holds it in exclusive locking mode, with a message that names the held lock, and keeps the missing-index refusal for a log with no index and no holder.

@@ -83,7 +83,7 @@ class T3StateWalWithoutIndexTest(unittest.TestCase):
         writer.close()
 
     def test_a_log_with_no_index_and_no_holder_keeps_the_refusal_that_names_the_missing_index(self):
-        """A read-only open leaves an empty log, so the index is gone and nobody holds the file."""
+        """A read-only open leaves an empty log, the test then removes the index, and nobody holds the file."""
         reader = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, isolation_level=None)
         reader.execute("select 1 from sqlite_master limit 1")
         reader.close()
@@ -98,7 +98,7 @@ class T3StateWalWithoutIndexTest(unittest.TestCase):
         self.assertFalse(Path(f"{self.path}-shm").exists(), "the refusal created the index")
 
     def test_a_database_held_in_exclusive_locking_mode_is_refused_as_locked_not_as_a_missing_index(self):
-        """A write lock lives in another process, because POSIX record locks are per process."""
+        """The holder runs in a child process, because POSIX record locks never conflict within one process, so a lock taken by the test process would not block the probe."""
         holder = subprocess.Popen(
             [sys.executable, "-c", HOLDER, str(self.path)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
