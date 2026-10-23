@@ -9,6 +9,55 @@ from tests.brigade.test_affected import AffectedBase, ALWAYS, LAYOUT, WORKFLOW, 
 
 
 class AffectedSplit1Test(AffectedBase):
+    @classmethod
+    def _make_archive(cls, dest):
+        import shutil
+        import subprocess
+        dest.mkdir(parents=True, exist_ok=True)
+        for child in ROOT.iterdir():
+            if child.name == ".git" or child.name == "__pycache__":
+                continue
+            if child.name != "tests":
+                target = dest / child.name
+                if child.is_dir():
+                    shutil.copytree(child, target, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+                else:
+                    shutil.copy2(child, target)
+                continue
+        keep = (
+            "tests/brigade/__init__.py",
+            "tests/brigade/support.py",
+            "tests/brigade/_support",
+            "tests/brigade/test_briefs.py",
+            "tests/brigade/worker_briefs",
+            "tests/landing/__init__.py",
+            "tests/landing/support.py",
+            "tests/landing/_support",
+            "tests/landing/test_times.py",
+            "tests/landing/test_slot.py",
+            "tests/test_activity.py",
+            "tests/test_activity_render.py",
+            "tests/test_pstack_t3.py",
+            "tests/activity_tests/__init__.py",
+            "tests/activity_tests/support.py",
+            "tests/activity_tests/pages.py",
+            "tests/activity_tests/browser.py",
+        )
+        for rel in keep:
+            src = ROOT / rel
+            target = dest / rel
+            if src.is_dir():
+                shutil.copytree(src, target, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            elif src.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, target)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, capture_output=True, text=True, check=True)
+        subprocess.run(["git", "config", "maintenance.auto", "false"], cwd=dest, capture_output=True, text=True, check=True)
+        subprocess.run(["git", "config", "gc.auto", "0"], cwd=dest, capture_output=True, text=True, check=True)
+        subprocess.run(["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "add", "-A"],
+                       cwd=dest, capture_output=True, text=True, check=True)
+        return dest
+
     def test_diff_names_changed_file_fails_when_diff_not_read(self):
         self.git_project()
         self.write("src/a.py", "x = 1\n")
