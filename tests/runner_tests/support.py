@@ -42,41 +42,74 @@ GOOD = """
 """
 
 # A temporary project's tests import this to tell the test that owns the project which processes they started.
-# A mark carries the pid and the start time field 22 of /proc/<pid>/stat reports for it, or - where /proc has no entry for the pid.
+# A report is a pid and the start time field 22 of /proc/<pid>/stat reports for it, or - where /proc has no entry for the pid.
+# The process a report names makes it from its own /proc/self/stat before it can exit, and every step after that carries it unchanged.
 MARKS = """
     import os
     import subprocess
     import sys
+    import time
     from pathlib import Path
 
     PROJECT = Path(__file__).resolve().parents[1]
-    SLEEPER = ["-c", "import time; time.sleep(60)", str(PROJECT)]
+    # Writes its own report to the path in argv 2 under the directory in argv 1, then sleeps for 60 s.
+    PROGRAM = (
+        "import os, sys, time\\n"
+        "from pathlib import Path\\n"
+        "def started():\\n"
+        "    try:\\n"
+        "        raw = Path('/proc/self/stat').read_bytes()\\n"
+        "    except OSError:\\n"
+        "        return '-'\\n"
+        "    return raw[raw.rindex(b')') + 2:].split()[19].decode()\\n"
+        "root, name = Path(sys.argv[1]), sys.argv[2]\\n"
+        "(root / (name + '.tmp')).write_text(f'{os.getpid()} {started()}')\\n"
+        "os.replace(root / (name + '.tmp'), root / name)\\n"
+        "time.sleep(60)\\n"
+    )
+    # Starts a process that writes its own report in a new session, then ends.
     PARENT = (
         "import subprocess, sys\\n"
-        "child = subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True,\\n"
-        "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\\n"
-        "print(child.pid)\\n"
+        "subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True,\\n"
+        "                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\\n"
     )
 
-    def started(pid):
+    def mine():
+        '''Return this process's pid and the start time its own /proc/self/stat reports, or - where /proc has no entry for it.'''
         try:
-            raw = Path(f"/proc/{pid}/stat").read_bytes()
+            raw = Path("/proc/self/stat").read_bytes()
         except OSError:
-            return "-"
-        return raw[raw.rindex(b")") + 2:].split()[19].decode()
+            return f"{os.getpid()} -"
+        return f"{os.getpid()} {raw[raw.rindex(b')') + 2:].split()[19].decode()}"
 
-    def mark(name, pid):
-        (PROJECT / (name + ".tmp")).write_text(f"{pid} {started(pid)}")
+    def reported(name, limit=10):
+        '''Return the report the process that writes name made for itself.'''
+        path = PROJECT / name
+        deadline = time.monotonic() + limit
+        while not path.exists():
+            if time.monotonic() > deadline:
+                raise AssertionError(f"{name} was not reported")
+            time.sleep(0.01)
+        return path.read_text()
+
+    def sleeper(name):
+        '''Start a process in a new session that writes its own report to name, and return that report.'''
+        subprocess.Popen([sys.executable, "-c", PROGRAM, str(PROJECT), name], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return reported(name)
+
+    def mark(name, report):
+        '''Write the report a test gives for name. A report is a pid with the start time the process it names read for itself. A report that holds only a pid leaves the mark without a start time, and cleanup records nothing from it.'''
+        (PROJECT / (name + ".tmp")).write_text(str(report))
         os.replace(PROJECT / (name + ".tmp"), PROJECT / name)
 
-    def orphan():
-        parent = subprocess.run([sys.executable, "-c", PARENT, *SLEEPER], capture_output=True, text=True, check=True)
-        return int(parent.stdout)
+    def orphan(name):
+        '''Start a process whose parent starts a sleeper in a new session and ends. Return the sleeper's report.'''
+        subprocess.run([sys.executable, "-c", PARENT, "-c", PROGRAM, str(PROJECT), name], check=True)
+        return reported(name)
 """
 
 ESCAPE = """
-    import subprocess
-    import sys
     import time
     import unittest
 
@@ -84,22 +117,18 @@ ESCAPE = """
 
     class EscapeTest(unittest.TestCase):
         def test_escape(self):
-            child = subprocess.Popen([sys.executable, *marks.SLEEPER], start_new_session=True)
-            marks.mark("child", child.pid)
+            marks.sleeper("child")
             time.sleep({seconds})
 """
 
 HANG_AT_IMPORT = """
-    import os
-    import subprocess
-    import sys
     import time
 
     import marks
 
     if {escape}:
-        marks.mark("child", subprocess.Popen([sys.executable, *marks.SLEEPER], start_new_session=True).pid)
-    marks.mark("listing", os.getpid())
+        marks.sleeper("child")
+    marks.mark("listing", marks.mine())
     print("importing", flush=True)
     time.sleep(60)
 

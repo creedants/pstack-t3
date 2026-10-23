@@ -56,8 +56,22 @@ LOST_WORKER = """
     class LostTest(unittest.TestCase):
         def test_lost(self):
             self.assertGreater(end_watchers(), 0, "the worker has no watcher in its process group")
-            marks.mark("worker", os.getpid())
+            marks.mark("worker", marks.mine())
             time.sleep(60)
+"""
+
+# A worker that writes a mark from the numeric pid another process holds, as the mark writer did after the kernel gave that pid to the other process.
+REUSE_BEFORE_MARK = """
+    import unittest
+    from pathlib import Path
+
+    import marks
+
+    REPLACEMENT = Path(__file__).resolve().parents[1] / "replacement"
+
+    class ReuseTest(unittest.TestCase):
+        def test_reuse(self):
+            marks.mark("worker", int(REPLACEMENT.read_text()))
 """
 
 RESPONDER = (
@@ -128,6 +142,20 @@ class CleanupTest(RunnerCase, unittest.TestCase):
         LeavesWorker().run(result)
         self.assertTrue(result.wasSuccessful(), f"{result.failures}{result.errors}")
         self.assert_dead(left["worker"])
+
+    @unittest.skipUnless(LINUX, "the test reads /proc")
+    def test_cleanup_leaves_a_sleeper_a_bare_pid_mark_names_after_pid_reuse(self):
+        """A mark writer given only the numeric pid that names a separate sleeper, as after the kernel gave the sleeper the pid of the process the worker started before the mark was written, records no start time, so cleanup signals nothing and the sleeper answers after end."""
+        self.write("marks.py", MARKS)
+        self.write("test_reuse.py", REUSE_BEFORE_MARK)
+        sleeper = self.responder()
+        (self.proj / "replacement").write_text(str(sleeper.pid))
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        worker = self.pid_from("worker")
+        self.assertEqual(worker, sleeper.pid)
+        self.end(worker)
+        self.assert_answers(sleeper)
 
     @unittest.skipUnless(LINUX, "the test reads /proc")
     def test_cleanup_leaves_a_pid_whose_recorded_start_time_differs(self):

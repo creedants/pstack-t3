@@ -117,7 +117,7 @@ class SweepsMixin:
 
             class OrphanTest(unittest.TestCase):
                 def test_orphan(self):
-                    marks.mark("child", marks.orphan())
+                    marks.orphan("child")
         """)
         result = self.runner()
         child = self.pid_from("child")
@@ -137,8 +137,7 @@ class SweepsMixin:
 
             class OrphanTest(unittest.TestCase):
                 def test_orphan(self):
-                    child = marks.orphan()
-                    marks.mark("child", child)
+                    child = int(marks.orphan("child").split()[0])
                     os.kill(child, signal.SIGKILL)
                     deadline = time.monotonic() + 10
                     while time.monotonic() < deadline:
