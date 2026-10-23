@@ -15,7 +15,7 @@ Read this file before you run `set` on a store key it names.
 | `suite` | Optional whole-suite command. |
 | `python` | Optional absolute path of the second interpreter. |
 | `importRoots` | Optional list of repository paths tried as prefixes for absolute imports. |
-| `env` | Optional object of shell variable names to string values printed in front of each command. |
+| `env` | Optional object of shell variable names to string values printed in front of the affected-module and whole-suite commands. |
 
 The second interpreter file name is `python<major>` or `python<major>.<minor>`. The paragraph names it by that version. A layout that sets `python` needs a `suite` that starts with `python3`. That interpreter replaces the leading `python3`. `importRoots` is tried in candidate order after the loader directory and the root with every match kept. Relative imports never search it. Roots are normalized and deduped in order and never hold the root itself. An absent `importRoots` means the directories of `entryPoints` and `helpers`.
 
