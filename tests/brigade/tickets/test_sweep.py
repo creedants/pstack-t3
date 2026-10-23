@@ -127,6 +127,29 @@ class SweepMixin:
                          f"brigade: digest {approved_digest!r} does not match {fresh!r}; nothing changed")
         self.assertEqual(self.store_files(), before)
 
+    def test_sweep_refuses_a_duplicate_ticket_id_on_list_with_nothing_changed(self):
+        self.open()
+        self.old_untagged(summary="one", days=40)
+        self.old_untagged(summary="two", days=40)
+        self.brigade("ticket", "set", "T1", "--state", "assigned")
+        self.hand_edit("rail.tsv", "T2", id="T1")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30", ok=False),
+                         "brigade: duplicate ticket T1 in rail.tsv; nothing changed")
+        self.assertEqual(self.store_files(), before)
+
+    def test_sweep_refuses_a_duplicate_ticket_id_on_apply_with_nothing_changed(self):
+        self.open()
+        self.old_untagged(summary="one", days=40)
+        self.old_untagged(summary="two", days=40)
+        self.brigade("ticket", "set", "T1", "--state", "assigned")
+        self.hand_edit("rail.tsv", "T2", id="T1")
+        before = self.store_files()
+        self.assertEqual(self.brigade("ticket", "sweep", "--older-than", "30", "--drop", "--confirm", "0" * 32,
+                                      ok=False),
+                         "brigade: duplicate ticket T1 in rail.tsv; nothing changed")
+        self.assertEqual(self.store_files(), before)
+
     def test_sweep_refuses_confirm_without_action_and_action_without_confirm(self):
         self.open()
         self.old_untagged(days=40)
