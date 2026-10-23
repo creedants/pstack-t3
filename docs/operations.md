@@ -54,7 +54,7 @@ ops/t3-archive-threads.py --project pstack-t3 --coordinator <thread id> --keep <
 ops/t3-archive-threads.py --project pstack-t3 --top-level-settled --older-than-hours 48
 ```
 
-Direct archiving requires `T3_CODE_MCP_AUTHORIZATION` in the session. Native Claude sessions on T3 Code nightly 20261013.3053 do not receive that variable, so use `--selection-only` and archive each selected thread with the host's `t3_thread_organize` tool. It archives through T3's own `t3_thread_organize` tool. It posts to `/mcp` at the `origin` address in `userdata/server-runtime.json` and sends the session's credential from `T3_CODE_MCP_AUTHORIZATION` with every request. It opens the database `userdata/statev2.sqlite` read-only to choose the threads and never writes to it. Archiving is reversible in T3.
+Direct archiving requires `T3_CODE_MCP_AUTHORIZATION` in the session. A native Claude session on T3 Code 0.1.2-nightly.20261022.3541 was observed without that variable set, so use `--selection-only` and archive each selected thread with the host's `t3_thread_organize` tool. It archives through T3's own `t3_thread_organize` tool. It posts to `/mcp` at the `origin` address in `userdata/server-runtime.json` and sends the session's credential from `T3_CODE_MCP_AUTHORIZATION` with every request. It opens the database `userdata/statev2.sqlite` read-only to choose the threads and never writes to it. Archiving is reversible in T3.
 
 Only one server can own a T3 home at a time. When startup reports another owner, stop that server before retrying, or use a separate T3 home and pair with the running server. Never unlink `server-owner.sqlite` to bypass the owner.
 
