@@ -1,0 +1,4 @@
+- kind fix
+- The announcement example in `docs/light-mode.md` now matches the fallback wording in `t3/runtime.md`
+- The spawn table rows in `t3/added/pstack-runtime/light.md` now qualify both audit lanes with the same-family fallback
+- The mode offer in `t3/added/brigade/opening.md` now qualifies the review with the same-family fallback
