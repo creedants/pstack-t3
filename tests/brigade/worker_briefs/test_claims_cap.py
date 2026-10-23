@@ -42,6 +42,12 @@ class ClaimsCapTest(BrigadeTest):
         self.assertEqual(self.close_run("--dry-run")[::2],
                          (0, "brigade: warning: reports/D1.md names 3 claims check runs; the cap is two per round"))
 
+    def test_close_warns_for_a_dish_in_progress_whose_report_names_three_claims_check_runs(self):
+        self.fired_bug_fix()
+        self.report_with_threads(THREE_RUNS)
+        self.assertEqual(self.close_run("--dry-run")[::2],
+                         (0, "brigade: warning: reports/D1.md names 3 claims check runs; the cap is two per round"))
+
     def test_close_prints_no_claims_cap_warning_for_two_claims_check_runs(self):
         self.fired_bug_fix()
         self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")

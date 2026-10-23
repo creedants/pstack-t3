@@ -1,5 +1,5 @@
 - kind upkeep
 - The worker brief's verify rule says the claims check runs at most twice per round, the first check and one recheck after fixing what it flagged, and that prose edited after the recheck is settled by the worker with each kept flag listed with one line of reason in the report.
-- `brigade.py close` prints `brigade: warning: reports/<id>.md names <n> claims check runs; the cap is two per round` for a dish in review or passed whose `reports/<id>.md` `## Threads` section lists more than two claims check children, and prints nothing for two.
+- `brigade.py close` prints `brigade: warning: reports/<id>.md names <n> claims check runs; the cap is two per round` for a dish still in flight whose `reports/<id>.md` `## Threads` section lists more than two claims check children, and prints nothing for two.
 - The cap warning leaves the exit code at 0.
 - `tests/brigade/worker_briefs/test_claims_cap.py` pins the brief sentence, the warning at three runs, and the silence at two.
