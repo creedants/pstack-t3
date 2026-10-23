@@ -79,3 +79,21 @@ class LateHelperRowTest(BrigadeTest):
         current = json.loads(self.brigade("spend", "--json"))
         self.assertEqual(current["rows"][0]["threads"], 4)
         self.assertIn(THREAD_B, (self.at / "threads.tsv").read_text())
+
+    def test_block_resume_keeps_legitimate_helper_suppressing_next_attempt(self):
+        self.fired_bug_fix()
+        self.brigade("dish", "D1", "--thread", THREAD_A)
+        self.brigade("dish", "D1", "--state", "blocked")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
+        self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--author", CLAUDE, "--verifier", CODEX,
+                                       "--reviewer-thread", THREAD_C),
+                         [f"archive thread: {THREAD_C}", f"archive thread: {THREAD_B}"])
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.brigade("dish", "D1", "--thread", THREAD_D)
+        self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
+        self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--author", CLAUDE, "--verifier", CODEX,
+                                       "--reviewer-thread", THREAD_C),
+                         [f"archive thread: {THREAD_C}"])
