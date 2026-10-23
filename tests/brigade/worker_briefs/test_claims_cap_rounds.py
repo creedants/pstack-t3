@@ -50,9 +50,9 @@ class ClaimsCapRoundsTest(BrigadeTest):
         import os
         from datetime import datetime, timezone
         self.fired_bug_fix()
-        self.report_with_threads(THREE_RUNS)
         self.record("abc", "send-back")
         self.brigade("dish", "D1", "--state", "in-progress")
+        self.report_with_threads(THREE_RUNS)
         path = self.at / "reports" / "D1.md"
         stamp = datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp()
         os.utime(path, (stamp, stamp))
