@@ -125,16 +125,17 @@ def _common_dir(root):
 
 
 def _contract_rows(path):
-    """The contract table of path read through a read-only URI, or None when the read would create a file.
+    """The contract table of path read through a read-only URI, or None when its log exists without an index.
 
     A write-ahead log with no index beside it is refused, because the read would create the index.
-    A database with no log is opened immutable, so the read creates no file beside it.
+    The read takes SQLite's locks, so it is one committed snapshot and never checkpoints, changes a database file,
+    or changes an existing log. It can still create an empty log and index beside a database whose last writer just
+    closed, and it changes no committed data.
     """
     log = Path(f"{path}-wal").exists()
     if log and not Path(f"{path}-shm").exists():
         return None
-    connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro" + ("" if log else "&immutable=1"),
-                                 uri=True, isolation_level=None)
+    connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True, isolation_level=None)
     try:
         return dict(connection.execute("SELECT key, value FROM contract").fetchall())
     finally:
@@ -146,6 +147,8 @@ def contract_check(root):
 
     It reads the checks value from the contract table of the land.db whose commonDir resolves to root's common git directory.
     It reads a candidate through a read-only URI, skipping one whose log has no index beside it and one the read cannot open.
+    That read is one committed snapshot and changes no committed data, and it can create an empty log and index beside
+    a database whose last writer just closed.
     It returns that value stripped when it is a list of exactly one string other than "none", and an empty string in every other case.
     """
     common = _common_dir(root)
