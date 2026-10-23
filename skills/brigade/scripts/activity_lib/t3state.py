@@ -160,7 +160,7 @@ def t3_database(flag, environ, home):
 
 def open_t3(path):
     """mode=ro reads T3's database through SQLite's locks, so the read is one committed snapshot and changes no committed data.
-    A read-only open can create an empty log and index beside a database whose last writer just closed.
+    A read-only open can create a log with no frames and a shared-memory index beside a database whose last writer just closed.
     With a write-ahead log and its index beside the database, the read reads that log.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
     """
