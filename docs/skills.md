@@ -109,6 +109,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | Skill | What it does |
 | --- | --- |
 | [`in-your-own-words`](../skills/in-your-own-words/SKILL.md) | Restate in your own words what you think the user's goals are and what problem they're trying to solve. Use for /in-your-own-words. |
+| [`ketchup-video`](../skills/ketchup-video/SKILL.md) | Catch the user up like /ketchup, with a short silent video of slides for what happened and the waiting calls as text under it. Use for /ketchup-video. |
 | [`sharpen`](../skills/sharpen/SKILL.md) | Make a task deeper, not bigger, then rewrite the prompt. Use for /sharpen. |
 
 ## poteto-mode playbooks

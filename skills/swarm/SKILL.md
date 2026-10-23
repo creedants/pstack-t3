@@ -22,7 +22,7 @@ Open a todolist with one entry per phase before launching anything.
 
 1. State the done predicate and the artifact or report the swarm must return.
 2. Choose the shape. Partition into slices, race N workers on identical briefs, or mix both. For a race or mixed shape, declare `first pass`, `rank all`, or `best-of` before spawning.
-4. Pick the worker model from the `swarm workers` role. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
+3. Pick the worker model from the `swarm workers` role. Call `orchestrator_capabilities`. Paste that tool result into this quoted heredoc. If the catalog result is large, save it to a temporary file with the host's file tool and pass that path to `--catalog`.
 
 ```bash
 python3 <pstack-runtime>/scripts/roles.py show --cwd "$PWD" --catalog - --parent "<inheritedProviderInstanceId>/<inheritedModel>" --role "swarm workers" <<'JSON'
@@ -32,11 +32,11 @@ JSON
 
 The quoted heredoc sends the JSON unchanged. The command does not write the catalog into the repository, and parallel children do not share a file. It resolves the `swarm workers` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). Every worker uses that seat. An `inherit` seat means omit `target` so the workers run on the parent model. If `delegate_task` rejects the target, apply the runtime's fallback and say which seat changed and why. For a model race, name each arm's target up front from `orchestrator_capabilities`, and report whether the arms' models actually differed. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill.
 
-5. Give each worker its own writable output when it writes. A worker that writes to the repo while another writer may overlap gets its own git worktree per [the runtime's Isolation section](../pstack-runtime/SKILL.md#isolation). When workers verify or measure commits, each brief names the exact SHAs. A measurement brief also names the method (sample count, what one sample is, order). The worker records both in its result.
+4. Give each worker its own writable output when it writes. A worker that writes to the repo while another writer may overlap gets its own git worktree per [the runtime's Isolation section](../pstack-runtime/SKILL.md#isolation). When workers verify or measure commits, each brief names the exact SHAs. A measurement brief also names the method (sample count, what one sample is, order). The worker records both in its result.
 
 ## Phase B: Fan out
 
-Spawn all N workers in one message, one `delegate_task` call per worker, with `mode: "async"`, `role` `general` (or `review`, `research`, or `test` when the slice is only that), the step 4 `target` (omitted for `inherit`), and a stable `clientRequestId` such as `swarm-<slug>-<n>`. Retain every returned `taskId` in the todolist. Workers are local child tasks, so they can reach files, browsers, and auth on this machine.
+Spawn all N workers in one message, one `delegate_task` call per worker, with `mode: "async"`, `role` `general` (or `review`, `research`, or `test` when the slice is only that), the step 3 `target` (omitted for `inherit`), and a stable `clientRequestId` such as `swarm-<slug>-<n>`. Retain every returned `taskId` in the todolist. Workers are local child tasks, so they can reach files, browsers, and auth on this machine.
 
 When a worker must start from a non-default branch, name that branch in the brief as the worktree's base. Uncommitted changes do not reach a new worktree, so commit or push first.
 
@@ -52,4 +52,4 @@ Remove worker worktrees after integrating them.
 
 ## Phase D: Report
 
-Return one consolidated in-chat report with the table, issue one-liners, gaps or dropouts, any seat that fell back, and the race rule when used.
+Return one consolidated in-chat report with a result table, issue one-liners, gaps or dropouts, any seat that fell back, and the race rule when used.
