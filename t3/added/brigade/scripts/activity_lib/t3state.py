@@ -160,6 +160,7 @@ def t3_database(flag, environ, home):
 
 def open_t3(path):
     """mode=ro reads T3's database through SQLite's locks, so the read is one committed snapshot and changes no committed data.
+    BEGIN is deferred, so it takes no lock. One read of the schema after it takes the read lock, so this open holds the snapshot when it returns.
     A read-only open can create a log with no frames and a shared-memory index beside a database whose last writer just closed.
     With a write-ahead log and its index beside the database, the read reads that log.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
@@ -174,6 +175,8 @@ def open_t3(path):
     try:
         connection.execute("PRAGMA query_only=1")
         connection.execute("BEGIN")
+        # BEGIN is deferred, so this read is what takes the lock the snapshot is held by.
+        connection.execute("select 1 from sqlite_master limit 1")
     except sqlite3.Error as error:
         connection.close()
         raise unreadable(error, path) from None
