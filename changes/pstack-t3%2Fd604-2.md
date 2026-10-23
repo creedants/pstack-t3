@@ -1,0 +1,2 @@
+- kind upkeep
+- `scripts/check.py` lists the generated `skills/statechart/scripts/test/statechart.test.mjs` in `HOME_PATH_EXEMPT`, because the build copies upstream's test file with its own home directory fixture into `skills/`.
