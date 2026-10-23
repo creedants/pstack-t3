@@ -1,5 +1,5 @@
 - kind feature
-- `ticket sweep --older-than <n>` lists waiting tickets filed strictly more than `<n>` days ago that have no kind or no goal, with a count line and a digest of the listed ids, and prints nothing to sweep when empty
+- `ticket sweep --older-than <n>` lists waiting tickets filed strictly more than `<n>` days ago that have no kind or no goal, with a count line and a digest of the listed tickets, and prints nothing to sweep when empty
 - `ticket sweep --older-than <n> --drop --confirm <digest>` drops each listed ticket with a reason naming the sweep, and only when the digest still matches
 - `ticket sweep --older-than <n> --goal G<n> --confirm <digest>` gives each listed ticket with no goal that goal, never overwrites a goal in goals.tsv, validates the goal before any write, and only when the digest still matches
 - a sweep never touches an assigned, done, dropped, or moved ticket, a ticket with both kind and goal, or a waiting ticket that an item in flight names

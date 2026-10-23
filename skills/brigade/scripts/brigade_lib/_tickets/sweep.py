@@ -25,6 +25,7 @@ class Candidate:
     age: int
     label: Label
     summary: str
+    filed: str
 
 
 @dataclass(frozen=True)
@@ -35,8 +36,14 @@ class Sweep:
 
     @property
     def digest(self):
-        """The first 32 hex digits of the sha256 of the newline joined ids."""
-        joined = "\n".join(candidate.id for candidate in self.candidates)
+        """The first 32 hex digits of the sha256 of one line per listed ticket.
+
+        Each line is the ticket's id, kind, goal, summary, and filed date, as five tab-separated cells, in listing order.
+        The lines join with a newline.
+        """
+        joined = "\n".join("\t".join((candidate.id, candidate.label.kind, candidate.label.goal, candidate.summary,
+                                      candidate.filed))
+                           for candidate in self.candidates)
         return hashlib.sha256(joined.encode()).hexdigest()[:32]
 
 
@@ -67,7 +74,7 @@ def sweep_select(rows, labels, held, days, now):
         filed = filed_at(row)
         if now - filed <= timedelta(days=days):
             continue
-        found.append(Candidate(row["id"], (now - filed).days, label, row["summary"]))
+        found.append(Candidate(row["id"], (now - filed).days, label, row["summary"], row["at"]))
     found.sort(key=lambda candidate: (int(candidate.id[1:]) if candidate.id[1:].isdigit() else 0, candidate.id))
     return Sweep(days, tuple(found))
 

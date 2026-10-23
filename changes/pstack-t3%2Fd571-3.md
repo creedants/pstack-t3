@@ -1,0 +1,2 @@
+- kind feature
+- `ticket sweep` digests each listed ticket's id, kind, goal, summary, and filed date, so a change to any of them refuses the apply and leaves every store file unchanged

@@ -1,4 +1,4 @@
 - kind feature
-- `ticket sweep` prints the first 32 hex digits of the sha256 of the listed ids as its digest
+- `ticket sweep` prints the first 32 hex digits of a sha256 over the listed tickets as its digest
 - `ticket sweep` refuses the list and the apply when rail.tsv holds a repeated ticket id, and it names the id and changes nothing
 - `ticket sweep` refuses the list and the apply when a row of rail.tsv has a malformed or missing filed date, and it changes nothing
