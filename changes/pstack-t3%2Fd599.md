@@ -1,0 +1,2 @@
+- kind fix
+- `affectedTests` in the store configuration doc names the `env` key, the object it takes, the name and value patterns `set` refuses, its absent default, and the `env NAME=value ...` prefix the picker prints in front of the affected-module and whole-suite commands and their second interpreter copies
