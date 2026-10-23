@@ -5,7 +5,7 @@ from ..support import BrigadeTest, SCRIPT, _owner_words, call_in_process, run_gl
 
 
 class SweepSnapshotMixin:
-    """The tests here pin the sweep digest over each listed ticket's id, kind, goal, summary, and filed date."""
+    """The tests here pin the sweep digest over each listed ticket's id, kind, goal, summary, and filed time."""
 
     NOW = "2026-02-01T00:00:00+00:00"
 
@@ -77,7 +77,7 @@ class SweepSnapshotMixin:
         approved, fresh = self.refused_after(lambda: self.hand_edit("rail.tsv", "T1", summary="changed"))
         self.assertNotEqual(approved, fresh)
 
-    def test_sweep_refuses_a_digest_after_a_listed_tickets_filed_date_changes(self):
+    def test_sweep_refuses_a_digest_after_a_listed_tickets_filed_time_changes(self):
         def an_hour_earlier():
             stored = self.table_row(self.at, "rail.tsv", "T1")["at"]
             self.hand_edit("rail.tsv", "T1", at=(datetime.fromisoformat(stored) - timedelta(hours=1)).isoformat())

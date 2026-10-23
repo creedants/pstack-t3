@@ -38,7 +38,7 @@ class Sweep:
     def digest(self):
         """The first 32 hex digits of the sha256 of one line per listed ticket.
 
-        Each line is the ticket's id, kind, goal, summary, and filed date, as five tab-separated cells, in listing order.
+        Each line is the ticket's id, kind, goal, summary, and filed time, as five tab-separated cells, in listing order.
         The lines join with a newline.
         """
         joined = "\n".join("\t".join((candidate.id, candidate.label.kind, candidate.label.goal, candidate.summary,
