@@ -42,7 +42,7 @@ GOOD = """
 """
 
 # A temporary project's tests import this to tell the test that owns the project which processes they started.
-# A mark carries the pid and the start time field 22 of /proc/<pid>/stat reports for it.
+# A mark carries the pid and the start time field 22 of /proc/<pid>/stat reports for it, or - where /proc has no entry for the pid.
 MARKS = """
     import os
     import subprocess
