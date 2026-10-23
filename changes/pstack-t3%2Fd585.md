@@ -1,0 +1,3 @@
+- kind feature
+- `t3/setup.md` now tells setup to write a second project's `.pstack/t3-roles.json` with `--project`, to treat a visibility it cannot read as private, and to write no `opencode-go/muse-spark-1.3-contributor` seat on a private repository
+- Brigade onboarding's build and check fix lines now name the landing contract check command for a missing or stored command, and its check row reads a check recorded in the landing contract
