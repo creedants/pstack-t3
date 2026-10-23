@@ -1,0 +1,3 @@
+- kind fix
+- `pass record` skips a line of a report's `## Threads` section that starts, after any leading whitespace, with neither a list marker nor a `#`, and holds no backticked thread id, even when the line names a child role. A list marker is a hyphen, an asterisk, a plus, a bullet, or a number followed by a dot or a closing parenthesis. A backticked thread id is a backticked value holding a colon and holding no whitespace.
+- `tests/brigade/reviews/test_threads_prose_roles.py` pins a prose line naming a child role under the list, a list row under that prose line, and a malformed list row under it
