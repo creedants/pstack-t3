@@ -1,0 +1,5 @@
+- kind fix
+- a run treats a scratch directory as pid-bearing only in the `run-tests-<pid>-<suffix>` form, so a legacy `run-tests-<random>` directory whose random suffix is all digits stays
+- a run removes a `run-tests-<pid>-<suffix>` directory whose pid field is too large to name any process, instead of failing on it
+- the `-j` help text says the slot cap is 4 jobs for each slot the command holds, and that one line prints when the cap lowers the requested count
+- `tests/runner_tests/test_lifecycle.py` pins a legacy all-digit scratch directory that a run keeps and a pid field above a signed int that a run removes

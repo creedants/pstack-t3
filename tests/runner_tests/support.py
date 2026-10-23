@@ -312,6 +312,19 @@ class RunnerCase:
             state = "gone"
         self.assertIn(state, ("S", "R"), f"process {pid}")
 
+    def assert_dead(self, pid, limit=5):
+        """Assert the process is gone, whether or not anything reaped it. A process that ended and is not yet reaped reads as a zombie."""
+        deadline = time.monotonic() + limit
+        while True:
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
+            except (FileNotFoundError, IndexError):
+                return
+            if state == "Z":
+                return
+            self.assertLess(time.monotonic(), deadline, f"process {pid} is still {state}")
+            time.sleep(0.02)
+
     def inherited(self, *args, seconds, sig=None):
         """Run RELEASES_THE_PARENT in a runner whose process had a child before the run. Return the runner's result and the pid of that child's sleeper."""
         self.write("test_release.py", RELEASES_THE_PARENT.format(seconds=seconds))

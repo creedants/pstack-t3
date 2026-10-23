@@ -100,6 +100,22 @@ def run_pool(shards: list[Shard], jobs: int, timeout: float, launch_one, finish,
             worker.channel.close()
 
 
+def make_scratch() -> Path:
+    """Make this run's scratch directory in the temp directory, after removing each directory there in the run-tests-<pid>-<suffix> form whose pid no process has. A removal that fails leaves its directory."""
+    base = Path(tempfile.gettempdir())
+    for entry in base.glob("run-tests-*"):
+        parts = entry.name[len("run-tests-"):].split("-", 1)
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1]:
+            continue   # a name that is not run-tests-<pid>-<suffix> names no process this run can judge
+        try:
+            os.kill(int(parts[0]), 0)
+        except (ProcessLookupError, OverflowError):
+            shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue   # this user may not signal that process, so the run leaves its directory
+    return Path(tempfile.mkdtemp(prefix=f"run-tests-{os.getpid()}-", dir=base))
+
+
 def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = None, _list_tests=None, _run_pool=None, _Watch=None) -> int:
     if os.environ.get(ACTIVE) == str(start):
         raise Refusal(f"already running on {start}. A test must not start the runner on its own suite.")
@@ -110,7 +126,7 @@ def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = N
     list_tests_fn = _list_tests if _list_tests is not None else list_tests
     run_pool_fn = _run_pool if _run_pool is not None else run_pool
     watch = WatchCls()
-    scratch = Path(tempfile.mkdtemp(prefix="run-tests-"))
+    scratch = make_scratch()
 
     def say(line: str) -> None:
         print(line, file=sys.stderr, flush=True)

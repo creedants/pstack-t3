@@ -7,8 +7,22 @@ import sys
 import time
 from pathlib import Path
 
-from . import ACTIVE, ENTRY, POLL_SECONDS, PR_SET_CHILD_SUBREAPER, SWEEP_SECONDS
+from . import ACTIVE, ENTRY, POLL_SECONDS, PR_SET_CHILD_SUBREAPER, PR_SET_PDEATHSIG, SWEEP_SECONDS
 from .events import Interrupted
+
+try:
+    import ctypes
+    _prctl = ctypes.CDLL(None, use_errno=True).prctl
+    _prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
+except (ImportError, OSError, AttributeError):
+    _prctl = None
+
+
+def die_with_parent() -> None:
+    """Ask the kernel to send this process SIGKILL when the runner ends. Does nothing where prctl is absent."""
+    if _prctl is not None:
+        _prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0)
+
 
 def adopt_orphans() -> bool:
     """Try to make this process the child subreaper. Return whether Linux did."""
@@ -102,7 +116,9 @@ def start_child(args: list[str], home: Path, start: Path) -> subprocess.Popen:
     for name in ("tmp", "state", "config"):
         (home / name).mkdir(parents=True)
     # A file, not a pipe. A process that outlives its test cannot hold the runner's read open.
+    # preexec_fn runs in the child after the fork, so the request names the child process itself.
     with open(home / "output", "wb") as output:
         return subprocess.Popen([sys.executable, str(ENTRY), *args], cwd=start.parent,
                                 env=child_env(dict(os.environ), home, start), stdin=subprocess.DEVNULL,
-                                stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                                stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
+                                preexec_fn=die_with_parent)
