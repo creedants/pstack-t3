@@ -165,8 +165,7 @@ def open_t3(path):
     A read-only open can create a log with no frames and a shared-memory index beside a database whose last writer just closed.
     With a write-ahead log and its index beside the database, the read reads that log.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
-    A connection in exclusive locking mode keeps the index in heap memory and holds a write lock on the database file.
-    The refusal names that lock when the file carries one, so a held lock is not reported as a missing index.
+    With a log and no index, the refusal names a conflicting write lock held by another process when the probe finds one.
     """
     log, index = Path(f"{path}-wal").exists(), Path(f"{path}-shm").exists()
     if log and not index:
