@@ -39,7 +39,7 @@ def round_helpers(restaurant, dish_id, sha="", late=False):
 
     A late verdict announces no helper. An empty SHA announces no helper. The report is current
     only when reports/<dish>.md exists and its mtime is at or after the last attempt start.
-    Attempt starts are the dish in-progress log rows, oldest first, from
+    Attempt starts are the dish in-progress log rows, oldest first, or the dish at when none exists, from
     brigade_lib._items.rounds.attempt_starts, the same rule report_is_current uses. A stale report
     announces no helper. Otherwise each child attempt comes from child_attempt through
     recorded_children with the SHA and late context.

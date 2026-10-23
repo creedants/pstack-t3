@@ -135,7 +135,7 @@ def recorded_children(rows, children, sha="", late=False):
     the max worker attempt in `rows`, or 1 when none holds a worker row. Each child attempt comes
     from `child_attempt`. A child is kept only when its attempt equals the current attempt, when
     its binding rows hold, and when no earlier row holds the same role and stored thread at a
-    smaller attempt. The earlier row check excludes helpers already announced.
+    smaller attempt. The earlier row check excludes helpers with an earlier same-role row.
     """
     if late:
         return []
