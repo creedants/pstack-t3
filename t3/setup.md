@@ -80,7 +80,7 @@ Run `python3 <runtime>/scripts/roles.py show --cwd "$PWD" --parent "<inheritedPr
 
 ### 6. Confirm
 
-Do this only after step 1 found `watch_pull_request` and step 5's smoke delegations succeeded. Tell the user which file was written, the budget, the mode, any provider they could enable in T3 settings to widen the seats they can choose, and that new sessions pick it up immediately. Re-running this skill updates it.
+Do this only after step 1 found `watch_pull_request` and step 5's smoke delegations succeeded. Tell the user which file was written, the budget, the mode, any provider they could enable in T3 settings to widen the seats they can choose, any seat that replaced a Muse seat on a private project, and that new sessions pick it up immediately. Re-running this skill updates it.
 
 ### 7. Offer a verification skill (optional)
 
@@ -89,3 +89,12 @@ Check whether the project has a way to drive the real app for proof, such as a `
 ### 8. Offer a formal verification skill (optional)
 
 Check whether the project already has a formal verification skill (a project skill that runs a model checker, a proof, or another verifier against the code). If not, offer once: "want a formal verification skill, so agents can prove a key property of your code holds in every case in scope, not only the cases tests reach? I can generate one with /create-formal-verification-skill." On yes, invoke `create-formal-verification-skill`. On no, move on without pushing.
+
+## Set up a second project
+
+When the user asks to set up another project, run the steps above against that repository and write its own roles file.
+
+1. Read the repository's visibility with `gh repo view --json visibility` run in that repository, or the host's equivalent. When the command fails or the host has no equivalent, treat the repository as private.
+2. Run step 2's `roles.py show` with `--cwd <root>`, and read that project's seats, budget, and mode.
+3. Run the write from step 4 with `--cwd <root> --project`, so it writes `<root>/.pstack/t3-roles.json`. For a private repository, write no seat on `opencode-go/muse-spark-1.3-contributor`. Seat the roles you would have given it on another model from the catalog, and name each replacement seat when you confirm in step 6.
+4. Run step 5 with `--cwd <root>`. In step 6, name `<root>/.pstack/t3-roles.json` as the file written, not the user file.

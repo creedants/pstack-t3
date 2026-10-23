@@ -161,6 +161,9 @@ def _read_check(ctx):
         if kept:
             command_words(kept)
             return ("configured", kept)
+    state, checks = _read_contract_checks(ctx)
+    if state == "detected":
+        return ("configured", checks)
     found = _manifest(ctx.root)[0]
     return ("detected", found) if found else ("missing", "")
 
@@ -315,6 +318,17 @@ SETTINGS = (
     ("contract_checks", _read_contract_checks, None, _text),
 )
 
+CONTRACT_HINTS = {
+    "build_command": ('land.py init --trunk <trunk> --mode <mode> --check "<command>" '
+                      "(records the command as a contract check; repeat --check for each command; on a rerun, "
+                      "passing --check replaces the stored list); "
+                      "set --build-command writes the store"),
+    "check_command": ('land.py init --trunk <trunk> --mode <mode> --check "<command>" '
+                      "(records the command as a contract check; repeat --check for each command; on a rerun, "
+                      "passing --check replaces the stored list); "
+                      "set --check-command writes the store"),
+}
+
 def detect(project_root, directory):
     ctx = _Ctx(Path(project_root), Path(directory))
     try:
@@ -356,6 +370,8 @@ def detect(project_root, directory):
             state, value = "invalid", str(error) or type(error).__name__
         except Exception as error:
             state, value = "invalid", type(error).__name__
+        if name in CONTRACT_HINTS and state in ("missing", "configured"):
+            fix = CONTRACT_HINTS[name]
         facts[name] = {"state": state, "value": value, "fix": fix}
     return facts
 
