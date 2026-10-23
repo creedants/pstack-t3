@@ -1,4 +1,4 @@
 - kind fix
 - `t3/added/brigade/scripts/brigade_lib/_affected/report.py` and `t3/added/brigade/scripts/brigade_lib/_reviews/passes.py` take the landing contract's check command when no matching store records `checkCommand`, and the contract supplies it only when it records exactly one check.
 - `t3/added/brigade/scripts/brigade_lib/_affected/report.py` reads each candidate landing contract through a read-only URI, so a lookup cannot checkpoint, write, or delete the database or its write-ahead log, including another repository's queue.
-- `tests/brigade/test_contract_check_command.py` pins a crashed queue's database and log bytes and a live queue's database bytes across a lookup.
+- `tests/brigade/test_contract_check_command.py` pins a queue's database and log bytes when a committed row sits only in its log and no index exists, and a live queue's database bytes across a lookup.

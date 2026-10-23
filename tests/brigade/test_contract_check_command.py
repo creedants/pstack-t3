@@ -10,7 +10,7 @@ from .support import BrigadeTest, setUpModule
 
 
 class ContractCheckCommandTest(BrigadeTest):
-    """The affected reader and edits verify take the landing contract's one check when no store records one."""
+    """The affected reader takes the landing contract's one check when no matching store records one, and edits verify takes it when the dish's store records none."""
 
     CONTRACT_CHECK = "make lint"
 
@@ -29,8 +29,19 @@ class ContractCheckCommandTest(BrigadeTest):
     def database(self):
         return next((Path(self.temporary.name) / "state").glob("pstack-t3/landing/*/land.db"))
 
+    def git_repo(self, name):
+        repo = Path(self.temporary.name) / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        return repo
+
+    def common_dir(self, repo):
+        return subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, check=True).stdout.strip()
+
     def crash_left(self, path, write):
-        """Leave path and its log as a killed process does, with the rows write commits in the log and no shared-memory file."""
+        """Leave path with the rows write commits in its log and no shared-memory file."""
         scratch = Path(self.temporary.name) / "crash"
         scratch.mkdir()
         writer = sqlite3.connect(str(path), isolation_level=None)
@@ -117,7 +128,7 @@ class ContractCheckCommandTest(BrigadeTest):
         out = self.affected()
         self.assertIn("No verify command is set", out)
 
-    def test_a_crashed_queue_keeps_its_database_and_log_bytes_fails_when_the_open_is_read_write(self):
+    def test_a_queue_with_a_committed_row_only_in_its_log_keeps_its_database_and_log_bytes_fails_when_the_open_is_read_write(self):
         # Processes: git and land build the fixture project and its contract.
         self.contract(self.CONTRACT_CHECK)
         self.open()
@@ -133,22 +144,24 @@ class ContractCheckCommandTest(BrigadeTest):
         self.assertFalse(Path(f"{database}-shm").exists())
         self.assertIn("No verify command is set", out)
 
-    def test_a_lookup_leaves_a_live_queue_and_another_repositorys_queue_alone_fails_when_every_candidate_is_opened_read_write(self):
-        # Processes: git and land build this project and its contract, and git builds the other repository.
-        self.contract(self.CONTRACT_CHECK)
+    def test_a_lookup_without_a_matching_contract_leaves_a_live_queue_and_a_queue_with_no_index_alone_fails_when_every_candidate_is_opened_read_write(self):
+        # Processes: git builds this project and the two repositories that own the queues.
+        self.git_project()
+        self.landing_env()
         self.open()
-        live = self.database()
+        live = Path(self.temporary.name) / "state/pstack-t3/landing/live/land.db"
+        live.parent.mkdir(parents=True)
         holder = sqlite3.connect(str(live), isolation_level=None)
         self.addCleanup(holder.close)
-        holder.execute("INSERT OR REPLACE INTO contract (key, value) VALUES ('noted', '1')")
+        holder.execute("PRAGMA journal_mode=WAL")
+        holder.execute("PRAGMA wal_autocheckpoint=0")
+        holder.execute("CREATE TABLE contract (key TEXT PRIMARY KEY, value TEXT)")
+        holder.execute("INSERT INTO contract (key, value) VALUES (?, ?)",
+                       ("commonDir", json.dumps(self.common_dir(self.git_repo("Live Kit")))))
+        holder.execute("INSERT INTO contract (key, value) VALUES (?, ?)", ("checks", json.dumps(["make lint"])))
         self.assertTrue(Path(f"{live}-wal").exists())
         live_before = live.read_bytes()
-        other_repo = Path(self.temporary.name) / "Other Kit"
-        other_repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(other_repo)], check=True)
-        common = subprocess.run(
-            ["git", "-C", str(other_repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            capture_output=True, text=True, check=True).stdout.strip()
+        common = self.common_dir(self.git_repo("Other Kit"))
         other = Path(self.temporary.name) / "state/pstack-t3/landing/other/land.db"
         other.parent.mkdir(parents=True)
         self.crash_left(other, lambda db: (
@@ -157,7 +170,7 @@ class ContractCheckCommandTest(BrigadeTest):
             db.execute("INSERT INTO contract (key, value) VALUES (?, ?)", ("checks", json.dumps(["make test"])))))
         other_before = other.read_bytes()
         out = self.affected()
-        self.assertIn(f"slot -- {self.CONTRACT_CHECK}`", out)
+        self.assertIn("No verify command is set", out)
         self.assertEqual(live.read_bytes(), live_before)
         self.assertEqual(other.read_bytes(), other_before)
         self.assertTrue(Path(f"{other}-wal").exists())
