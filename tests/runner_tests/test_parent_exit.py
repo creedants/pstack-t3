@@ -31,10 +31,6 @@ def wait_gone(pid: int, limit: float = 10.0) -> bool:
                 os.kill(pid, 0)
             except ProcessLookupError:
                 return True
-            if not Path("/proc").exists():
-                pass
-            else:
-                return True
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.02)
