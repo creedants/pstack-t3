@@ -46,13 +46,20 @@ class RunTest(OutputCase):
         line = self.fails(1, "--out", str(self.fixture.root / "pathmarker absent" / "page.html"))
         self.assertEqual(line, "activity: cannot write the --out file (No such file or directory); pass a path this user can write")
 
-    def test_run_changes_no_file_in_the_store_or_beside_a_closed_database(self):
+    def test_run_changes_no_file_in_the_store_and_no_byte_of_a_closed_database(self):
         fixture = failed_child(self.fixture).write()
         before = listing(fixture.store), listing(fixture.database.parent)
         self.assertEqual(sorted(before[0]), ["dishes.tsv", "log.tsv", "restaurant.json"])
+        self.assertEqual(sorted(before[1]), ["statev2.sqlite"])
         self.document()
         self.out("--text")
-        self.assertEqual((listing(fixture.store), listing(fixture.database.parent)), before)
+        after = listing(fixture.database.parent)
+        self.assertEqual(listing(fixture.store), before[0])
+        self.assertLessEqual(set(after) - set(before[1]), {"statev2.sqlite-wal", "statev2.sqlite-shm"})
+        self.assertEqual({name: after[name] for name in before[1]}, before[1])
+        log = Path(f"{fixture.database}-wal")
+        if log.exists():
+            self.assertLessEqual(len(log.read_bytes()), 32)
 
     def test_run_beside_a_live_database_reads_its_log_and_keeps_the_same_files_and_database_and_log_bytes(self):
         fixture = failed_child(self.fixture).write(live=True)

@@ -26,15 +26,15 @@ Times = namedtuple("Times", "n median p90 max")
 
 
 def open_read_only(path):
-    """With a write-ahead log and its index beside land.db, mode=ro reads the log and creates no file.
-    With no log, mode=ro would create both files, so the open adds immutable=1.
+    """mode=ro reads land.db through SQLite's locks, so the read is one committed snapshot and changes no committed data.
+    A read-only open can create a log with no frames and a shared-memory index beside a database whose last writer just closed.
+    With a write-ahead log and its index beside land.db, the read reads that log.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
     """
     log, index = Path(f"{path}-wal").exists(), Path(f"{path}-shm").exists()
     if log and not index:
         raise seam.LandError("the write-ahead log has no index beside it, so a read would create it or miss the log's rows")
-    connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro" + ("" if log else "&immutable=1"),
-                                 uri=True, isolation_level=None)
+    connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True, isolation_level=None)
     connection.execute("PRAGMA query_only=1")
     connection.execute("BEGIN")
     return connection

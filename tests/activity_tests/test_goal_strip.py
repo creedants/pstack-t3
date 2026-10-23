@@ -144,9 +144,16 @@ class GoalStripTest(OutputCase):
         widen_items(fixture, {"D7": ("feature", "G1"), "D6": ("fix", "G1")})
         before = listing(fixture.store), listing(fixture.database.parent)
         self.assertIn("goals.tsv", before[0])
+        self.assertEqual(sorted(before[1]), ["statev2.sqlite"])
         self.document()
         self.out("--text")
-        self.assertEqual((listing(fixture.store), listing(fixture.database.parent)), before)
+        after = listing(fixture.database.parent)
+        self.assertEqual(listing(fixture.store), before[0])
+        self.assertLessEqual(set(after) - set(before[1]), {"statev2.sqlite-wal", "statev2.sqlite-shm"})
+        self.assertEqual({name: after[name] for name in before[1]}, before[1])
+        log = Path(f"{fixture.database}-wal")
+        if log.exists():
+            self.assertLessEqual(len(log.read_bytes()), 32)
 
     def test_a_finished_labeled_item_shows_its_goal_and_kind_in_text(self):
         fixture = self.fixture

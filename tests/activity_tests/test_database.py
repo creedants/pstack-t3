@@ -162,14 +162,22 @@ class OpenTest(ActivityCase):
         finally:
             connection.close()
 
-    def test_closed_database_is_read_and_no_file_appears_beside_it(self):
+    def test_closed_database_is_read_and_only_its_empty_log_and_index_appear_beside_it(self):
         fixture = self.fixture
         fixture.coordinator()
         fixture.write()
         before = listing(fixture.database.parent)
         self.assertEqual(sorted(before), ["statev2.sqlite"])
         self.assertEqual(self.rows(), [(COORDINATOR,)])
-        self.assertEqual(listing(fixture.database.parent), before)
+        after = listing(fixture.database.parent)
+        self.assertLessEqual(set(after) - set(before), {"statev2.sqlite-wal", "statev2.sqlite-shm"})
+        self.assertLessEqual(set(before), set(after))
+        for name, digest in before.items():
+            if not name.endswith("-shm"):
+                self.assertEqual(after[name], digest)
+        log = Path(f"{fixture.database}-wal")
+        if log.exists():
+            self.assertLessEqual(len(log.read_bytes()), 32)
 
     def test_live_database_is_read_through_its_log_with_the_same_files_and_the_same_database_and_log_bytes(self):
         fixture = self.fixture

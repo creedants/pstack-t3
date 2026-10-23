@@ -1,0 +1,2 @@
+- kind fix
+- `tests/activity_tests/test_run.py` and `tests/activity_tests/test_goal_strip.py` allow the log and index a locked read may create beside a closed database, and still pin every other file and every database byte. `tests/activity_tests/test_t3state_read_race.py` reads `t3state` through the support module instead of putting the brigade scripts directory ahead of the tests on `sys.path`, where `brigade.py` hid the `brigade` test package from discovery.
