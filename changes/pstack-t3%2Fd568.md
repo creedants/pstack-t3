@@ -4,4 +4,4 @@
 - `t3/added/brigade/reference/replies.md` and `docs/operations.md` drop their nightly gate prefixes.
 - `tests/pstack_t3/test_build.py`, `tests/pstack_t3/test_roles_config.py`, and `tests/check_tests/test_tree_rules.py` pin the 0.1.2 strings and the 1M-context wording.
 - `t3/added/pstack-runtime/host.md` names the manual worktree in its heading, `t3/added/pstack-runtime/isolation.md` links to that heading, and `t3/runtime.md` drops its older-host pointers and its table-row mention, because no supported host is older than 0.1.2.
-- `tests/pstack_t3/test_delegation_docs.py` reads the stopped-queue rule from `t3/added/pstack-runtime/failures.md` under `### Recovery notes`.
+- `tests/pstack_t3/test_delegation_docs.py` reads the stopped-queue rule from `failures.md` under `### Recovery notes`.
