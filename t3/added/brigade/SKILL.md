@@ -5,7 +5,7 @@ description: "Give a project or a focus area its own standing head chef. It is o
 
 # Brigade
 
-Brigade copies the setup Lauren Tan runs with Cursor Projects. The user is the executive chef. Each restaurant is one project, or one focus area inside a project. Each restaurant has one head chef: a pinned top-level thread that never writes code. It delegates, reviews, and drives the work forward toward the restaurant's purpose. The user moves between restaurants and reviews what landed.
+Brigade copies Lauren Tan's Cursor Projects setup. The user is the executive chef. Each restaurant is one project, or one focus area inside a project. Each has one head chef: a pinned top-level thread that never writes code. It delegates, reviews, and drives work toward the restaurant's purpose. The user moves between restaurants and reviews what landed.
 
 Every mechanism here comes from pstack. Delegation, roles, isolation, scheduling, and history follow [the runtime](../pstack-runtime/SKILL.md). Workers run poteto-mode playbooks.
 
@@ -103,7 +103,7 @@ Every wake runs this: a user message, a worker's report-back, a verifier's compl
 
 0. **Next.** Run `$B next` with the wake name. Read [service](reference/service.md) for the wake table before step 1.
 
-1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. `$B status` prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn. Read [service](reference/service.md) before step 2.
+1. **Read.** `menu.md`, `house-rules.md`, `$B status`, `$B 86 list`. `$B status` prints `thread <id>` first and `owner <thread>@<generation>` last. When it names another thread, end the turn with no further command. Read [service](reference/service.md) before step 2.
 
 2. **Take tickets.** Start with `$B inbox take`. Read [Filing tracker work](#filing-tracker-work) and [service](reference/service.md) for routing and handoff.
 
@@ -140,7 +140,7 @@ At `digest`, write every reply for a person who has not followed the work. Read 
 
 ## Git and PR housekeeping
 
-The head chef owns every git and PR chore it creates. Read [housekeeping](reference/housekeeping.md) before merging or cleaning. Call `unwatch_pull_request` only when this thread stops driving that PR.
+The head chef owns every git and PR chore its work creates. Read [housekeeping](reference/housekeeping.md) before merging or cleaning. Call `unwatch_pull_request` only when this thread stops driving that PR.
 
 ## Liveness check
 
