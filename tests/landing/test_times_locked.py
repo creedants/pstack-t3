@@ -8,7 +8,7 @@ import landing_lib.times as times
 
 
 def bind_seam():
-    """Bind the seam to the names land.py binds, so a landing_lib call resolves them in this process."""
+    """Bind the seam to the foundation and store names."""
     seam.bind({name: value for module in (foundation, store) for name, value in vars(module).items()
                if not name.startswith("__")})
 
