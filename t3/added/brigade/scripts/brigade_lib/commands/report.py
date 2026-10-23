@@ -131,7 +131,7 @@ def handle_locked(restaurant, args, view):
         for ident, state in unclaimed_reports(restaurant):
             print(f"brigade: warning: reports/{ident}.md has no Claims check line; {ident} is {state}", file=sys.stderr)
         for ident, runs in claims_cap_reports(restaurant):
-            print(f"brigade: warning: reports/{ident}.md names {runs} claims check runs; the cap is two per round",
+            print(f"brigade: warning: reports/{ident}.md names {runs} new claims check runs for this round; the cap is two per round",
                   file=sys.stderr)
         if args.to_file:
             return str(path.resolve())
