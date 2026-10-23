@@ -1,5 +1,5 @@
 from .support import (BrigadeTest, Path, ProcessReason, SCRIPT, _wait_for_path, call_in_process, json,
-                      mock, os, real_popen, run_globals, setUpModule, sys, time)
+                      mock, os, real_popen, run_globals, setUpModule, sys)
 
 
 CHILD = """
@@ -19,6 +19,7 @@ def wait(name, timeout=60):
         time.sleep(0.005)
 
 
+(case / "started").touch()
 module = runpy.run_path(os.environ["D554_SCRIPT"])
 if mode == "rename":
     real = os.rename
@@ -202,8 +203,8 @@ class RenameReferenceTest(BrigadeTest):
         self.assertEqual(self.store_files(), store)
         self.assertFalse((self.at.parent / "speed").exists())
 
-    def test_an_open_that_lost_the_target_reservation_cannot_replace_the_moved_store(self):
-        """D554 review 2 blocker 1: an open that lost the target reservation never initializes over the moved store."""
+    def test_an_open_started_before_the_move_waits_and_then_finds_the_moved_store(self):
+        """D554 review 3 blocker 1: an open that arrives before the move waits on the project lock, then initializes nothing."""
         self.open()
         self.brigade("set", "--thread", "coordinator")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
@@ -229,17 +230,15 @@ class RenameReferenceTest(BrigadeTest):
                 env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", D554_CASE=str(case),
                          D554_SCRIPT=str(SCRIPT), D554_MODE="open"),
                 text=True)
-            deadline = time.monotonic() + 15
-            while not (case / "initializing").exists() and opening.poll() is None:
-                if time.monotonic() > deadline:
-                    self.fail("timed out waiting for the second open to reach its first write")
-                time.sleep(0.005)
+            _wait_for_path(case / "started")
             (case / "move-proceed").touch()
             move_out, move_err = moving.communicate(timeout=15)
             self.assertEqual(moving.returncode, 0, move_out + move_err)
             (case / "open-proceed").touch()
             open_out, open_err = opening.communicate(timeout=15)
-            self.assertEqual(opening.returncode, 1, open_out + open_err)
+            self.assertEqual(opening.returncode, 0, open_out + open_err)
+            self.assertIn("exists", open_out)
+            self.assertNotIn("opened", open_out + open_err)
         finally:
             for name in ("before-move", "move-proceed", "open-proceed"):
                 (case / name).touch()
@@ -255,7 +254,6 @@ class RenameReferenceTest(BrigadeTest):
         self.assertEqual(moved["generation"], meta["generation"])
         self.assertEqual((speed / "rail.tsv").read_bytes(), rail)
         self.assertIn(b"T1\t", rail)
-        self.assertNotIn("opened", open_out + open_err)
         self.assertFalse((self.at.parent / ".rename-speed.json").exists())
 
     def test_a_rename_refuses_the_directory_a_live_open_just_created(self):

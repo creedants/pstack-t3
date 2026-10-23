@@ -1,4 +1,58 @@
-from .support import BrigadeTest, Path, SCRIPT, call_in_process, datetime, json, mock, run_globals, subprocess, timezone, setUpModule
+from .support import (BrigadeTest, Path, ProcessReason, SCRIPT, _wait_for_path, call_in_process, datetime, json,
+                      mock, os, real_popen, run_globals, setUpModule, subprocess, sys, time, timezone)
+
+
+CHILD = """
+import os, runpy, sys, time
+from pathlib import Path
+
+case = Path(os.environ["D554_CASE"])
+mode = os.environ["D554_MODE"]
+
+
+def wait(name, timeout=60):
+    end = time.monotonic() + timeout
+    while not (case / name).exists():
+        if time.monotonic() > end:
+            print(f"timed out waiting for {name}", file=sys.stderr)
+            sys.exit(2)
+        time.sleep(0.005)
+
+
+(case / "started").touch()
+module = runpy.run_path(os.environ["D554_SCRIPT"])
+if mode == "rename":
+    real = os.rename
+
+    def paused(source, target):
+        (case / "before-move").touch()
+        wait("move-proceed")
+        return real(source, target)
+
+    os.rename = paused
+elif mode == "claim":
+    real = Path.mkdir
+
+    def paused_mkdir(self, *args, **kwargs):
+        if self.name == "speed":
+            (case / os.environ["D554_SIGNAL"]).touch()
+            wait(os.environ["D554_SIGNAL"] + "-go")
+        return real(self, *args, **kwargs)
+
+    Path.mkdir = paused_mkdir
+else:
+    loaded = module["run"].__globals__
+    real = loaded["write_atomic"]
+
+    def paused_write(path, text):
+        if Path(path).parent.name == "speed":
+            (case / "initializing").touch()
+            wait("open-proceed")
+        return real(path, text)
+
+    loaded["write_atomic"] = paused_write
+sys.exit(module["main"](sys.argv[1:]))
+"""
 
 
 class RenameTest(BrigadeTest):
@@ -10,6 +64,23 @@ class RenameTest(BrigadeTest):
 
     def tables_at(self, directory):
         return {path.name: path.read_bytes() for path in sorted(Path(directory).glob("*.tsv"))}
+
+    def race_child(self, mode, args, signal=None):
+        """A real brigade process whose mode pauses it at one step named by the review it pins."""
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", D554_CASE=str(self.case),
+                   D554_SCRIPT=str(SCRIPT), D554_MODE=mode, D554_SIGNAL=signal or "")
+        return real_popen(ProcessReason.RACE, [sys.executable, "-c", CHILD, *args], env=env, text=True)
+
+    def rename_child(self, mode, signal):
+        """A rename of Perf to Speed, paused in mode."""
+        return self.race_child(mode, ["--store", str(self.store), "--at", str(self.at),
+                                      "--owner", "coordinator@1", "open", "--project-root", str(self.project),
+                                      "--name", "Perf", "--rename", "Speed"], signal)
+
+    def open_child(self):
+        """An open --name Speed, which needs no store and no owner."""
+        return self.race_child("open", ["--store", str(self.store), "open",
+                                        "--project-root", str(self.project), "--name", "Speed"])
 
     def test_rename_moves_the_store_and_new_name_reaches_meta_and_both_headers(self):
         self.open()
@@ -96,3 +167,80 @@ class RenameTest(BrigadeTest):
         error = self.rename("Speed", "--workers", "2", code=1)
         self.assertIn("--workers", error)
         self.assertEqual(self.store_files(), store)
+
+    def test_a_recovering_rename_never_deletes_the_directory_an_open_created(self):
+        """D554 review 3 blocker 1: the project lock keeps a recovering rename's target clear of a concurrent open, which then finds the moved store."""
+        self.open()
+        self.brigade("set", "--thread", "coordinator")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        meta = json.loads((self.at / "restaurant.json").read_text())
+        rail = (self.at / "rail.tsv").read_bytes()
+        self.case = Path(self.temporary.name) / "case"
+        self.case.mkdir()
+        killed = rerun = opener = None
+        try:
+            killed = self.rename_child("claim", "claimed")
+            _wait_for_path(self.case / "claimed")
+            killed.kill()
+            killed.communicate(timeout=15)
+            marker = self.at.parent / ".rename-speed.json"
+            self.assertTrue(marker.is_file())
+            self.assertFalse((self.at.parent / "speed").exists())
+            rerun = self.rename_child("claim", "recovered")
+            _wait_for_path(self.case / "recovered")
+            opener = self.open_child()
+            _wait_for_path(self.case / "started")
+            # Review 3's ordering: the opener starts before the rerun's own mkdir. The project lock holds the
+            # opener at its claim until the rerun creates the target and moves the store onto it.
+            deadline = time.monotonic() + 3
+            while not (self.at.parent / "speed").exists() and time.monotonic() < deadline:
+                time.sleep(0.005)
+            self.assertFalse((self.at.parent / "speed").exists())
+            (self.case / "recovered-go").touch()
+            rerun.communicate(timeout=15)
+            if rerun.returncode != 0:
+                self.rename()
+            (self.case / "open-proceed").touch()
+            open_out, open_err = opener.communicate(timeout=15)
+        finally:
+            for name in ("claimed-go", "recovered-go", "move-proceed", "open-proceed"):
+                (self.case / name).touch()
+            for process in (killed, rerun, opener):
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.communicate()
+        speed = self.at.parent / "speed"
+        self.assertEqual(opener.returncode, 0, open_out + open_err)
+        self.assertIn("exists", open_out)
+        self.assertNotIn("opened", open_out + open_err)
+        self.assertEqual((speed / "rail.tsv").read_bytes(), rail)
+        self.assertIn(b"T1\t", rail)
+        moved = json.loads((speed / "restaurant.json").read_text())
+        self.assertEqual(moved["restaurant"], "Speed")
+        self.assertEqual(moved["thread"], meta["thread"])
+        self.assertEqual(moved["generation"], meta["generation"])
+        self.assertFalse((self.at.parent / ".rename-speed.json").exists())
+
+    def test_a_rename_that_cannot_write_its_marker_keeps_an_existing_empty_target(self):
+        """D554 review 3 blocker 1: a marker write that fails removes no directory the rename did not create."""
+        self.open()
+        target = self.at.parent / "speed"
+        target.mkdir()
+        store = self.store_files()
+        real_write = Path.write_text
+
+        def write_text(path, *args, **kwargs):
+            if path.name.startswith(".rename-"):
+                raise OSError("simulated marker write failure")
+            return real_write(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "write_text", write_text):
+            outcome = call_in_process(self, SCRIPT, [
+                "--store", str(self.store), "--at", str(self.at), "open",
+                "--project-root", str(self.project), "--name", "Perf", "--rename", "Speed"])
+        self.assertEqual(outcome.code, 1, outcome.stderr_text())
+        self.assertIn("simulated marker write failure", outcome.stderr_text())
+        self.assertTrue(target.is_dir())
+        self.assertEqual(list(target.iterdir()), [])
+        self.assertEqual(self.store_files(), store)
+        self.assertFalse((self.at.parent / ".rename-speed.json").exists())
