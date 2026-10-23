@@ -1,0 +1,3 @@
+- kind fix
+- a run counts a scratch name as pid bearing only when its pid field holds ASCII digits 0-9, so a `run-tests-²-x` directory stays and the sweep never calls `int()` on it
+- `tests/runner_tests/test_sweeps.py` pins a run that keeps a `run-tests-²-x` directory

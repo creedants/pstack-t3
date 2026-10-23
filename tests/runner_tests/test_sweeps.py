@@ -196,6 +196,15 @@ class SweepsMixin:
         self.assert_alive(sleeper)
         self.assertEqual(result.stderr.splitlines()[0], INHERITED)
 
+    def test_a_run_keeps_a_scratch_directory_whose_pid_field_is_superscript_two(self):
+        self.write("test_good.py", GOOD)
+        kept = self.scratch / "run-tests-²-x"
+        kept.mkdir()
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.splitlines()[-1], "OK")
+        self.assertTrue(kept.is_dir())
+
 
 class SweepMixin:
     def test_sweep_given_no_time_returns_a_live_child_and_given_time_ends_it(self):
