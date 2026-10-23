@@ -40,7 +40,7 @@ class ContractReadRaceTest(BrigadeTest):
         return path
 
     def report_module(self):
-        """The loaded contract reader, imported once from the source tree the tests run."""
+        """The contract reader imported fresh from the source tree these tests run."""
         scripts = str(ROOT / "t3/added/brigade/scripts")
         if scripts not in sys.path:
             sys.path.insert(0, scripts)
