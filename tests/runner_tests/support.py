@@ -222,7 +222,7 @@ INHERITED = "run_tests: this process had a child before the run, so the runner e
 
 
 def start_time(pid):
-    """Return the start time /proc reports for pid, or None where no process has that pid."""
+    """Return the start time /proc reports for pid, or None where it reports none."""
     try:
         return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[19]
     except (OSError, IndexError):
@@ -303,7 +303,7 @@ class RunnerCase:
         self.starts[pid] = start_time(pid)
 
     def end(self, pid):
-        """End the process the test recorded at pid. Leave the pid alone where /proc reports another start time, as it does after the kernel gives that pid to a new process."""
+        """End the process the test recorded at pid. Leave the pid alone where the test holds no start time for it, or where /proc reports another one, as it does after the kernel gives that pid to a new process."""
         started = self.starts.get(pid)
         if started is None or start_time(pid) != started:
             return
