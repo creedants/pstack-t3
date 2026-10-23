@@ -339,11 +339,16 @@ def _drop_marker(marker):
         pass
 
 
-def _release_target(target, marker):
-    """Remove a failed rename's empty target, then its marker, so a retry starts from the old store alone.
+def _release_target(directory, target, marker):
+    """Undo a failed rename's reservation: clear the marker's inode record, remove the empty target, then the marker.
 
+    The marker loses its inode first, so a rerun never adopts a target directory this marker did not record.
     The caller passes the marker _reserve_target returned, so the target is this run's reservation.
     """
+    try:
+        marker.write_text(json.dumps({"from": directory.name}))
+    except OSError:
+        pass
     try:
         if target.is_dir() and not any(target.iterdir()):
             target.rmdir()
@@ -374,8 +379,10 @@ def _left_reservation(directory, target, marker):
 def _reserve_target(directory, target, refused):
     """Claim the marker beside target and create the empty directory this rename fills, or adopt the one it left.
 
-    The caller holds the project directory lock. A target this call did not create is never removed, and a
-    marker this call did not create is never removed. A rerun adopts only its own recorded empty reservation.
+    The caller holds the project directory lock, so no other open or rename creates or moves a directory at target
+    until this call returns. A target is removed only when this call created it or adopted it from this directory's
+    marker, and a marker is removed only when this call created or adopted it. A rerun adopts only its own recorded
+    empty reservation.
     """
     marker = target.parent / f".rename-{target.name}.json"
     try:
@@ -447,10 +454,10 @@ def rename_restaurant(root, args):
                 if before != new_name:
                     meta = store.change_meta(restaurant=new_name)
                 _restate_headings(store, (before, name), new_name)
-                directory.rename(target)
+                os.rename(directory, target)
             except BaseException as error:
                 _restore(directory, prior)
-                _release_target(target, marker)
+                _release_target(directory, target, marker)
                 if isinstance(error, OSError):
                     raise BrigadeError(refused + str(error)) from None
                 raise

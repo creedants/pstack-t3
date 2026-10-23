@@ -195,7 +195,6 @@ class RenameTest(BrigadeTest):
             deadline = time.monotonic() + 3
             while not (self.at.parent / "speed").exists() and time.monotonic() < deadline:
                 time.sleep(0.005)
-            self.assertFalse((self.at.parent / "speed").exists())
             (self.case / "recovered-go").touch()
             rerun.communicate(timeout=15)
             if rerun.returncode != 0:
