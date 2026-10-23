@@ -49,7 +49,7 @@ def parse_part(text: str) -> tuple[int, int]:
 
 
 def jobs_in_slot(jobs: int, environ) -> tuple[int, str | None]:
-    """Lower jobs to JOBS_PER_SLOT for each slot LAND_SLOT_FILES names while LAND_SLOT is nonempty. Return the count to run and the one line to print when it lowers the count."""
+    """Cap jobs at JOBS_PER_SLOT for each slot LAND_SLOT_FILES names, while LAND_SLOT is nonempty and that list names at least one slot. Return the count to run and the one line to print when the cap lowers the count."""
     from .events import plural
 
     if not environ.get("LAND_SLOT"):
