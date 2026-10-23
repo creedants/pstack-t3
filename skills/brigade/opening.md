@@ -79,7 +79,7 @@ The landing drain schedule, the liveness schedule, and recording each schedule i
 
 ## Rename a restaurant
 
-Run `$B open --project-root <root> --name <old> --rename <new> --owner <thread>@<generation>`. It rewrites the stored name and the `# Menu:` and `# House rules:` first lines stating the old name, then moves the directory last. A failed write restores the prior bytes, and a rerun moves a store that records the new name. It refuses dishes other than merged or dropped, a different project root, an existing target, and admin, handoff, or held landing references outside the store. Delete each schedule naming the old path, recreate it against the new directory, and record its id with `set --schedule`. Send each thread naming the old path the new directory with `t3_thread_send`, or relaunch it with a prompt naming the new one.
+Run `$B open --project-root <root> --name <old> --rename <new> --owner <thread>@<generation>`. It rewrites the stored name and the `# Menu:` and `# House rules:` first lines stating the old name, then moves the directory last. A failed write restores the prior bytes, and a rerun moves a store that records the new name. It refuses dishes other than merged or dropped, a different project root, an existing target other than its own recorded empty reservation, and admin, handoff, or held landing references outside the store. Delete each schedule naming the old path, recreate it against the new directory, and record its id with `set --schedule`. Send each thread naming the old path the new directory with `t3_thread_send`, or relaunch it with a prompt naming the new one.
 
 ## Close a restaurant
 

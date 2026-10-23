@@ -1,6 +1,8 @@
+import fcntl
 import json
 import os
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from brigade_lib import seam
 from brigade_lib._store.restaurant import Restaurant, holder_prefix
@@ -118,6 +120,21 @@ def refuse_owned_intake(directory, project_root, sources):
             raise BrigadeError(f"{owner} already owns intake from {source}; move tickets to it instead")
 
 
+@contextmanager
+def _project_lock(parent):
+    """Exclusive lock on a project's store directory, held across a directory claim or move.
+
+    open and open --rename take it, so one target's creation and the other's move never interleave.
+    The lock is on the directory itself, so a killed holder releases it and leaves no lock file.
+    """
+    fd = os.open(parent, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None,
                   context_cap=None, coordinator_provider=None):
     project_root = Path(project_root).resolve()
@@ -127,12 +144,13 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
     # The project directory is shared by every coordinator on this path slug.
     # The coordinator directory is the claim, so mkdir must fail when it exists.
     directory.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        directory.mkdir()
-    except FileExistsError:
-        created = False
-    else:
-        created = True
+    with _project_lock(directory.parent):
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            created = False
+        else:
+            created = True
     if not created:
         meta = seam.wait_for_meta(directory)
         if meta.get("projectRoot") != str(project_root):
@@ -321,22 +339,25 @@ def _drop_marker(marker):
         pass
 
 
-def _release_target(directory, target, marker):
-    """Remove a failed rename's reservation: the marker's inode record, the target while it is empty, then the marker.
+def _release_target(target, marker):
+    """Remove a failed rename's empty target, then its marker, so a retry starts from the old store alone.
 
-    The marker loses its inode first, so a rerun never adopts a target directory that was not the one this marker
-    recorded.
+    The caller passes the marker _reserve_target returned, so the target is this run's reservation.
     """
-    try:
-        marker.write_text(json.dumps({"from": directory.name}))
-    except OSError:
-        pass
     try:
         if target.is_dir() and not any(target.iterdir()):
             target.rmdir()
     except OSError:
         pass
     _drop_marker(marker)
+
+
+def _marker_from(marker):
+    """The directory name a reservation marker records, or None when it records none."""
+    try:
+        return json.loads(marker.read_text()).get("from")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
 
 
 def _left_reservation(directory, target, marker):
@@ -351,41 +372,41 @@ def _left_reservation(directory, target, marker):
 
 
 def _reserve_target(directory, target, refused):
-    """Create target as an empty directory only this rename may fill, or refuse, and return the marker beside it.
+    """Claim the marker beside target and create the empty directory this rename fills, or adopt the one it left.
 
-    The marker names the store that reserved the target and the inode of the empty directory it created. A rerun
-    reuses a reservation an interrupted run left and refuses every other directory at the target.
+    The caller holds the project directory lock. A target this call did not create is never removed, and a
+    marker this call did not create is never removed. A rerun adopts only its own recorded empty reservation.
     """
     marker = target.parent / f".rename-{target.name}.json"
     try:
         os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644))
+        ours = True
     except FileExistsError:
-        try:
-            recorded = json.loads(marker.read_text()).get("from")
-        except (OSError, json.JSONDecodeError, AttributeError):
-            recorded = None
-        if recorded == directory.name:
-            if _left_reservation(directory, target, marker):
-                return marker
-            if not target.exists():
-                try:
-                    target.mkdir()
-                    marker.write_text(json.dumps({"from": directory.name, "inode": target.stat().st_ino}))
-                except BaseException:
-                    _release_target(directory, target, marker)
-                    raise
-                return marker
+        ours = False
+        if _left_reservation(directory, target, marker):
+            return marker
+        if _marker_from(marker) != directory.name:
+            raise BrigadeError(refused + f"{marker} is not this rename's record; remove it") from None
+        if target.exists() or target.is_symlink():
             raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
-        raise BrigadeError(refused + f"{marker} is not this rename's record; remove it") from None
+    created = False
     try:
         marker.write_text(json.dumps({"from": directory.name}))
         target.mkdir()
+        created = True
         marker.write_text(json.dumps({"from": directory.name, "inode": target.stat().st_ino}))
     except FileExistsError:
-        _drop_marker(marker)
+        if ours:
+            _drop_marker(marker)
         raise BrigadeError(refused + f"{target} exists; pick another --rename") from None
     except BaseException:
-        _release_target(directory, target, marker)
+        if created:
+            try:
+                target.rmdir()
+            except OSError:
+                pass
+        if ours:
+            _drop_marker(marker)
         raise
     return marker
 
@@ -418,21 +439,22 @@ def rename_restaurant(root, args):
     if blocks:
         raise BrigadeError(refused + "; ".join(blocks))
     before = meta["restaurant"]
-    with store.guarded():
-        marker = _reserve_target(directory, target, refused)
-        prior = _prior_bytes(directory)
-        try:
-            if before != new_name:
-                meta = store.change_meta(restaurant=new_name)
-            _restate_headings(store, (before, name), new_name)
-            directory.rename(target)
-        except BaseException as error:
-            _restore(directory, prior)
-            _release_target(directory, target, marker)
-            if isinstance(error, OSError):
-                raise BrigadeError(refused + str(error)) from None
-            raise
-        _drop_marker(marker)
+    with _project_lock(parent):
+        with store.guarded():
+            marker = _reserve_target(directory, target, refused)
+            prior = _prior_bytes(directory)
+            try:
+                if before != new_name:
+                    meta = store.change_meta(restaurant=new_name)
+                _restate_headings(store, (before, name), new_name)
+                directory.rename(target)
+            except BaseException as error:
+                _restore(directory, prior)
+                _release_target(target, marker)
+                if isinstance(error, OSError):
+                    raise BrigadeError(refused + str(error)) from None
+                raise
+            _drop_marker(marker)
     lines = [f"renamed {directory} to {target}",
              f"holder prefix {prefix} is now {holder_prefix(meta)}"]
     if meta.get("schedules"):
