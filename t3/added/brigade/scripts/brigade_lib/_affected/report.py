@@ -4,6 +4,7 @@ import posixpath
 import sqlite3
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
 from brigade_lib._affected.model import AFFECTED_KEY, _Full, _PYTHON_NAME, layout
 from brigade_lib.edits import NO_COMMAND
 from brigade_lib.shared import BrigadeError
@@ -123,10 +124,28 @@ def _common_dir(root):
         return None
 
 
+def _contract_rows(path):
+    """The contract table of path read through a read-only URI, or None when the read would create a file.
+
+    A write-ahead log with no index beside it is refused, because the read would create the index.
+    A database with no log is opened immutable, so the read creates no file beside it.
+    """
+    log = Path(f"{path}-wal").exists()
+    if log and not Path(f"{path}-shm").exists():
+        return None
+    connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro" + ("" if log else "&immutable=1"),
+                                 uri=True, isolation_level=None)
+    try:
+        return dict(connection.execute("SELECT key, value FROM contract").fetchall())
+    finally:
+        connection.close()
+
+
 def contract_check(root):
     """The landing contract's check command for root, or an empty string.
 
     It reads the checks value from the contract table of the land.db whose commonDir resolves to root's common git directory.
+    Each candidate is read through a read-only URI, and one the read cannot open is skipped.
     It returns that value stripped when it is a list of exactly one string other than "none", and an empty string in every other case.
     """
     common = _common_dir(root)
@@ -139,11 +158,9 @@ def contract_check(root):
         return ""
     for path in candidates:
         try:
-            connection = sqlite3.connect(str(path))
-            try:
-                rows = dict(connection.execute("SELECT key, value FROM contract").fetchall())
-            finally:
-                connection.close()
+            rows = _contract_rows(path)
+            if rows is None:
+                continue
             recorded = Path(json.loads(rows.get("commonDir"))).resolve()
         except Exception:
             continue
