@@ -1,7 +1,7 @@
 - kind fix
 - `tests/runner_tests/support.py` takes a pidfd for each process it records, and `RunnerCase.end` signals that process only through the pidfd
 - `tests/runner_tests/support.py` records a pid read from a mark only where the mark carries the start time `/proc` reports for that pid, so a stale mark naming a pid the kernel reused records nothing
-- `tests/runner_tests/support.py` has a marked process report the pid and start time it reads from its own `/proc/self/stat` before it can exit, and writes that report unchanged, so a mark writer reads no start time for a numeric pid it was given
+- `tests/runner_tests/support.py` writes a mark only from the report it is given, and `mine`, `sleeper`, and `orphan` build that report from the pid and the start time the process it names reads for itself before it can exit, so `mark` reads no start time for a numeric pid it is given
 - `tests/runner_tests/support.py` records the runner `RunnerCase.start` returns, so cleanup ends a runner a failing test leaves running
 - `tests/runner_tests/test_parent_exit.py` records with `RunnerCase.track` the runner that `test_startup_race_exits_worker_started_before_runner_death`, `test_gil_hold_kills_worker_in_catastrophic_backtrack`, and `test_watcher_cleanup_ends_watcher_with_worker` start
 - `tests/runner_tests/test_cleanup.py` pins cleanup ending a worker that outlived its runner, checked by `assert_dead`, and leaving a pid whose recorded start time differs, a pid whose record holds no pidfd, a pid whose mark carries no start time, a pid whose mark carries another start time, and a pid that a mark writer was given alone while a separate sleeper held it, each of the five checked by a request and a response with the process after `end`

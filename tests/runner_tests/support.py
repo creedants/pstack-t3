@@ -43,7 +43,7 @@ GOOD = """
 
 # A temporary project's tests import this to tell the test that owns the project which processes they started.
 # A report is a pid and the start time field 22 of /proc/<pid>/stat reports for it, or - where /proc has no entry for the pid.
-# The process a report names makes it from its own /proc/self/stat before it can exit, and every step after that carries it unchanged.
+# mine, sleeper, and orphan take a report from the process it names before that process can exit, and every step after that carries it unchanged.
 MARKS = """
     import os
     import subprocess
@@ -99,7 +99,7 @@ MARKS = """
         return reported(name)
 
     def mark(name, report):
-        '''Write the report a test gives for name. A report is a pid with the start time the process it names read for itself. A report that holds only a pid leaves the mark without a start time, and cleanup records nothing from it.'''
+        '''Write the report a test gives for name. A report is a pid with the start time /proc reported for the process it names. A report that holds only a pid leaves the mark without a start time, and cleanup records nothing from it.'''
         (PROJECT / (name + ".tmp")).write_text(str(report))
         os.replace(PROJECT / (name + ".tmp"), PROJECT / name)
 
