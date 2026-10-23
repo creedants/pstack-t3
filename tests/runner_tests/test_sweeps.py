@@ -160,9 +160,12 @@ class SweepsMixin:
         launcher = (
             "import os, subprocess, sys\n"
             "from pathlib import Path\n"
+            "def started(pid):\n"
+            "    raw = Path(f'/proc/{pid}/stat').read_bytes()\n"
+            "    return raw[raw.rindex(b')') + 2:].split()[19].decode()\n"
             "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', sys.argv[1]],\n"
             "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
-            "Path(sys.argv[1], 'child').write_text(str(child.pid))\n"
+            "Path(sys.argv[1], 'child').write_text(f'{child.pid} {started(child.pid)}')\n"
             "os.execv(sys.executable, [sys.executable, *sys.argv[2:]])\n"
         )
         result = subprocess.run([sys.executable, "-c", launcher, str(self.proj), str(RUNNER), "-s", str(self.tests)],

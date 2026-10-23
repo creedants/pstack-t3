@@ -49,11 +49,16 @@ import os
 import sys
 import time
 from pathlib import Path
+
+def started(pid):
+    raw = Path(f"/proc/{pid}/stat").read_bytes()
+    return raw[raw.rindex(b")") + 2:].split()[19].decode()
+
 if "--worker" in sys.argv:
     proj = os.environ.get("PARENT_EXIT_PROJECT")
     if proj:
         root = Path(proj)
-        (root / "worker.tmp").write_text(str(os.getpid()))
+        (root / "worker.tmp").write_text(f"{os.getpid()} {started(os.getpid())}")
         os.replace(root / "worker.tmp", root / "worker")
         while not (root / "go").exists():
             time.sleep(0.02)
@@ -180,7 +185,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
 
             class ReapTest(unittest.TestCase):
                 def test_b_watcher_is_gone(self):
-                    watcher = int((PROJECT / "watcher").read_text())
+                    watcher = int((PROJECT / "watcher").read_text().split()[0])
                     deadline = time.monotonic() + 5
                     while True:
                         try:
@@ -197,6 +202,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(RUNNER), "-s", str(self.tests), "-j", "1"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 env=env, start_new_session=True)
+        self.track(proc)
         try:
             out, err = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired:
