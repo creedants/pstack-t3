@@ -1,0 +1,2 @@
+- kind fix
+- `tests/landing/test_times.py` and `tests/activity_tests/test_database.py` pin what the two read-only opens guarantee. A read leaves every database byte unchanged and may create only the write-ahead log and its index beside it. The log holds no frames.
