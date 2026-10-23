@@ -25,7 +25,7 @@ class LifecycleMixin:
 
             class SlowTest(unittest.TestCase):
                 def test_slow(self):
-                    marks.mark("worker", os.getpid())
+                    marks.mark("worker", marks.mine())
                     time.sleep(60)
         """)
         proc = self.start()

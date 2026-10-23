@@ -49,11 +49,16 @@ import os
 import sys
 import time
 from pathlib import Path
+
+def started(pid):
+    raw = Path(f"/proc/{pid}/stat").read_bytes()
+    return raw[raw.rindex(b")") + 2:].split()[19].decode()
+
 if "--worker" in sys.argv:
     proj = os.environ.get("PARENT_EXIT_PROJECT")
     if proj:
         root = Path(proj)
-        (root / "worker.tmp").write_text(str(os.getpid()))
+        (root / "worker.tmp").write_text(f"{os.getpid()} {started(os.getpid())}")
         os.replace(root / "worker.tmp", root / "worker")
         while not (root / "go").exists():
             time.sleep(0.02)
@@ -94,7 +99,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(RUNNER), "-s", str(self.tests), "-j", "1"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 env=env, start_new_session=True)
-        self.addCleanup(lambda: self.end(proc.pid))
+        self.track(proc)
         worker = self.pid_from("worker")
         self.addCleanup(lambda: self.end(worker))
         os.kill(proc.pid, signal.SIGKILL)
@@ -115,7 +120,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
 
             class GilTest(unittest.TestCase):
                 def test_gil(self):
-                    marks.mark("worker", os.getpid())
+                    marks.mark("worker", marks.mine())
                     re.fullmatch(r"(a+)+", "a" * 34 + "!")
         """)
         ppath = self.write_sitecustomize()
@@ -123,7 +128,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(RUNNER), "-s", str(self.tests), "-j", "1"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 env=env, start_new_session=True)
-        self.addCleanup(lambda: self.end(proc.pid))
+        self.track(proc)
         worker = self.pid_from("worker")
         self.addCleanup(lambda: self.end(worker))
         os.kill(proc.pid, signal.SIGKILL)
@@ -141,34 +146,28 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
             import marks
 
             def find_watcher():
+                # Returns the pid, start time, and parent of a process in this worker's process group, or None, None, None.
+                # The group and the start time come from one read of /proc/<pid>/stat.
                 me = os.getpid()
                 raw = Path(f"/proc/{me}/stat").read_bytes()
                 my_pgrp = int(raw[raw.rindex(b")") + 2:].split()[2])
                 for entry in os.listdir("/proc"):
-                    if not entry.isdigit():
-                        continue
-                    pid = int(entry)
-                    if pid == me:
+                    if not entry.isdigit() or int(entry) == me:
                         continue
                     try:
-                        stat = Path(f"/proc/{entry}/stat").read_bytes()
-                    except OSError:
+                        fields = Path("/proc", entry, "stat").read_bytes()
+                        fields = fields[fields.rindex(b")") + 2:].split()
+                    except (OSError, ValueError):
                         continue
-                    try:
-                        pgrp = int(stat[stat.rindex(b")") + 2:].split()[2])
-                    except (ValueError, IndexError):
-                        continue
-                    if pgrp == my_pgrp:
-                        return pid
-                return None
+                    if int(fields[2]) == my_pgrp:
+                        return int(entry), fields[19].decode(), int(fields[1])
+                return None, None, None
 
             class WatcherTest(unittest.TestCase):
                 def test_a_finds_watcher(self):
-                    watcher = find_watcher()
+                    watcher, started, ppid = find_watcher()
                     self.assertIsNotNone(watcher, "no other process shares this worker group")
-                    marks.mark("watcher", watcher)
-                    raw = Path(f"/proc/{watcher}/stat").read_bytes()
-                    ppid = int(raw[raw.rindex(b")") + 2:].split()[1])
+                    marks.mark("watcher", f"{watcher} {started}")
                     self.assertNotEqual(ppid, os.getpid(), "the watcher parent is the worker")
         """)
         self.write("test_zzz_reap.py", """
@@ -180,7 +179,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
 
             class ReapTest(unittest.TestCase):
                 def test_b_watcher_is_gone(self):
-                    watcher = int((PROJECT / "watcher").read_text())
+                    watcher = int((PROJECT / "watcher").read_text().split()[0])
                     deadline = time.monotonic() + 5
                     while True:
                         try:
@@ -197,6 +196,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(RUNNER), "-s", str(self.tests), "-j", "1"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 env=env, start_new_session=True)
+        self.track(proc)
         try:
             out, err = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired:

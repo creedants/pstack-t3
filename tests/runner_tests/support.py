@@ -42,33 +42,74 @@ GOOD = """
 """
 
 # A temporary project's tests import this to tell the test that owns the project which processes they started.
+# A report is a pid and the start time field 22 of /proc/<pid>/stat reports for it, or - where /proc has no entry for the pid.
+# mine, sleeper, and orphan take a report from the process it names before that process can exit, and every step after that carries it unchanged.
 MARKS = """
     import os
     import subprocess
     import sys
+    import time
     from pathlib import Path
 
     PROJECT = Path(__file__).resolve().parents[1]
-    SLEEPER = ["-c", "import time; time.sleep(60)", str(PROJECT)]
+    # Writes its own report to the path in argv 2 under the directory in argv 1, then sleeps for 60 s.
+    PROGRAM = (
+        "import os, sys, time\\n"
+        "from pathlib import Path\\n"
+        "def started():\\n"
+        "    try:\\n"
+        "        raw = Path('/proc/self/stat').read_bytes()\\n"
+        "    except OSError:\\n"
+        "        return '-'\\n"
+        "    return raw[raw.rindex(b')') + 2:].split()[19].decode()\\n"
+        "root, name = Path(sys.argv[1]), sys.argv[2]\\n"
+        "(root / (name + '.tmp')).write_text(f'{os.getpid()} {started()}')\\n"
+        "os.replace(root / (name + '.tmp'), root / name)\\n"
+        "time.sleep(60)\\n"
+    )
+    # Starts a process that writes its own report in a new session, then ends.
     PARENT = (
         "import subprocess, sys\\n"
-        "child = subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True,\\n"
-        "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\\n"
-        "print(child.pid)\\n"
+        "subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True,\\n"
+        "                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\\n"
     )
 
-    def mark(name, pid):
-        (PROJECT / (name + ".tmp")).write_text(str(pid))
+    def mine():
+        '''Return this process's pid and the start time its own /proc/self/stat reports, or - where /proc has no entry for it.'''
+        try:
+            raw = Path("/proc/self/stat").read_bytes()
+        except OSError:
+            return f"{os.getpid()} -"
+        return f"{os.getpid()} {raw[raw.rindex(b')') + 2:].split()[19].decode()}"
+
+    def reported(name, limit=10):
+        '''Return the report the process that writes name made for itself.'''
+        path = PROJECT / name
+        deadline = time.monotonic() + limit
+        while not path.exists():
+            if time.monotonic() > deadline:
+                raise AssertionError(f"{name} was not reported")
+            time.sleep(0.01)
+        return path.read_text()
+
+    def sleeper(name):
+        '''Start a process in a new session that writes its own report to name, and return that report.'''
+        subprocess.Popen([sys.executable, "-c", PROGRAM, str(PROJECT), name], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return reported(name)
+
+    def mark(name, report):
+        '''Write the report a test gives for name. A report is a pid with the start time /proc reported for the process it names. A report that holds only a pid leaves the mark without a start time, and cleanup records nothing from it.'''
+        (PROJECT / (name + ".tmp")).write_text(str(report))
         os.replace(PROJECT / (name + ".tmp"), PROJECT / name)
 
-    def orphan():
-        parent = subprocess.run([sys.executable, "-c", PARENT, *SLEEPER], capture_output=True, text=True, check=True)
-        return int(parent.stdout)
+    def orphan(name):
+        '''Start a process whose parent starts a sleeper in a new session and ends. Return the sleeper's report.'''
+        subprocess.run([sys.executable, "-c", PARENT, "-c", PROGRAM, str(PROJECT), name], check=True)
+        return reported(name)
 """
 
 ESCAPE = """
-    import subprocess
-    import sys
     import time
     import unittest
 
@@ -76,22 +117,18 @@ ESCAPE = """
 
     class EscapeTest(unittest.TestCase):
         def test_escape(self):
-            child = subprocess.Popen([sys.executable, *marks.SLEEPER], start_new_session=True)
-            marks.mark("child", child.pid)
+            marks.sleeper("child")
             time.sleep({seconds})
 """
 
 HANG_AT_IMPORT = """
-    import os
-    import subprocess
-    import sys
     import time
 
     import marks
 
     if {escape}:
-        marks.mark("child", subprocess.Popen([sys.executable, *marks.SLEEPER], start_new_session=True).pid)
-    marks.mark("listing", os.getpid())
+        marks.sleeper("child")
+    marks.mark("listing", marks.mine())
     print("importing", flush=True)
     time.sleep(60)
 
@@ -173,10 +210,13 @@ AT_EXIT = "atexit.register({act})"
 LAUNCHER_CHILD = (
     "import os, subprocess, sys, time\n"
     "from pathlib import Path\n"
+    "def started(pid):\n"
+    "    raw = Path(f'/proc/{pid}/stat').read_bytes()\n"
+    "    return raw[raw.rindex(b')') + 2:].split()[19].decode()\n"
     "root = Path(sys.argv[1])\n"
     "sleeper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', str(root)], start_new_session=True,\n"
     "                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
-    "(root / 'sleeper.tmp').write_text(str(sleeper.pid))\n"
+    "(root / 'sleeper.tmp').write_text(f'{sleeper.pid} {started(sleeper.pid)}')\n"
     "os.replace(root / 'sleeper.tmp', root / 'sleeper')\n"
     "while not (root / 'allow-parent-exit').exists():\n"
     "    time.sleep(.01)\n"
@@ -184,10 +224,13 @@ LAUNCHER_CHILD = (
 LAUNCHER = (
     "import os, subprocess, sys, time\n"
     "from pathlib import Path\n"
+    "def started(pid):\n"
+    "    raw = Path(f'/proc/{pid}/stat').read_bytes()\n"
+    "    return raw[raw.rindex(b')') + 2:].split()[19].decode()\n"
     "root = Path(sys.argv[1])\n"
     f"child = subprocess.Popen([sys.executable, '-c', {LAUNCHER_CHILD!r}, str(root)],\n"
     "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
-    "(root / 'parent').write_text(str(child.pid))\n"
+    "(root / 'parent').write_text(f'{child.pid} {started(child.pid)}')\n"
     "while not (root / 'sleeper').exists():\n"
     "    time.sleep(.01)\n"
     "os.execv(sys.executable, [sys.executable, *sys.argv[2:]])\n"
@@ -209,7 +252,7 @@ RELEASES_THE_PARENT = """
 
     class ReleaseTest(unittest.TestCase):
         def test_release(self):
-            parent = int((PROJECT / "parent").read_text())
+            parent = int((PROJECT / "parent").read_text().split()[0])
             (PROJECT / "allow-parent-exit").touch()
             deadline = time.monotonic() + 20
             while not ended(parent):
@@ -219,6 +262,27 @@ RELEASES_THE_PARENT = """
             time.sleep({seconds})
 """
 INHERITED = "run_tests: this process had a child before the run, so the runner ends only the process groups of the children it starts"
+
+
+def start_time(pid):
+    """Return the start time /proc reports for pid, or None where it reports none."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
+HAS_PIDFD = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
+
+
+def pidfd(pid):
+    """Return a pidfd for the process at pid, or None where the platform offers none or no process is at pid."""
+    if not HAS_PIDFD:
+        return None
+    try:
+        return os.pidfd_open(pid)
+    except OSError:
+        return None
 
 
 def fence_git_environment():
@@ -247,6 +311,8 @@ class RunnerCase:
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        self.starts = {}
+        self.handles = {}
         self.proj = Path(tmp.name).resolve() / "proj"
         self.tests = self.proj / "tests"
         self.tests.mkdir(parents=True)
@@ -261,6 +327,7 @@ class RunnerCase:
         proc = subprocess.Popen([sys.executable, *before, str(RUNNER), "-s", str(self.tests), "-j", "2", *args],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 env={**(env or os.environ), "TMPDIR": str(self.scratch)}, start_new_session=True)
+        self.track(proc)
         self.addCleanup(lambda: (proc.stdout.close(), proc.stderr.close()))
         return proc
 
@@ -268,6 +335,7 @@ class RunnerCase:
         try:
             out, err = proc.communicate(timeout=limit)
         except subprocess.TimeoutExpired:
+            # proc is this test's unreaped child, so the kernel keeps its pid and process group id until communicate reaps it.
             os.killpg(proc.pid, signal.SIGKILL)
             proc.communicate()
             self.fail(f"the runner was still running after {limit} s")
@@ -283,21 +351,61 @@ class RunnerCase:
     def serial_count(self):
         return RAN.search(self.serial().stderr).group(1)
 
+    def track(self, proc):
+        """Record a process the test started with subprocess.Popen. Cleanup ends it through a pidfd taken here where /proc reports a start time and the platform offers a pidfd."""
+        self.remember(proc.pid)
+        self.addCleanup(self.end, proc.pid)
+
+    def remember(self, pid):
+        """Record the process at pid by a pidfd taken now and the start time /proc reports for it now."""
+        started = start_time(pid)
+        if started is not None:
+            self.hold(pid, started)
+
+    def hold(self, pid, started):
+        """Record a pidfd for the process at pid that was taken while /proc reported the start time given, for end to signal.
+
+        Record nothing where /proc reports another start time, as it does after the kernel gives that pid to a new process, or where the pidfd was taken after that happened.
+        """
+        if not started or start_time(pid) != started:
+            return
+        handle = pidfd(pid)
+        if handle is None:
+            return
+        if start_time(pid) != started:
+            os.close(handle)
+            return
+        self.starts[pid] = started
+        self.handles[pid] = handle
+
     def end(self, pid):
+        """End the process the test recorded at pid through the pidfd taken while it ran, where /proc still reports the recorded start time.
+
+        Signal nothing where the record holds no pidfd, or where /proc reports another start time, as it does after the kernel gives that pid to a new process.
+        """
+        handle = self.handles.pop(pid, None)
+        started = self.starts.pop(pid, None)
+        if handle is None or started is None or start_time(pid) != started:
+            if handle is not None:
+                os.close(handle)
+            return
         try:
-            if str(self.proj).encode() in Path(f"/proc/{pid}/cmdline").read_bytes():
-                os.kill(pid, signal.SIGKILL)
+            signal.pidfd_send_signal(handle, signal.SIGKILL)
         except OSError:
             pass
+        finally:
+            os.close(handle)
 
     def pid_from(self, name, limit=30):
-        """Return the pid code in the temporary project wrote with marks.mark. At cleanup, end that process where /proc shows the project path in its command line."""
+        """Return the pid code in the temporary project wrote with marks.mark. Record the process only where the mark carries the start time /proc still reports for it, and cleanup ends it through the pidfd taken here where the platform offers one."""
         path = self.proj / name
         deadline = time.monotonic() + limit
         while not path.exists():
             self.assertLess(time.monotonic(), deadline, f"{name} was not written")
             time.sleep(0.02)
-        pid = int(path.read_text())
+        pid, _, started = path.read_text().partition(" ")
+        pid = int(pid)
+        self.hold(pid, started)
         self.addCleanup(self.end, pid)
         return pid
 
