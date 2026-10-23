@@ -1,6 +1,10 @@
 import json
+import os
 import posixpath
+import sqlite3
+import subprocess
 from pathlib import Path
+from urllib.parse import quote
 from brigade_lib._affected.model import AFFECTED_KEY, _Full, _PYTHON_NAME, layout
 from brigade_lib.edits import NO_COMMAND
 from brigade_lib.shared import BrigadeError
@@ -96,6 +100,86 @@ def _check_command(meta):
     return "" if text == NO_COMMAND else text
 
 
+def records_check(meta):
+    """True when meta records a check command, including the word none."""
+    value = meta.get("checkCommand")
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _common_dir(root):
+    """The repository's git common directory for root as a resolved Path, or None when root is empty or git cannot name one."""
+    if not str(root or "").strip():
+        return None
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "--work-tree=.", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        return Path(r.stdout.strip()).resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def _contract_rows(path):
+    """The contract table of path read through a read-only URI, or None when its log exists without an index.
+
+    A write-ahead log with no index beside it is refused, because the read would create the index.
+    The read takes SQLite's locks, so it is one committed snapshot and never checkpoints, changes a database file,
+    or changes an existing log. It can still create an empty log and index beside a database whose last writer just
+    closed, and it changes no committed data.
+    """
+    log = Path(f"{path}-wal").exists()
+    if log and not Path(f"{path}-shm").exists():
+        return None
+    connection = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True, isolation_level=None)
+    try:
+        return dict(connection.execute("SELECT key, value FROM contract").fetchall())
+    finally:
+        connection.close()
+
+
+def contract_check(root):
+    """The landing contract's check command for root, or an empty string.
+
+    It reads the checks value from the contract table of the land.db whose commonDir resolves to root's common git directory.
+    It reads a candidate through a read-only URI, skipping one whose log has no index beside it and one the read cannot open.
+    That read is one committed snapshot and changes no committed data, and it can create an empty log and index beside
+    a database whose last writer just closed.
+    It returns that value stripped when it is a list of exactly one string other than "none", and an empty string in every other case.
+    """
+    common = _common_dir(root)
+    if common is None:
+        return ""
+    base = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "pstack-t3" / "landing"
+    try:
+        candidates = list(base.glob("*/land.db"))
+    except (OSError, ValueError):
+        return ""
+    for path in candidates:
+        try:
+            rows = _contract_rows(path)
+            if rows is None:
+                continue
+            recorded = Path(json.loads(rows.get("commonDir"))).resolve()
+        except Exception:
+            continue
+        if recorded != common:
+            continue
+        try:
+            checks = json.loads(rows["checks"])
+        except Exception:
+            return ""
+        if isinstance(checks, list) and len(checks) == 1 and isinstance(checks[0], str):
+            text = checks[0].strip()
+            return "" if text == NO_COMMAND else text
+        return ""
+    return ""
+
+
 def _build_command(meta):
     value = meta.get("buildCommand")
     if not isinstance(value, str):
@@ -107,16 +191,19 @@ def _build_command(meta):
 def _settings(root, meta, store=None):
     """Layout and commands from matching stores.
 
-    When meta is given that store alone supplies all four values.
+    When meta is given that store supplies the layout, the build command, the check command, and the change note directory, except that the check command is the landing contract's when the store records no checkCommand.
     Otherwise matching stores are every readable restaurant.json under store root in sorted path order whose projectRoot resolves to root.
     Unreadable or non JSON stores are skipped.
-    Build and check take the first string that is non-empty after stripping and is not "none".
+    Build and check take a store's string only when it is non-empty after stripping and is not "none", and the scan takes the first such string.
+    When no matched store records a checkCommand the check command is the landing contract's.
+    The landing contract supplies the check command only when it records exactly one check.
     Later different values are ignored without warning.
     ChangeNoteDir compares every matched store with unset as empty and refuses on difference.
     AffectedTests compares only stores that record it by raw value and refuses on difference.
     """
     if meta is not None:
-        return layout(meta), _build_command(meta), _check_command(meta), change_note_dir(meta)
+        check = _check_command(meta) if records_check(meta) else contract_check(root)
+        return layout(meta), _build_command(meta), check, change_note_dir(meta)
     pick = None
     picked_path = None
     picked_value = None
@@ -124,11 +211,14 @@ def _settings(root, meta, store=None):
     noted_path = None
     build = ""
     check = ""
+    recorded = False
     for path, one in _stored_restaurants(root, store):
         if not build:
             build = _build_command(one)
         if not check:
             check = _check_command(one)
+        if records_check(one):
+            recorded = True
         note = change_note_dir(one)
         if noted_path is None:
             noted, noted_path = note, path
@@ -141,6 +231,8 @@ def _settings(root, meta, store=None):
             pick, picked_path, picked_value = got, path, one[AFFECTED_KEY]
         elif one[AFFECTED_KEY] != picked_value:
             raise BrigadeError(f"restaurant.json {AFFECTED_KEY} differs across {picked_path} and {path}; keep one value")
+    if not check and not recorded:
+        check = contract_check(root)
     return pick, build, check, noted
 
 

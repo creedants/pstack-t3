@@ -2,6 +2,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from brigade_lib import seam
+from brigade_lib._affected.report import contract_check, records_check
 from brigade_lib._reviews.rounds import item_verdicts, roles_family, round_debt
 from brigade_lib._reviews.threads import report_threads, report_threads_refusal, write_threads
 from brigade_lib.edits import NEEDS_COMMANDS, commit_tree, replay, report_edits
@@ -126,7 +127,8 @@ def edits_gate(restaurant, dish_id, sha, report):
 
 
 def verify_edits(restaurant, dish_id, from_sha, to_sha):
-    """Called from run(), because it starts subprocesses. It holds the store lock for its first read and for its write, and never while a subprocess runs."""
+    """Called from handle(), because it starts subprocesses. It reads projectRoot and the landing contract before taking the store lock. It holds the lock while checking tables and appending edits.tsv, and runs subprocesses outside the lock."""
+    contract = contract_check(restaurant.meta.get("projectRoot") or "")
     with restaurant.checked():
         restaurant.fence()
         restaurant.find("dishes.tsv", dish_id)
@@ -136,6 +138,8 @@ def verify_edits(restaurant, dish_id, from_sha, to_sha):
             raise BrigadeError(f"{dish_id} has no {EDITS_VERDICT} round at {from_sha}")
         meta = restaurant.meta
         build, check = meta.get("buildCommand"), meta.get("checkCommand")
+        if not records_check(meta):
+            check = contract
         if not build or not check:
             raise BrigadeError(NEEDS_COMMANDS)
     name = rounds[-1]["report"]
