@@ -27,7 +27,7 @@ Times = namedtuple("Times", "n median p90 max")
 
 def open_read_only(path):
     """mode=ro reads land.db through SQLite's locks, so the read is one committed snapshot and changes no committed data.
-    A read-only open can create an empty log and index beside a database whose last writer just closed.
+    A read-only open can create a log with no frames and a shared-memory index beside a database whose last writer just closed.
     With a write-ahead log and its index beside land.db, the read reads that log.
     With a log and no index, a read would create the index or miss the log's rows, so the open is refused.
     """
