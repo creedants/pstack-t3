@@ -32,6 +32,8 @@ class ClaimsCapTest(BrigadeTest):
         verify = text.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0]
         self.assertIn("The claims check runs at most twice per round, the first check and one recheck after fixing what it "
                       "flagged.", verify)
+        self.assertIn("Prose edited after the recheck is settled by the worker, and each flag kept is listed with one line of "
+                      "reason in the report.", verify)
         self.assertIn("each flag kept is listed with one line of reason in the report", verify)
         self.assertNotIn("Run the claims check again after any later edit to prose", text)
 

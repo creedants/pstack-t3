@@ -22,8 +22,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam, spend
 from brigade_lib.leases import holding_blocks
+from brigade_lib._watch.seats import report_is_current
 from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, report_threads
-from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural
+from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural, stored
 from brigade_lib.store import CLOSED_GOAL_STATES, IN_FLIGHT_STATES, KINDS, Restaurant, holder_prefix, is_admin, parse_row, reporting_of, siblings, store_path
 from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell
 
@@ -149,19 +150,27 @@ CLAIMS_RUN_CAP = 2
 
 
 def claims_cap_reports(restaurant):
-    """(id, count) of each dish in IN_FLIGHT_STATES whose reports/<id>.md ## Threads section holds more claims check children than CLAIMS_RUN_CAP.
+    """(id, count) of each dish in IN_FLIGHT_STATES whose current reports/<id>.md ## Threads section holds more new claims check children than CLAIMS_RUN_CAP.
 
     The report is decoded as UTF-8 with replacement. An entry that report_stat does not call a `file` is not read.
+    A report that is not current for the dish's last attempt is not read, as report_is_current decides.
     A child comes from report_threads, so a line of the section that names no child is not counted.
+    A child whose thread id threads.tsv already records for this dish is left out, so an earlier round is not counted.
     """
     over = []
+    threads = restaurant.rows("threads.tsv")
     for dish in restaurant.rows("dishes.tsv"):
         name = f"{dish['id']}.md"
         if dish["state"] not in IN_FLIGHT_STATES or seam.report_entry(restaurant, name) != "file":
             continue
+        if not report_is_current(restaurant, dish):
+            continue
         text = (restaurant.dir / "reports" / name).read_bytes().decode("utf-8", "replace")
         children, _ = report_threads(text)
-        runs = sum(1 for child in children if child["role"] == CLAIMS_CHECK_ROLE)
+        seen = {stored("threads.tsv", "thread", row["thread"]) for row in threads
+                if row["dish"] == dish["id"] and row["thread"]}
+        runs = sum(1 for child in children if child["role"] == CLAIMS_CHECK_ROLE
+                   and stored("threads.tsv", "thread", child["thread"]) not in seen)
         if runs > CLAIMS_RUN_CAP:
             over.append((dish["id"], runs))
     return over
