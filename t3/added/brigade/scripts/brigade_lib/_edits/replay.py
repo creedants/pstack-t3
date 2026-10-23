@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import io
 import os
@@ -14,6 +15,17 @@ from brigade_lib.shared import BrigadeError, command_words
 NEEDS_COMMANDS = ("edits verify needs a build command and a check command; "
                   "run set --build-command <command> --check-command <command>, with none for one the project lacks")
 NO_COMMAND = "none"
+# The most lines a small code fix changes.
+SMALL_FIX_LINES = 20
+# The diff algorithms the count asks git for.
+GIT_ALGORITHMS = ("myers", "minimal", "patience", "histogram")
+SMALL_FIX = ("the applied change counts {count} lines, and a small code fix counts at most {cap}; it needs a second "
+             "review. The count is, for each changed file, the largest added plus deleted total git diff --numstat "
+             "reports between the file at the reviewed commit and that file with the edits applied under myers, "
+             "minimal, patience, and histogram, and every line of both files when git calls either one binary. A path "
+             "ending in .md is not counted, and neither is a .py path whose AST is the same once its docstrings are "
+             "removed, so in a .py path a change to a comment, a docstring, or formatting alone is not counted. A "
+             "change to a printed message or to code on a test line changes that AST and is counted")
 # Why an edit cannot apply to the reviewed commit.
 EDIT_FAILS = {
     "missing": "FAIL {path}: no regular file at {sha}",
@@ -52,6 +64,105 @@ def occurrences(content, old):
         found.append(at)
         at = content.find(old, at + 1)
     return found
+
+
+def without_docstrings(tree):
+    """The tree with every docstring removed.
+
+    A docstring is the first statement of a module, class, function, or async function body when that statement is an
+    expression whose value is a string constant.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                node.body = node.body[1:]
+    return tree
+
+
+def ast_dump(source):
+    """ast.dump of the source once its docstrings are removed, or None when the source does not parse."""
+    try:
+        return ast.dump(without_docstrings(ast.parse(source)))
+    except (SyntaxError, ValueError):
+        return None
+
+
+def exempt(path, before, after):
+    """True when a changed path is wording, which the cap does not count.
+
+    That is a path that ends in .md, and a path that ends in .py when both sides parse and their ASTs are equal once
+    every docstring is removed.
+    """
+    if path.endswith(".md"):
+        return True
+    if path.endswith(".py"):
+        earlier, later = ast_dump(before), ast_dump(after)
+        return earlier is not None and later is not None and earlier == later
+    return False
+
+
+def line_count(data):
+    """The lines data holds. A newline ends one, and bytes after the last newline make one more."""
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
+def counting_git(directory):
+    """A function that runs one git command in a new bare repository under directory.
+
+    The environment holds no GIT_ variable the caller set, no system or global config, and no attribute file outside
+    that directory, so the count depends on the bytes and the installed git alone. A command that exits non-zero raises
+    BrigadeError.
+    """
+    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM="1",
+                       HOME=str(directory), XDG_CONFIG_HOME=str(directory))
+    store = str(directory / "count.git")
+
+    def run(*words, data=None):
+        try:
+            result = subprocess.run(["git", *words], input=data, capture_output=True, env=environment,
+                                    cwd=str(directory))
+        except OSError as error:
+            raise BrigadeError(f"cannot run git while counting the applied change: {error.strerror}") from None
+        if result.returncode:
+            raise BrigadeError(f"git exited {result.returncode} while counting the applied change")
+        return result.stdout
+
+    run("init", "--bare", "--quiet", store)
+    return lambda *words, data=None: run("--git-dir", store, *words, data=data)
+
+
+def numstat_bound(count, before, after):
+    """The lines one changed path adds to the applied change's count.
+
+    The largest added plus deleted total git diff --numstat reports between the two blobs over GIT_ALGORITHMS, and
+    every line of both blobs when git calls either one binary.
+    """
+    if before == after:
+        return 0
+    old = count("hash-object", "-w", "--stdin", data=before).strip()
+    new = count("hash-object", "-w", "--stdin", data=after).strip()
+    totals = []
+    for algorithm in GIT_ALGORITHMS:
+        counted = count("diff", "--numstat", "--no-renames", "--no-ext-diff", "--no-textconv",
+                        f"--diff-algorithm={algorithm}", old, new)
+        if not counted.strip():
+            totals.append(0)
+            continue
+        added, deleted, _ = counted.split(b"\t", 2)
+        if added == b"-":
+            return line_count(before) + line_count(after)
+        totals.append(int(added) + int(deleted))
+    return max(totals)
+
+
+def applied_count(contents, changed):
+    """The lines the applied change counts, which is numstat_bound at each changed path that exempt leaves counted."""
+    with seam.tempfile.TemporaryDirectory() as directory:
+        count = counting_git(Path(directory))
+        return sum(numstat_bound(count, contents[path], data) for path, data in changed.items()
+                   if not exempt(path, contents[path], data))
 
 
 def apply_edits(contents, edits, sha):
@@ -190,7 +301,10 @@ def exit_code(scratch, command):
 
 
 def replay(project_root, reviewed, before, after, edits, build, check, sha):
-    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output."""
+    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output.
+
+    Raises BrigadeError when the applied change counts more than SMALL_FIX_LINES lines.
+    """
     with seam.tempfile.TemporaryDirectory() as directory:
         scratch = Path(directory)
         archive = git(project_root, "archive", "--format=tar", reviewed).stdout
@@ -203,6 +317,9 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
         changed, lines = apply_edits(contents, edits, sha)
         if lines:
             return lines, False
+        count = applied_count(contents, changed)
+        if count > SMALL_FIX_LINES:
+            raise BrigadeError(SMALL_FIX.format(count=count, cap=SMALL_FIX_LINES))
         for path, data in changed.items():
             (scratch / path).write_bytes(data)
         edited = digests(scratch)

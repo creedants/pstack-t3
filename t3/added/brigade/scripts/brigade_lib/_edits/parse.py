@@ -200,7 +200,8 @@ def parse_edits(text):
                 raise EditsRefused(EDITS_REFUSED["above"].format(line=number))
     if not edits:
         raise EditsRefused(EDITS_REFUSED["none"])
-    return tuple(one_edit(number, parts) for number, parts in edits)
+    edits = tuple(one_edit(number, parts) for number, parts in edits)
+    return edits
 
 
 def report_edits(restaurant, name):
