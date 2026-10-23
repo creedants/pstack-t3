@@ -66,7 +66,7 @@ class RenameTest(BrigadeTest):
         return {path.name: path.read_bytes() for path in sorted(Path(directory).glob("*.tsv"))}
 
     def race_child(self, mode, args, signal=None):
-        """A real brigade process whose mode pauses it at one step named by the review it pins."""
+        """A real brigade process that CHILD pauses at the step mode names: before os.rename, before mkdir of speed, or before the first write into speed."""
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", D554_CASE=str(self.case),
                    D554_SCRIPT=str(SCRIPT), D554_MODE=mode, D554_SIGNAL=signal or "")
         return real_popen(ProcessReason.RACE, [sys.executable, "-c", CHILD, *args], env=env, text=True)
@@ -168,7 +168,7 @@ class RenameTest(BrigadeTest):
         self.assertIn("--workers", error)
         self.assertEqual(self.store_files(), store)
 
-    def test_a_recovering_rename_never_deletes_the_directory_an_open_created(self):
+    def test_a_concurrent_open_waits_for_a_recovering_rename_and_finds_the_moved_store(self):
         """D554 review 3 blocker 1: the project lock keeps a recovering rename's target clear of a concurrent open, which then finds the moved store."""
         self.open()
         self.brigade("set", "--thread", "coordinator")
