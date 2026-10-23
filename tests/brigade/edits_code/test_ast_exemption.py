@@ -29,6 +29,7 @@ class EditsAstExemptionTest(BrigadeTest):
         head = self.head_commit(self.SOURCE, **{"tools/value.py": VALUE_AFTER + "\n"})
         self.assertEqual(self.verify(reviewed, head), (1, "", cap_refusal(30)))
         self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
 
     def test_blank_lines_inside_a_multiline_value_are_refused_by_the_count(self):
         reviewed = self.edits_store(**{"tools/blanks.py": BLANKS_BEFORE + "\n"})
@@ -37,6 +38,7 @@ class EditsAstExemptionTest(BrigadeTest):
         head = self.head_commit(self.SOURCE, **{"tools/blanks.py": BLANKS_AFTER + "\n"})
         self.assertEqual(self.verify(reviewed, head), (1, "", cap_refusal(21)))
         self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
 
     def test_an_unterminated_last_line_gaining_a_newline_is_refused_by_the_count(self):
         reviewed = self.edits_store(**{"tools/eof.py": EOF_BEFORE})
@@ -45,6 +47,7 @@ class EditsAstExemptionTest(BrigadeTest):
         head = self.head_commit(self.SOURCE, **{"tools/eof.py": EOF_AFTER})
         self.assertEqual(self.verify(reviewed, head), (1, "", cap_refusal(21)))
         self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
 
     def test_a_docstring_followed_by_code_on_its_line_verifies(self):
         reviewed = self.edits_store(**{"tools/doc_code.py": DOC_BEFORE})

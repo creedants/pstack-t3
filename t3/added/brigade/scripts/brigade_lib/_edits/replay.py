@@ -1,5 +1,4 @@
 import ast
-import difflib
 import hashlib
 import io
 import os
@@ -18,12 +17,15 @@ NEEDS_COMMANDS = ("edits verify needs a build command and a check command; "
 NO_COMMAND = "none"
 # The most lines a small code fix changes.
 SMALL_FIX_LINES = 20
+# The diff algorithms the count asks git for.
+GIT_ALGORITHMS = ("myers", "minimal", "patience", "histogram")
 SMALL_FIX = ("the applied change counts {count} lines, and a small code fix counts at most {cap}; it needs a second "
-             "review. The count is each line the edits add or delete from the file at the reviewed commit to that file "
-             "with the edits applied, so a replaced line counts two, and a last line with no newline differs from that "
-             "line with a newline. A path ending in .md is not counted, and neither is a .py path whose AST is the same "
-             "once its docstrings are removed, so in a .py path a change to a comment, a docstring, or formatting alone "
-             "is not counted. A change to a printed message or to code on a test line changes that AST and is counted")
+             "review. The count is, for each changed file, the largest added plus deleted total git diff --numstat "
+             "reports between the file at the reviewed commit and that file with the edits applied under myers, "
+             "minimal, patience, and histogram, and every line of both files when git calls either one binary. A path "
+             "ending in .md is not counted, and neither is a .py path whose AST is the same once its docstrings are "
+             "removed, so in a .py path a change to a comment, a docstring, or formatting alone is not counted. A "
+             "change to a printed message or to code on a test line changes that AST and is counted")
 # Why an edit cannot apply to the reviewed commit.
 EDIT_FAILS = {
     "missing": "FAIL {path}: no regular file at {sha}",
@@ -86,31 +88,81 @@ def ast_dump(source):
         return None
 
 
-def line_records(data):
-    """The file's lines, each with the newline that ends it. A last line with no newline is kept as it is."""
-    records = data.split(b"\n")
-    lines = [record + b"\n" for record in records[:-1]]
-    if records[-1]:
-        lines.append(records[-1])
-    return lines
+def exempt(path, before, after):
+    """True when a changed path is wording, which the cap does not count.
 
-
-def counted_lines(before, after, path):
-    """The lines one changed path adds to the applied change's count.
-
-    Zero for a path that ends in .md. Zero for a path that ends in .py when both sides parse and their ASTs are equal
-    once every docstring is removed. Every other path counts the lines a diff of before against after deletes and
-    inserts, with each line keeping the newline that ends it.
+    That is a path that ends in .md, and a path that ends in .py when both sides parse and their ASTs are equal once
+    every docstring is removed.
     """
     if path.endswith(".md"):
-        return 0
+        return True
     if path.endswith(".py"):
         earlier, later = ast_dump(before), ast_dump(after)
-        if earlier is not None and later is not None and earlier == later:
-            return 0
-    return sum((a2 - a1) + (b2 - b1) for tag, a1, a2, b1, b2 in
-               difflib.SequenceMatcher(None, line_records(before), line_records(after), autojunk=False).get_opcodes()
-               if tag != "equal")
+        return earlier is not None and later is not None and earlier == later
+    return False
+
+
+def line_count(data):
+    """The lines data holds. A newline ends one, and bytes after the last newline make one more."""
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
+def counting_git(directory):
+    """A function that runs one git command in a new bare repository under directory.
+
+    The environment holds no GIT_ variable the caller set, no system or global config, and no attribute file outside
+    that directory, so the count depends on the bytes and the installed git alone. A command that exits non-zero raises
+    BrigadeError.
+    """
+    environment = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM="1",
+                       HOME=str(directory), XDG_CONFIG_HOME=str(directory))
+    store = str(directory / "count.git")
+
+    def run(*words, data=None):
+        try:
+            result = subprocess.run(["git", *words], input=data, capture_output=True, env=environment,
+                                    cwd=str(directory))
+        except OSError as error:
+            raise BrigadeError(f"cannot run git while counting the applied change: {error.strerror}") from None
+        if result.returncode:
+            raise BrigadeError(f"git exited {result.returncode} while counting the applied change")
+        return result.stdout
+
+    run("init", "--bare", "--quiet", store)
+    return lambda *words, data=None: run("--git-dir", store, *words, data=data)
+
+
+def numstat_bound(count, before, after):
+    """The lines one changed path adds to the applied change's count.
+
+    The largest added plus deleted total git diff --numstat reports between the two blobs over GIT_ALGORITHMS, and
+    every line of both blobs when git calls either one binary.
+    """
+    if before == after:
+        return 0
+    old = count("hash-object", "-w", "--stdin", data=before).strip()
+    new = count("hash-object", "-w", "--stdin", data=after).strip()
+    totals = []
+    for algorithm in GIT_ALGORITHMS:
+        counted = count("diff", "--numstat", "--no-renames", "--no-ext-diff", "--no-textconv",
+                        f"--diff-algorithm={algorithm}", old, new)
+        if not counted.strip():
+            totals.append(0)
+            continue
+        added, deleted, _ = counted.split(b"\t", 2)
+        if added == b"-":
+            return line_count(before) + line_count(after)
+        totals.append(int(added) + int(deleted))
+    return max(totals)
+
+
+def applied_count(contents, changed):
+    """The lines the applied change counts, which is numstat_bound at each changed path that exempt leaves counted."""
+    with seam.tempfile.TemporaryDirectory() as directory:
+        count = counting_git(Path(directory))
+        return sum(numstat_bound(count, contents[path], data) for path, data in changed.items()
+                   if not exempt(path, contents[path], data))
 
 
 def apply_edits(contents, edits, sha):
@@ -265,7 +317,7 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
         changed, lines = apply_edits(contents, edits, sha)
         if lines:
             return lines, False
-        count = sum(counted_lines(contents[path], data, path) for path, data in changed.items())
+        count = applied_count(contents, changed)
         if count > SMALL_FIX_LINES:
             raise BrigadeError(SMALL_FIX.format(count=count, cap=SMALL_FIX_LINES))
         for path, data in changed.items():

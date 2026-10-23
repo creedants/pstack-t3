@@ -42,6 +42,7 @@ class EditsCapTest(BrigadeTest):
         head = self.head_commit(self.SOURCE, **{"tools/run.txt": SPLIT_LINES})
         self.assertEqual(self.verify(reviewed, head), (1, "", cap_refusal(63)))
         self.assertEqual(self.edits_rows(), [])
+        self.assertEqual(self.record_pass_at(head, ok=False), self.gate(reviewed, head))
 
     def test_an_applied_change_to_only_comments_in_a_python_file_verifies(self):
         reviewed = self.edits_store(**{"tools/commented.py": OLD_COMMENTS + "\nvalue = 1\n"})
