@@ -27,9 +27,9 @@ Each row names one spawn. "Merged" means two passes become one. "Cheaper seat" m
 | Automate-me miners | 1 per slice | 1 miner over the whole window | Cut |
 | Verification source wave | 1 per feature file | At most 3 children, each reading a batch of feature files | Cut |
 | Multi-phase exploration | Several | 1 explorer | Cut |
-| Multi-phase verification | Full lanes | Gates, one live lane per surface, and one audit lane on another family. No perf lane | Cut |
+| Multi-phase verification | Full lanes | Gates, one live lane per surface, and one audit lane on another family, or a same-family read when only the author's family has a runnable seat. No perf lane | Cut |
 | Autopilot owner | 1 per PR | 1 per PR, with `Mode: light` in its brief | Kept |
-| Autopilot verification | Full lanes | 2 lanes. Gates, which keeps the patch-id rule, and one audit lane on another family that is the gate review and runs at every new head SHA | Cut |
+| Autopilot verification | Full lanes | 2 lanes. Gates, which keeps the patch-id rule, and one audit lane on another family, or a same-family read when only the author's family has a runnable seat, that is the gate review and runs at every new head SHA | Cut |
 | Orchestrate sub-coordinator | 1 per track | 1 per track, with `Mode: light` in its brief | Kept |
 | Orchestrate worker | Fewer, broader | Same, with `Mode: light` in each brief | Kept |
 | Orchestrate long-lived owner | 1 per owner | Same, with `Mode: light` in each brief | Kept |
@@ -65,7 +65,7 @@ See [Never cut](../../t3/runtime.md#never-cut) for the full rule.
 
 ### The gate review
 
-Light mode has one gate review per head SHA before merge. It is one read-only child on the first runnable `verifiers` seat whose model family differs from every model that wrote the diff. Authors include code delegates, workers that wrote code, and authors from earlier attempts on the branch. When no runnable seat qualifies, the verdict is `blocked`. The gate reads the whole diff against its base on round one, and a later round reads the fix diff since the last reviewed SHA, per [Never cut](../../t3/runtime.md#never-cut). Its brief adds three checks that folded children used to run.
+Light mode has one gate review per head SHA before merge. It is one read-only child on the first runnable `verifiers` seat whose model family differs from every model that wrote the diff. Authors include code delegates, workers that wrote code, and authors from earlier attempts on the branch. When the catalog holds no runnable seat of another family, the gate is the first runnable `verifiers` seat whose model differs from that of every author. When `verifiers` has no such seat, the gate is a fresh child on any runnable seat of the author's family that the exclude list does not refuse, and the verdict marks it `same-family`. The verdict is `blocked` when the catalog holds a runnable seat of another family and `verifiers` has no runnable seat from it, and when the catalog holds no runnable seat at all. The gate reads the whole diff against its base on round one, and a later round reads the fix diff since the last reviewed SHA, per [Never cut](../../t3/runtime.md#never-cut). Its brief adds three checks that folded children used to run.
 
 - The no-comments rules from `agents/comment-sicko.md`, applied to the diff.
 - The chosen design, when the light architect step picked one of two sketches.
