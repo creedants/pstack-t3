@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None, doc: str | None = None) -> int:
                                      epilog="\n\n".join(textwrap.fill(" ".join(paragraph.split()), width) for paragraph in told),
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-j", "--jobs", type=positive(int), default=min(MAX_DEFAULT_JOBS, os.cpu_count() or 1),
-                        help=f"The largest number of worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and the CPU count, or 1 when the CPU count is unknown. Inside a land.py slot the count is lowered to {JOBS_PER_SLOT} for each slot the command holds, and one line names both numbers.")
+                        help=f"The largest number of worker processes alive at once. The default is the smaller of {MAX_DEFAULT_JOBS} and the CPU count, or 1 when the CPU count is unknown. Inside a land.py slot the count is capped at {JOBS_PER_SLOT} for each slot the command holds. When the cap lowers the count, one line names both numbers.")
     parser.add_argument("-s", "--start-directory", default=str(ROOT / "tests"),
                         help="Directory to discover tests under. Each worker runs in the parent of this directory. The default is tests/ in this repository.")
     parser.add_argument("--timeout", type=positive(float), default=DEFAULT_TIMEOUT,

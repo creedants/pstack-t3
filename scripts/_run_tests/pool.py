@@ -101,14 +101,14 @@ def run_pool(shards: list[Shard], jobs: int, timeout: float, launch_one, finish,
 
 
 def make_scratch() -> Path:
-    """Make this run's scratch directory in the temp directory, after removing each scratch directory there named after a pid that no process has. A removal that fails leaves its directory."""
+    """Make this run's scratch directory in the temp directory, after removing each directory there in the run-tests-<pid>-<suffix> form whose pid no process has. A removal that fails leaves its directory."""
     base = Path(tempfile.gettempdir())
     for entry in base.glob("run-tests-*"):
-        field = entry.name[len("run-tests-"):].split("-")[0]
-        if not field.isdigit():
-            continue   # a name that carries no pid names no process this run can judge
+        parts = entry.name[len("run-tests-"):].split("-", 1)
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1]:
+            continue   # a name that is not run-tests-<pid>-<suffix> names no process this run can judge
         try:
-            os.kill(int(field), 0)
+            os.kill(int(parts[0]), 0)
         except ProcessLookupError:
             shutil.rmtree(entry, ignore_errors=True)
         except OSError:

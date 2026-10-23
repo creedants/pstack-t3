@@ -44,6 +44,14 @@ class LifecycleMixin:
         self.assertEqual(result.stderr.splitlines()[-1], "OK")
         self.assertFalse(stale.exists())
 
+    def test_a_run_keeps_a_legacy_scratch_directory_whose_random_suffix_is_all_digits(self):
+        self.write("test_good.py", GOOD)
+        legacy = self.scratch / "run-tests-31415926"
+        legacy.mkdir()
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(legacy.is_dir())
+
     def test_a_run_inside_a_one_slot_lowers_8_jobs_to_4_and_says_so(self):
         self.five_modules()
         result = self.runner("-j", "8", env={**os.environ, "LAND_SLOT": "worker", "LAND_SLOT_FILES": "worker-1"})
