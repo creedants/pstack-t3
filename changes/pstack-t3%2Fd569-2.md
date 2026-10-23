@@ -1,0 +1,4 @@
+- kind upkeep
+- `brigade.py close` counts only new claims check children for the cap warning, leaving out a child whose thread id `threads.tsv` already records for the dish and skipping a report older than the dish's last attempt start.
+- `tests/brigade/worker_briefs/test_claims_cap_rounds.py` pins two recorded checks plus one new check staying silent, three new checks still warning, and a stale report staying silent.
+- `tests/brigade/worker_briefs/test_claims_cap.py` asserts the complete settle-prose sentence.

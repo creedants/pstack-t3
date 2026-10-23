@@ -35,7 +35,7 @@ class StandingRulesMixin:
                      "When that command is the outermost slot, a governor with fewer than two worker slots refuses it and the suite does not run.",
                      "An affected-module run stays one slot.",
                      "Run the full verification chain once, after the last commit.",
-                     "after any later edit to prose",
+                     "runs at most twice per round",
                      "tests.test_pstack_t3"):
             self.assertIn(part, verify)
         self.assertNotIn("Run builds and tests through", verify)
