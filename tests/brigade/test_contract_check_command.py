@@ -87,3 +87,10 @@ class ContractCheckCommandTest(BrigadeTest):
         self.open()
         out = self.affected()
         self.assertIn("No verify command is set", out)
+
+    def test_a_contract_check_of_none_gives_affected_no_command_fails_when_the_word_none_is_supplied(self):
+        # Processes: git and land build the fixture project and a contract whose one check is the word none.
+        self.contract("none")
+        self.open()
+        out = self.affected()
+        self.assertIn("No verify command is set", out)

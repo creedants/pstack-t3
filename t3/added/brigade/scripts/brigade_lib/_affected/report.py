@@ -127,8 +127,7 @@ def contract_check(root):
     """The landing contract's check command for root, or an empty string.
 
     It reads the checks value from the contract table of the land.db whose commonDir resolves to root's common git directory.
-    It returns that value stripped only when it is a list of exactly one string, and an empty string in every other case.
-    It never raises.
+    It returns that value stripped when it is a list of exactly one string other than "none", and an empty string in every other case.
     """
     common = _common_dir(root)
     if common is None:
@@ -155,7 +154,8 @@ def contract_check(root):
         except Exception:
             return ""
         if isinstance(checks, list) and len(checks) == 1 and isinstance(checks[0], str):
-            return checks[0].strip()
+            text = checks[0].strip()
+            return "" if text == NO_COMMAND else text
         return ""
     return ""
 
