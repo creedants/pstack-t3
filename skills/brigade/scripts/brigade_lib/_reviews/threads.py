@@ -118,6 +118,47 @@ def thread_binding(row):
     return (row["attempt"], row["role"], stored("threads.tsv", "thread", row["thread"]))
 
 
+def child_attempt(rows, thread):
+    """The attempt `write_threads` gives a CHILD_ROLES row for `thread`.
+
+    It counts worker rows on another thread, or 1 when none. `rows` holds the item's rows.
+    """
+    thread = stored("threads.tsv", "thread", thread)
+    used = sum(1 for row in rows if row["role"] in WORKER_ROLES and row["thread"] != thread)
+    return str(max(used, 1))
+
+
+def recorded_children(rows, children, sha="", late=False):
+    """Stored ids of `children` whose binding `rows` holds for the reviewed attempt, in report order.
+
+    A late verdict announces no helper. An empty SHA announces no helper. The current attempt is
+    the max worker attempt in `rows`, or 1 when none holds a worker row. Each child attempt comes
+    from `child_attempt`. A child is kept only when its attempt equals the current attempt, when
+    its binding rows hold, and when no earlier row holds the same role and stored thread at a
+    smaller attempt. The earlier row check excludes helpers with an earlier same-role row.
+    """
+    if late:
+        return []
+    if not sha:
+        return []
+    worker_attempts = [int(row["attempt"]) for row in rows if row["role"] in WORKER_ROLES]
+    current = str(max(worker_attempts)) if worker_attempts else "1"
+    held = {(row["attempt"], row["role"], stored("threads.tsv", "thread", row["thread"])) for row in rows}
+    found = []
+    for child in children:
+        thread = stored("threads.tsv", "thread", child["thread"])
+        attempt = child_attempt(rows, thread)
+        if attempt != current:
+            continue
+        if (attempt, child["role"], thread) not in held:
+            continue
+        if any(row["role"] == child["role"] and stored("threads.tsv", "thread", row["thread"]) == thread
+               and int(row["attempt"]) < int(attempt) for row in rows):
+            continue
+        found.append(thread)
+    return found
+
+
 def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     """The one writer of threads.tsv. Returns True when it wrote a row or closed one.
 
@@ -140,10 +181,13 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
     for role, thread, seat in threads:
         thread = stored("threads.tsv", "thread", thread)
         worker = role in WORKER_ROLES
-        used = sum(1 for row in mine if row["role"] in WORKER_ROLES and row["thread"] != thread)
-        number = used + 1 if worker else max(used, 1)
         if worker:
-            role = "worker" if number == 1 else "fix worker"
+            used = sum(1 for row in mine if row["role"] in WORKER_ROLES and row["thread"] != thread)
+            number = str(used + 1)
+        else:
+            number = child_attempt(mine, thread)
+        if worker:
+            role = "worker" if number == "1" else "fix worker"
         if (str(number), role, thread) in held:
             continue
         held.add((str(number), role, thread))

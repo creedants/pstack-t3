@@ -183,7 +183,7 @@ def handle_locked(restaurant, args, view):
             result = record_pass(restaurant, args.dish, args.pr, args.sha, args.verdict, args.author, args.verifier,
                                  args.note, args.same_family, args.report, args.member, args.late, args.edits,
                                  args.reviewer_thread, args.reason)
-            announce_archive(restaurant, args.dish, "review", thread=args.reviewer_thread)
+            announce_archive(restaurant, args.dish, "review", thread=args.reviewer_thread, sha=args.sha, late=args.late)
             return result
         ok, why = pass_check(restaurant, args.dish, args.sha)
         latest = latest_verdict(restaurant, args.dish, args.sha) if args.json else None
