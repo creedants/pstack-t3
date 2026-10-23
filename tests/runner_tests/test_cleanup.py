@@ -1,4 +1,4 @@
-"""Cleanup ends each process a runner test recorded, whatever its command line names."""
+"""Cleanup ends a process a runner test recorded, whatever its command line names. Each case here reads /proc, so it runs on Linux only."""
 
 import os
 import signal
