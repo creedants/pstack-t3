@@ -48,7 +48,7 @@ Present the synthesizer's full Accepted / Rejected / Backlog output and wait for
 
 File each Backlog item to your team's devex or backlog tracker without waiting. Only the Accepted list waits for approval.
 
-Never edit a pstack-t3 skill through its installed link or under a checkout's generated `skills/` directory. Before approval, show its destination. A pstack-t3 skill's edit goes in `t3/overrides/<skill>/` or `t3/added/<skill>/` in a pstack-t3 checkout, then `python3 scripts/build.py`. A project or personal skill is edited in its own directory, `.agents/skills/<skill>/` in the project or `~/.config/pstack-t3/personal/<skill>/`. Never open a PR or push.
+Never edit a pstack-t3 skill through its installed link or under a checkout's generated `skills/` directory. Before approval, show its destination. Edit a pstack-t3 skill's source in a pstack-t3 checkout. Use `t3/runtime.md` for `pstack-runtime/SKILL.md` and `t3/setup.md` for `setup-pstack/SKILL.md`. Runtime scripts and personas use their corresponding sources in `t3/scripts/` and `t3/agents/`. Other skill files use `t3/overrides/<skill>/` or `t3/added/<skill>/`. Run `python3 scripts/build.py` afterwards. A project or personal skill is edited in its own directory, `.agents/skills/<skill>/` in the project or `~/.config/pstack-t3/personal/<skill>/`. Never open a PR or push.
 
 Follow each approved row's Routing exactly:
 
