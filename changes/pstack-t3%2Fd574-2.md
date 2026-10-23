@@ -1,2 +1,0 @@
-- kind polish
-- `tests/brigade/edits_code/test_injected_git.py` sets `HOME` and `GIT_CONFIG_GLOBAL` only in the subprocess environment
