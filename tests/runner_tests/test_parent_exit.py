@@ -94,7 +94,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(RUNNER), "-s", str(self.tests), "-j", "1"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 env=env, start_new_session=True)
-        self.addCleanup(lambda: self.end(proc.pid))
+        self.track(proc)
         worker = self.pid_from("worker")
         self.addCleanup(lambda: self.end(worker))
         os.kill(proc.pid, signal.SIGKILL)
@@ -123,7 +123,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(RUNNER), "-s", str(self.tests), "-j", "1"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 env=env, start_new_session=True)
-        self.addCleanup(lambda: self.end(proc.pid))
+        self.track(proc)
         worker = self.pid_from("worker")
         self.addCleanup(lambda: self.end(worker))
         os.kill(proc.pid, signal.SIGKILL)

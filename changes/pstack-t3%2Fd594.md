@@ -1,0 +1,6 @@
+- kind fix
+- `tests/runner_tests/support.py` records a process the test started by the start time `/proc` reports for it, and `RunnerCase.end` ends that process whatever its command line names
+- `tests/runner_tests/support.py` leaves a pid alone where `/proc` reports a start time other than the recorded one, so a pid the kernel reused is not signalled
+- `tests/runner_tests/support.py` records the runner `RunnerCase.start` returns, so cleanup ends a runner a failing test leaves running
+- `tests/runner_tests/test_parent_exit.py` records the runner each test starts with `RunnerCase.track`
+- `tests/runner_tests/test_cleanup.py` pins cleanup ending a worker that outlived its runner, and cleanup leaving a pid whose recorded start time differs

@@ -221,6 +221,14 @@ RELEASES_THE_PARENT = """
 INHERITED = "run_tests: this process had a child before the run, so the runner ends only the process groups of the children it starts"
 
 
+def start_time(pid):
+    """Return the start time /proc reports for pid, or None where no process has that pid."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
 def fence_git_environment():
     """Remove every GIT_* variable from os.environ and point GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM at the null device.
 
@@ -247,6 +255,7 @@ class RunnerCase:
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        self.starts = {}
         self.proj = Path(tmp.name).resolve() / "proj"
         self.tests = self.proj / "tests"
         self.tests.mkdir(parents=True)
@@ -261,6 +270,7 @@ class RunnerCase:
         proc = subprocess.Popen([sys.executable, *before, str(RUNNER), "-s", str(self.tests), "-j", "2", *args],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 env={**(env or os.environ), "TMPDIR": str(self.scratch)}, start_new_session=True)
+        self.track(proc)
         self.addCleanup(lambda: (proc.stdout.close(), proc.stderr.close()))
         return proc
 
@@ -283,21 +293,34 @@ class RunnerCase:
     def serial_count(self):
         return RAN.search(self.serial().stderr).group(1)
 
+    def track(self, proc):
+        """Record a process the test started with subprocess.Popen, so that cleanup ends it."""
+        self.remember(proc.pid)
+        self.addCleanup(self.end, proc.pid)
+
+    def remember(self, pid):
+        """Record the process at pid by the start time /proc reports for it, for end to check at cleanup."""
+        self.starts[pid] = start_time(pid)
+
     def end(self, pid):
+        """End the process the test recorded at pid. Leave the pid alone where /proc reports another start time, as it does after the kernel gives that pid to a new process."""
+        started = self.starts.get(pid)
+        if started is None or start_time(pid) != started:
+            return
         try:
-            if str(self.proj).encode() in Path(f"/proc/{pid}/cmdline").read_bytes():
-                os.kill(pid, signal.SIGKILL)
+            os.kill(pid, signal.SIGKILL)
         except OSError:
             pass
 
     def pid_from(self, name, limit=30):
-        """Return the pid code in the temporary project wrote with marks.mark. At cleanup, end that process where /proc shows the project path in its command line."""
+        """Return the pid code in the temporary project wrote with marks.mark. At cleanup, end that process."""
         path = self.proj / name
         deadline = time.monotonic() + limit
         while not path.exists():
             self.assertLess(time.monotonic(), deadline, f"{name} was not written")
             time.sleep(0.02)
         pid = int(path.read_text())
+        self.remember(pid)
         self.addCleanup(self.end, pid)
         return pid
 
