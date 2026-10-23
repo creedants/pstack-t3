@@ -1,0 +1,3 @@
+- kind fix
+- `tests/landing/slot/test_caps.py` in `test_an_exclusive_command_that_ignores_sigterm_is_killed_after_the_grace` raises the exclusive cap to 4 seconds and the timeout to 20 seconds
+- `tests/landing/slot/test_caps.py` in `test_an_exclusive_cap_kills_a_same_group_child_that_ignores_sigterm_after_the_leader_exits` raises the exclusive cap to 4 seconds and expects the 4s cap line
