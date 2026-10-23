@@ -140,6 +140,7 @@ REQUIRED_SCAN = _IDENTITY_REQUIRED_SCAN
 HOME_PATH = re.compile(r"/home/[A-Za-z0-9._-]+/")
 
 HOME_PATH_EXEMPT = frozenset({
+    "skills/statechart/scripts/test/statechart.test.mjs",
     "tests/activity_tests/test_filter.py",
     "tests/activity_tests/test_filter_paths.py",
     "tests/activity_tests/test_goal_strip.py",
