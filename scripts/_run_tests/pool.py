@@ -109,7 +109,7 @@ def make_scratch() -> Path:
             continue   # a name that is not run-tests-<pid>-<suffix> names no process this run can judge
         try:
             os.kill(int(parts[0]), 0)
-        except ProcessLookupError:
+        except (ProcessLookupError, OverflowError):
             shutil.rmtree(entry, ignore_errors=True)
         except OSError:
             continue   # this user may not signal that process, so the run leaves its directory

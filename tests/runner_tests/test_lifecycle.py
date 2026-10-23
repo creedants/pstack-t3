@@ -52,6 +52,14 @@ class LifecycleMixin:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(legacy.is_dir())
 
+    def test_a_run_removes_a_scratch_directory_whose_pid_field_is_above_a_signed_int(self):
+        self.write("test_good.py", GOOD)
+        stale = self.scratch / "run-tests-1099511627776-left"
+        stale.mkdir()
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(stale.exists())
+
     def test_a_run_inside_a_one_slot_lowers_8_jobs_to_4_and_says_so(self):
         self.five_modules()
         result = self.runner("-j", "8", env={**os.environ, "LAND_SLOT": "worker", "LAND_SLOT_FILES": "worker-1"})
