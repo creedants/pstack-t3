@@ -25,6 +25,7 @@ $B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibli
 $B ticket take                               # files every ticket a sibling handed to this restaurant
 $B ticket paths [--dry-run]                  # on each waiting ticket that records no paths, records the tracked paths its summary quotes in backticks
 $B ticket notes --paths a.py,b.py | --all   # prints the notes that name those paths, or every note
+$B ticket sweep --older-than <n> [--drop --confirm <digest> | --goal G<n> --confirm <digest>]   # lists waiting tickets filed more than <n> days ago that have no kind or no goal, with a count and a digest; with --drop drops them, and with --goal gives each ticket with no goal that goal
 $B startable                                 # the workers line, then a count line and each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file

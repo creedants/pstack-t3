@@ -85,7 +85,7 @@ brigade.py [flags] ticket <action>
 
 add, list, update, move, take, or record paths on tickets on the rail
 
-`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`, `notes`.
+`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`, `notes`, `sweep`.
 
 ## brigade.py ticket add
 
@@ -186,6 +186,23 @@ list the follow-ups the store noted instead of filing as tickets
 | `--all` |  |  |  | prints every note |
 
 Give exactly one of `--paths`, `--all`.
+
+## brigade.py ticket sweep
+
+```text
+brigade.py [flags] ticket sweep --older-than N [--drop | --goal G<n>] [--confirm DIGEST]
+```
+
+list waiting tickets filed more than N days ago that have no kind or no goal, or drop them or give them a goal with --confirm
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--older-than N` | yes |  |  | list tickets filed strictly more than this many days ago; takes 1 or more |
+| `--drop` |  |  |  | drop each listed ticket; needs the digest the list printed as --confirm |
+| `--goal G<n>` |  |  |  | give each listed ticket with no goal this open or paused goal; never overwrites a goal; needs the digest the list printed as --confirm |
+| `--confirm DIGEST` |  |  |  | the digest the list printed; needs --drop or --goal, and refuses a stale digest |
+
+Give at most one of `--drop`, `--goal`.
 
 ## brigade.py goal
 
