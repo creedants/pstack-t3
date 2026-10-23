@@ -366,7 +366,7 @@ def _marker_from(marker):
 
 
 def _marker_is_empty(marker):
-    """Whether the marker is an empty file a kill left between its claim and its first write."""
+    """Whether the marker is empty."""
     try:
         return marker.stat().st_size == 0
     except OSError:
