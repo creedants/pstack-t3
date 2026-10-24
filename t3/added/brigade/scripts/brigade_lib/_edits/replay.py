@@ -39,6 +39,8 @@ PATH_LINES = {
     (False, False): "FAIL {path}: differs from {sha} with the edits applied",
     (True, False): "FAIL {path}: differs from what the build writes",
 }
+# The line for the one added path a verify leaves out: this round's change-note fragment.
+SKIPPED_LINE = "skipped {path}: this round's change note"
 # The kind and the execute bit of each tree mode that edits verify compares by content.
 BLOB_MODES = {"100644": ("file", False), "100755": ("file", True), "120000": ("link", False)}
 
@@ -233,10 +235,19 @@ def compared_paths(project_root, before, after, extracted, edited, built):
                   or extracted.get(path) != edited.get(path) or edited.get(path) != built.get(path))
 
 
-def path_lines(paths, edited, built, head, sha):
-    """One PATH_LINES line per path, and whether the scratch copy and the head agree at every path."""
-    agree = [built.get(path) == head.get(path) for path in paths]
-    lines = [PATH_LINES[edited.get(path) != built.get(path), same].format(path=path, sha=sha) for path, same in zip(paths, agree)]
+def path_lines(paths, edited, built, head, sha, skipped=""):
+    """One line per path, and whether the scratch copy and the head agree at every compared path.
+
+    The skipped path prints SKIPPED_LINE instead of its PATH_LINES line, and it decides nothing.
+    """
+    agree, lines = [], []
+    for path in paths:
+        if path == skipped:
+            lines.append(SKIPPED_LINE.format(path=path))
+            continue
+        same = built.get(path) == head.get(path)
+        agree.append(same)
+        lines.append(PATH_LINES[edited.get(path) != built.get(path), same].format(path=path, sha=sha))
     return lines, all(agree)
 
 
@@ -300,9 +311,11 @@ def exit_code(scratch, command):
     return result.returncode
 
 
-def replay(project_root, reviewed, before, after, edits, build, check, sha):
+def replay(project_root, reviewed, before, after, edits, build, check, sha, skip=""):
     """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output.
 
+    A path named by skip is left out of the comparison when the reviewed commit holds no entry at it and the new head
+    does, and it prints SKIPPED_LINE instead.
     Raises BrigadeError when the applied change counts more than SMALL_FIX_LINES lines.
     """
     with seam.tempfile.TemporaryDirectory() as directory:
@@ -330,7 +343,8 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha):
         built = digests(scratch)
         paths = compared_paths(project_root, before, after, extracted, edited, built)
         head = {path: head_digest(project_root, after[path]) for path in paths if path in after}
-        lines, clean = path_lines(paths, edited, built, head, sha)
+        lines, clean = path_lines(paths, edited, built, head, sha,
+                                  skip if skip and skip not in before and skip in after else "")
         if clean and check != NO_COMMAND:
             code = exit_code(scratch, check)
             lines.append(f"FAIL check: {check} exited {code}" if code else "ok check")

@@ -6,6 +6,7 @@ from brigade_lib._affected.report import contract_check, records_check
 from brigade_lib._reviews.rounds import item_verdicts, roles_family, round_debt
 from brigade_lib._reviews.threads import report_threads, report_threads_refusal, write_threads
 from brigade_lib.edits import NEEDS_COMMANDS, commit_tree, replay, report_edits
+from brigade_lib.leases import fragment_for
 from brigade_lib.reports import NOT_A_REPORT, REVIEW_FILE, in_reports, report_stat
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import EDITS_VERDICT, REASON_VERDICTS, VERDICTS
@@ -131,7 +132,7 @@ def verify_edits(restaurant, dish_id, from_sha, to_sha):
     contract = contract_check(restaurant.meta.get("projectRoot") or "")
     with restaurant.checked():
         restaurant.fence()
-        restaurant.find("dishes.tsv", dish_id)
+        _, dish = restaurant.find("dishes.tsv", dish_id)
         rounds = [row for row in item_verdicts(restaurant.rows("pass.tsv"), dish_id)
                   if row["verdict"] == EDITS_VERDICT and row["sha"] == from_sha]
         if not rounds:
@@ -148,7 +149,8 @@ def verify_edits(restaurant, dish_id, from_sha, to_sha):
         raise BrigadeError(f"reports/{name} {NOT_A_REPORT[kind]}; nothing verified")
     edits = report_edits(restaurant, name)
     (reviewed, before), (_, after) = (commit_tree(meta["projectRoot"], sha) for sha in (from_sha, to_sha))
-    lines, verified = replay(meta["projectRoot"], reviewed, before, after, edits, build, check, from_sha)
+    lines, verified = replay(meta["projectRoot"], reviewed, before, after, edits, build, check, from_sha,
+                             fragment_for(meta, dish["branch"]))
     for line in lines:
         print(line)
     if not verified:
