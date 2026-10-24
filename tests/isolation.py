@@ -3,7 +3,7 @@
 Importing this module only registers it as `pstack_test_isolation` in `sys.modules`. `install()` is
 the one entry. Without the pointer it makes a run root, marks it, and points HOME, the five XDG
 variables, and TMPDIR into it. With the pointer it adopts the run root the pointer names, after
-proving that a live run of this user marked it with the token in the environment and that every
+checking marker metadata against the environment token and checking that every
 variable resolves inside it. Every install, the first and each repeat, rereads the environment and
 raises SystemExit on the first value that escapes, so an install that finds a variable outside the
 run root stops the process instead of letting it use a real path.
@@ -132,8 +132,8 @@ def _original_roots(environ) -> tuple[str, ...]:
 def remember_originals() -> tuple[str, ...]:
     """Record the protected real roots this process starts with in ORIGINALS, and return them.
 
-    A runner calls this once, before it rewrites the environment of each child, so the child protects
-    the caller's original home directories as well as its own run root.
+    A runner calls this before rewriting child environments. Propagation requires unchanged
+    ORIGINALS and paths without colons. An empty worker_env input can also drop original roots.
     """
     pointer = os.environ.get(POINTER, "")
     roots = _real_roots(_real(pointer) if os.path.isabs(pointer) else None, os.environ)
@@ -185,7 +185,7 @@ def _handout(path) -> str:
     """Return the real path a guarded process may write a marker or a hand-built home into.
 
     An unarmed process may write anywhere. An armed one may write inside its run root, or into a
-    directory it allocated here. Any other directory is one this process did not make, so a child
+    directory it allocated here. Any other directory lacks an allocation record here, so a child
     handed it could delete data this run never made.
     """
     real = _real(path)
@@ -193,7 +193,7 @@ def _handout(path) -> str:
         return real
     raise PermissionError(
         f"the test isolation guard refuses {real!r} because it is outside the run root {_root!r} "
-        "and this process did not create it"
+        "and allocate() has no record of it"
     )
 
 
@@ -219,7 +219,7 @@ def worker_env(env: dict[str, str], home) -> dict[str, str]:
     environ.update(values)
     environ[POINTER] = active
     environ[TOKEN] = mark(active)
-    # The child protects the caller's roots outside its own home, so a hand-built environment carries them too.
+    # Carry roots present in env. An empty or altered env can drop the caller's original external XDG roots.
     environ[ORIGINALS] = os.pathsep.join(_real_roots(active, env))
     return environ
 
@@ -257,7 +257,7 @@ def install() -> Path:
         sys.pycache_prefix = os.path.join(active, "pycache")
     _root = active
     _protected = tuple(dict.fromkeys(_protected + protected))
-    # A subprocess of a test inherits these, so a nested runner keeps protecting the originals.
+    # Serialize roots for children. Propagation depends on preserving this variable and colon-free paths.
     os.environ[ORIGINALS] = os.pathsep.join(_protected)
     _arm()
     _check(active)
@@ -270,7 +270,7 @@ def _fail(problem: str) -> SystemExit:
 
 
 def _adopt(environ, protected: tuple[str, ...]) -> str:
-    """Return the real run root environ's pointer names, or raise SystemExit unless this user's live run marked
+    """Return the pointer's real root, or raise SystemExit unless a marker claims this user's live run marked
     it with environ's token, it sits outside every protected real root, and every isolated variable resolves inside it."""
     pointer = environ.get(POINTER, "")
     if not pointer or not os.path.isabs(pointer):
@@ -296,7 +296,7 @@ def _adopt(environ, protected: tuple[str, ...]) -> str:
 
 
 def _verify_marker(active: str, token: str) -> None:
-    """Raise SystemExit unless active holds this user's marker, with token, written by a process that is still alive."""
+    """Check the marker owner, UID, live PID, token, device, and inode. Forged fields can pass these checks."""
     path = os.path.join(active, MARKER)
     try:
         info = os.lstat(path)
@@ -315,7 +315,7 @@ def _verify_marker(active: str, token: str) -> None:
     except OSError:
         raise _fail(f"the run root {active!r} has no marker {MARKER} to compare") from None
     if (device, inode) != (current.st_dev, current.st_ino):
-        raise _fail(f"the marker of {active!r} was written for another directory")
+        raise _fail(f"the marker of {active!r} records a different device or inode")
     if not token or written != token:
         raise _fail(f"the marker of {active!r} does not hold the token in {TOKEN}")
     if not isinstance(pid, int) or pid <= 0:
