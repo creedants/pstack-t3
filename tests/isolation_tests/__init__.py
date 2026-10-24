@@ -3,7 +3,7 @@ from tests import isolation
 
 isolation.install()
 
-MODULES = ("test_environment", "test_home_isolation", "test_launch", "test_static_activation")
+MODULES = ("test_adoption", "test_environment", "test_home_isolation", "test_launch", "test_static_activation")
 
 
 def load_tests(loader, tests, pattern):
