@@ -351,7 +351,7 @@ class AdoptionTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.split(), ["BODY", "RAN", os.path.realpath(root)])
 
-    def test_a_guarded_process_refuses_to_mark_or_hand_out_a_directory_that_predates_the_run(self):
+    def test_a_guarded_process_refuses_to_mark_or_hand_out_a_directory_it_did_not_allocate(self):
         target = outside()
         kept = target / "old-data" / "kept"
         kept.parent.mkdir(exist_ok=True)
