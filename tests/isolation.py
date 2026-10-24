@@ -172,10 +172,9 @@ def layout(root) -> dict[str, str]:
 
 
 def allocate(base=None) -> Path:
-    """Make a directory this process owns, under base or beside the run root, and return it.
-
-    A guarded process hands out only a directory it created, so every path made here is recorded.
-    """
+    """Make a directory this process owns, under base or in a temporary directory outside every protected
+    root, and return it. A guarded process hands out only a directory it created, so every path made
+    here is recorded."""
     parent = _real(base) if base is not None else _base(_protected)
     created = _real(tempfile.mkdtemp(prefix="pstack-tests-", dir=parent))
     _created.add(created)
@@ -421,7 +420,7 @@ def _open(path, flags, mode=0o777, *, dir_fd=None):
 
 
 def _mkfifo(path, mode=0o666, *, dir_fd=None):
-    """os.mkfifo, refusing an entry outside the run root or inside a protected root.
+    """os.mkfifo, refusing an entry inside a protected real root outside the checkout.
 
     CPython raises no audit event for this call, so the guard wraps it as it wraps os.open.
     """
@@ -430,7 +429,7 @@ def _mkfifo(path, mode=0o666, *, dir_fd=None):
 
 
 def _mknod(path, mode=0o600, device=0, *, dir_fd=None):
-    """os.mknod, refusing an entry outside the run root or inside a protected root."""
+    """os.mknod, refusing an entry inside a protected real root outside the checkout."""
     _deny_write("os.mknod", path, dir_fd, _entry)
     return _os_mknod(path, mode, device, dir_fd=dir_fd)
 
