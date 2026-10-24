@@ -21,6 +21,9 @@ OTHER_NOTE = "- kind fix\n- a note for another branch\n"
 OLD_NOTE = "- kind fix\n- the note the reviewed commit holds\n"
 OLD_FRAGMENT = "changes/pstack-t3%2Fd0.md"
 REWORDED_NOTE = "- kind fix\n- the note the fix round reworded\n"
+BUILD_CONFIG = "changes/build-config.json"
+CONFIG_TRUE = '{"enabled": true}'
+CONFIG_FALSE = '{"enabled": false}'
 
 
 def block(number, path, old, new):
@@ -147,6 +150,23 @@ class EditsRoundChangeNoteTest(BrigadeTest):
         head = self.applied_head()
         self.assertEqual(self.edge(reviewed, head),
                          (1, ["FAIL notes/round.md: differs from " + f"{reviewed} with the edits applied",
+                              "built out/greeting.txt",
+                              "edited src/greeting.txt"],
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_a_deleted_build_config_does_not_stand_in_for_the_new_change_note(self):
+        reviewed = self.edits_store(**{BUILD_CONFIG: CONFIG_TRUE})
+        self.brigade("set", "--change-note-dir", "changes")
+        self.brigade("dish", "D1", "--branch", BRANCH)
+        self.review_file("D1-review-1.md", report(block("1", BUILD_CONFIG, CONFIG_TRUE, CONFIG_FALSE),
+                                                  block("2", "src/greeting.txt", "helo", "hello")))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        (self.project / BUILD_CONFIG).unlink()
+        head = self.applied_head(**{FRAGMENT: CONFIG_FALSE})
+        self.assertEqual(self.edge(reviewed, head),
+                         (1, [f"FAIL {BUILD_CONFIG}: differs from {reviewed} with the edits applied",
+                              f"skipped {FRAGMENT}: this round's change note",
                               "built out/greeting.txt",
                               "edited src/greeting.txt"],
                           self.not_verified(reviewed, head)))
