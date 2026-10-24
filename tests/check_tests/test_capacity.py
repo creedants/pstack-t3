@@ -53,6 +53,7 @@ class BuildProcessCounterTest(unittest.TestCase):
             self.assertFalse(measure_capacity.is_build(args), args)
 
 
+
 class SamplerOutputTest(unittest.TestCase):
     def test_a_sampler_stopped_early_keeps_the_rows_it_printed(self):
         with tempfile.TemporaryDirectory() as directory:

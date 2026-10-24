@@ -73,6 +73,7 @@ class LinkCheckTest(unittest.TestCase):
         )
 
 
+
 class FragmentCheckTest(unittest.TestCase):
     def test_a_fragment_link_to_a_missing_skill_heading_is_reported(self):
         self.assertEqual(

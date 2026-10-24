@@ -150,6 +150,7 @@ class BadgeCheckTest(unittest.TestCase):
             self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
+
 class SkillCountCheckTest(unittest.TestCase):
     def _tree(self, guide, skills=(), readme=None):
         temporary = tempfile.TemporaryDirectory()
@@ -264,6 +265,7 @@ class SkillCountCheckTest(unittest.TestCase):
         with mock.patch.object(check, "TESTS_DIR", tests), contextlib.redirect_stdout(output):
             status = check.main([str(root)])
         self.assertEqual((status, output.getvalue()), (0, "ok\n"))
+
 
 
 class MinimumT3CodeVersionCheckTest(unittest.TestCase):

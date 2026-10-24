@@ -75,6 +75,7 @@ class LightTableExemptionTest(unittest.TestCase):
             )
 
 
+
 class PlaybookBulletCheckTest(unittest.TestCase):
     def test_a_demo_skill_has_no_playbook_finding(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -117,6 +118,7 @@ class PlaybookBulletCheckTest(unittest.TestCase):
             self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
+
 class FrontmatterWithoutPyYamlTest(unittest.TestCase):
     def test_without_pyyaml_a_malformed_flow_sequence_is_not_reported(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -125,6 +127,7 @@ class FrontmatterWithoutPyYamlTest(unittest.TestCase):
             (skill / "SKILL.md").write_text("---\nname: demo\ndescription: [unterminated\n---\n\nbody\n")
             with mock.patch.object(check, "yaml", None):
                 self.assertEqual(check.check_tree(directory), [])
+
 
 
 class RenderedTreeCheckTest(unittest.TestCase):
@@ -202,6 +205,7 @@ class RenderedTreeCheckTest(unittest.TestCase):
             check.check_tree(root),
             ["demo/SKILL.md: missing frontmatter"],
         )
+
 
 
 class EffortSpeedTest(unittest.TestCase):
