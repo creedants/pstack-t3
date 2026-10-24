@@ -11,7 +11,10 @@ run root stops the process instead of letting it use a real path.
 The guard is one audit hook, wrappers around os.open, os.mkfifo, os.mknod, os.chown, and os.lchown,
 and a replacement os.environ.clear. Its filesystem path checks resolve symlinks in the directory
 part first. A checked delete or rename acts on a final symlink name itself. Checked deletes, rename
-sources, and replaced rename destinations must sit inside the run root. The write handlers check
+sources, and replaced rename destinations must sit inside the run root. A descriptor's path comes from
+/proc/self/fd, then from macOS F_GETPATH checked by device and inode. A delete through a directory
+descriptor whose path cannot be read needs a bounded identity walk that proves the directory is the run
+root. The write handlers check
 protected real roots outside the checkout. SQLite ATTACH remains unguarded. Removing a guarded
 variable or setting one to an empty value is refused. Guarded path variables reject relative or
 protected paths. The token and root record have their own assignment rules. os.environ.clear()
@@ -58,7 +61,7 @@ _sibling("pstack_test_isolation_paths", "isolation_paths.py")
 # MARKER stays exported because the adoption tests read isolation.MARKER to reach a run root's marker file.
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
-    _entry, _fail, _fd_target, _probe, _real, _real_roots, _refuse, _within,
+    _entry, _fail, _fd_target, _owned_leaf, _probe, _real, _real_roots, _refuse, _within,
     _write_intent, encode_roots, layout, parse_roots, write_marker,
 )
 
@@ -306,10 +309,16 @@ def _clear_environ() -> None:
 def _deny_delete(event: str, path, dir_fd) -> None:
     target = _at(path, dir_fd)
     if target is None:
+        if _owned_leaf(path, dir_fd, _root, _protected, _dir_open):
+            return
         raise _refuse(event, "delete", path, "because its directory descriptor cannot be resolved")
     entry = _entry(target)
     if not _owned(entry):
         raise _refuse(event, "delete", entry, f"outside the run root {_root!r} or inside a protected root")
+
+
+def _dir_open(name: str, dir_fd: int) -> int:
+    return _os_open(name, os.O_RDONLY, dir_fd=dir_fd)
 
 
 def _deny_write(event: str, path, dir_fd, resolve) -> None:

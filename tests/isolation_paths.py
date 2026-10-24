@@ -1,10 +1,18 @@
 """Path rules, protected real roots, and run-root admission for the test isolation guard.
 
 `tests/isolation.py` imports from here and holds the guard state, the audit hook, the wrappers, and `install()`.
+
+A descriptor's path comes from `/proc/self/fd` where that exists, and otherwise from the macOS `fcntl`
+`F_GETPATH`, accepted only when a stat of the path names the same device and inode as the descriptor. A
+delete through a directory descriptor whose path cannot be read is judged by a bounded identity walk
+instead: the directory is duplicated, `..` is followed up to a cap, and the delete passes only when a
+level is the run root's device and inode, the entry is one ordinary name, and no protected root touches
+the run root. Nothing here guesses a path or trusts a string for that proof.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import pwd
@@ -282,13 +290,102 @@ def _probe(active: str) -> None:
     raise _fail(f"the guard let os.rmdir({target!r}) remove a directory outside the run root")
 
 
+_FD_DIR = "/proc/self/fd/%d"
+_PATH_LIMIT = 1024
+_WALK_LIMIT = 256
+
+
+def _fd_path(fd: int) -> str | None:
+    """Return the path fd names, or None when neither /proc nor macOS F_GETPATH proves one.
+
+    /proc/self/fd answers first and its answer is returned as it stands, because a descriptor for a
+    socket or pipe answers with text that is not a path and callers already tell those apart. macOS has
+    no /proc, so the path there comes from `fcntl` `F_GETPATH`, which fills a NUL-padded buffer. That
+    buffer is trusted only when the path in it is absolute and `os.stat` of the path names the same
+    device and inode as `os.fstat(fd)`, so an alias or a stale answer is not adopted. None means the
+    caller must refuse the call.
+    """
+    try:
+        return os.readlink(_FD_DIR % fd)
+    except OSError:
+        pass
+    getpath = getattr(fcntl, "F_GETPATH", None)
+    if getpath is None:
+        return None
+    try:
+        raw = fcntl.fcntl(fd, getpath, b"\0" * _PATH_LIMIT)
+    except (OSError, ValueError):
+        return None
+    path = os.fsdecode(raw.split(b"\0", 1)[0]) if isinstance(raw, bytes) else ""
+    if not path or not os.path.isabs(path):
+        return None
+    try:
+        info = os.stat(path)
+        same = (info.st_dev, info.st_ino) == (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+    except OSError:
+        return None
+    return path if same else None
+
+
+def _owned_leaf(path, dir_fd, root, protected, parent_of) -> bool:
+    """Return whether path is one ordinary entry of the directory dir_fd names, inside root and outside every protected root.
+
+    The proof is identity, never a path string. Duplicate dir_fd, walk up with `..` through parent_of at
+    most _WALK_LIMIT levels, and accept only when a level's device and inode are the run root's. True
+    therefore means one ordinary entry that cannot escape either boundary, because the name it deletes
+    resolves inside a directory the walk proved is the run root, and no protected root overlaps that
+    root. Everything else is False, including a name that is empty, absolute, `.`, `..`, or compound, a
+    descriptor that is not a directory, a protected root that touches the run root either way, a walk
+    that reaches the filesystem root, and every OSError. A descriptor the caller holds is never closed.
+    """
+    if root is None or not isinstance(dir_fd, int) or dir_fd < 0:
+        return False
+    try:
+        name = os.fsdecode(os.fspath(path))
+    except TypeError:
+        return False
+    if name in ("", ".", "..") or os.path.isabs(name) or "\0" in name or os.sep in name or "/" in name:
+        return False
+    for base in protected:
+        if _within(root, base) or _within(base, root):
+            return False
+    try:
+        want = os.stat(root)
+    except OSError:
+        return False
+    opened: list[int] = []
+    try:
+        current = parent_of(".", dir_fd)
+        opened.append(current)
+        if not stat.S_ISDIR(os.fstat(current).st_mode):
+            return False
+        for _ in range(_WALK_LIMIT):
+            info = os.fstat(current)
+            if (info.st_dev, info.st_ino) == (want.st_dev, want.st_ino):
+                return True
+            above = parent_of("..", current)
+            opened.append(above)
+            up = os.fstat(above)
+            if (up.st_dev, up.st_ino) == (info.st_dev, info.st_ino):
+                return False
+            current = above
+        return False
+    except OSError:
+        return False
+    finally:
+        for fd in opened:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def _at(path, dir_fd) -> str | None:
     """Return the path a call acts on, joined to the directory dir_fd names when it is relative, or None when dir_fd cannot be read."""
     text = os.fsdecode(os.fspath(path))
     if isinstance(dir_fd, int) and dir_fd >= 0 and not os.path.isabs(text):
-        try:
-            anchor = os.readlink(f"/proc/self/fd/{dir_fd}")
-        except OSError:
+        anchor = _fd_path(dir_fd)
+        if anchor is None:
             return None
         text = os.path.join(anchor, text)
     return text
@@ -296,9 +393,8 @@ def _at(path, dir_fd) -> str | None:
 
 def _fd_target(fd: int) -> str | None:
     """Return the path an open descriptor names, "" when it names no filesystem path, or None when it cannot be read."""
-    try:
-        target = os.readlink(f"/proc/self/fd/{fd}")
-    except OSError:
+    target = _fd_path(fd)
+    if target is None:
         return None
     return target if os.path.isabs(target) else ""
 
