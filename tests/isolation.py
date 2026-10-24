@@ -14,7 +14,7 @@ part first. A checked delete or rename acts on a final symlink name itself. Chec
 sources, and replaced rename destinations must sit inside the run root. A descriptor's path comes from
 /proc/self/fd, then from macOS F_GETPATH checked by device and inode. A delete through a directory
 descriptor whose path cannot be read needs a bounded identity walk that proves the directory is the run
-root. The write handlers check
+root or below it. The write handlers check
 protected real roots outside the checkout. SQLite ATTACH remains unguarded. Removing a guarded
 variable or setting one to an empty value is refused. Guarded path variables reject relative or
 protected paths. The token and root record have their own assignment rules. os.environ.clear()

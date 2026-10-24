@@ -302,8 +302,9 @@ def _fd_path(fd: int) -> str | None:
     socket or pipe answers with text that is not a path and callers already tell those apart. macOS has
     no /proc, so the path there comes from `fcntl` `F_GETPATH`, which fills a NUL-padded buffer. That
     buffer is trusted only when the path in it is absolute and `os.stat` of the path names the same
-    device and inode as `os.fstat(fd)`, so an alias or a stale answer is not adopted. None means the
-    caller must refuse the call.
+    device and inode as `os.fstat(fd)`, so an alias or a stale answer is not adopted. None means no
+    path could be read; a caller may still judge the call another way, and none of them treats an
+    unknown descriptor as safe.
     """
     try:
         return os.readlink(_FD_DIR % fd)
@@ -333,8 +334,9 @@ def _owned_leaf(path, dir_fd, root, protected, parent_of) -> bool:
     The proof is identity, never a path string. Duplicate dir_fd, walk up with `..` through parent_of at
     most _WALK_LIMIT levels, and accept only when a level's device and inode are the run root's. True
     therefore means one ordinary entry that cannot escape either boundary, because the name it deletes
-    resolves inside a directory the walk proved is the run root, and no protected root overlaps that
-    root. Everything else is False, including a name that is empty, absolute, `.`, `..`, or compound, a
+    resolves inside a directory the walk proved is the run root or below it, and no protected root
+    overlaps that root. Everything else is False, including a name that is empty, absolute, `.`, `..`,
+    or compound, a
     descriptor that is not a directory, a protected root that touches the run root either way, a walk
     that reaches the filesystem root, and every OSError. A descriptor the caller holds is never closed.
     """
