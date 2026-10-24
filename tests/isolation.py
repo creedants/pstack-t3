@@ -20,9 +20,10 @@ keeps the guarded variables.
 PSTACK_TEST_PROTECTED_ROOTS carries a JSON array of absolute paths. This process keeps its trusted
 roots in memory, and a run root's marker carries the roots of the process that marked it, so a child
 that adopts the root protects them whatever record its environment holds. Assignments cannot drop
-those roots, and os.environ.clear() keeps the record. A malformed inherited record or marker stops
-the process. A malformed assignment is refused. os.chown with follow_symlinks False and os.lchown
-are wrapped, because the os.chown audit event carries no follow_symlinks field, so a protected link
+those roots, and os.environ.clear() keeps the record. A malformed inherited root record stops the
+process. A marker with the inherited token and missing or malformed roots also stops the process.
+A malformed assignment is refused. os.chown with follow_symlinks False and os.lchown are wrapped,
+because the os.chown audit event carries no follow_symlinks field, so a protected link
 name whose target is outside protection stays refused.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
