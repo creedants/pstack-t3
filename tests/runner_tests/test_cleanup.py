@@ -1,5 +1,17 @@
 """Cleanup ends a process a runner test recorded, through the pidfd it took while that process ran, whatever its command line names. Each case here reads /proc, so it runs on Linux only."""
 
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 import os
 import select
 import subprocess

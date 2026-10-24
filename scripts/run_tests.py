@@ -90,9 +90,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Loaded by path, not as tests.isolation. A `tests` package on sys.path or in sys.modules shadows a
 # fixture tree that imports its own top-level tests package, which is a shape the runner must support.
-_loader = spec_from_file_location("pstack_test_isolation", ROOT / "tests" / "isolation.py")
-isolation = module_from_spec(_loader)
-_loader.loader.exec_module(isolation)
+# Registered before it runs, so a later import of tests.isolation gets this copy and the process holds one guard.
+isolation = sys.modules.get("pstack_test_isolation")
+if isolation is None:
+    _loader = spec_from_file_location("pstack_test_isolation", ROOT / "tests" / "isolation.py")
+    isolation = module_from_spec(_loader)
+    sys.modules["pstack_test_isolation"] = isolation
+    _loader.loader.exec_module(isolation)
 
 _original_child_env = processes.child_env
 
@@ -109,9 +113,22 @@ def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = N
     return _pool_run(start, jobs, timeout, part, _list_tests=list_tests, _run_pool=run_pool, _Watch=Watch)
 
 
+def _child(argv: list[str]) -> bool:
+    """Return whether argv starts the listing child or a worker, counting each abbreviation argparse accepts."""
+    for arg in argv:
+        name = arg.split("=", 1)[0]
+        if len(name) > 2 and ("--list".startswith(name) or "--worker".startswith(name)):
+            return True
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     from _run_tests import main as _pkg_main
 
+    if _child(sys.argv[1:] if argv is None else argv):
+        # The listing child and every worker import test modules, so each installs and verifies the guard
+        # before discovery. A failed install raises SystemExit, which exits nonzero.
+        isolation.install()
     return _pkg_main(argv, __doc__)
 
 

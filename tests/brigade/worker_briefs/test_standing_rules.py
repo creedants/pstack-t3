@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 from ..support import (
     Path,
     ROOT,
@@ -54,8 +66,8 @@ class StandingRulesMixin:
 
     def test_the_standing_rules_paste_the_scratch_rule_only_when_the_store_records_a_parent(self):
         self.coordinator()
-        # The checkout root is outside /tmp, and this test never creates or writes it.
-        parent = str(ROOT)
+        # A system directory outside /tmp wherever the checkout is. This test never creates or writes it.
+        parent = str(Path("/usr").resolve())
         self.brigade("set", "--scratch-dir", parent)
         text = self.brigade(*self.BRIEF)
         self.assertIn(
@@ -167,8 +179,8 @@ class StandingRulesMixin:
 
     def test_a_scratch_path_prefix_does_not_drop_the_scratch_rule(self):
         self.coordinator()
-        # The checkout root is outside /tmp, and this test never creates or writes it.
-        parent = str(ROOT)
+        # A system directory outside /tmp wherever the checkout is. This test never creates or writes it.
+        parent = str(Path("/usr").resolve())
         self.brigade("set", "--scratch-dir", parent)
         text = self.brigade(*self.BRIEF, "--context", f"`mktemp -d -p {parent}-old`")
         self.assertIn(

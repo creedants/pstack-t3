@@ -16,6 +16,8 @@ import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from tests import isolation
+
 __all__ = ["Reason", "Invocation", "invoke", "finished", "spawn"]
 
 _MISSING = object()
@@ -426,13 +428,18 @@ def invoke(invocation):
     """Execute invocation.program as __main__.
 
     Reads PSTACK_TEST_REAL_PROCESS from the process environment before applying invocation.env.
-    The value 1 starts a real interpreter on that same file. Any other value runs the file here.
+    The value 1 starts a real interpreter on that same file. Any other value runs the file here,
+    unless the isolation guard would refuse invocation.env in this process.
     A re-entrant call during that in-process run raises RuntimeError.
     """
     global _depth
     if _depth:
         raise RuntimeError("invoke cannot re-enter")
     if os.environ.get("PSTACK_TEST_REAL_PROCESS") == "1":
+        return _run_real(invocation, timeout=None)
+    if invocation.env is not None and not isolation.admits(invocation.env):
+        # The guard keeps every guarded name in this process, so an environment that drops one or
+        # gives it a refused value runs in a real interpreter, which takes it as given.
         return _run_real(invocation, timeout=None)
     _depth += 1
     try:

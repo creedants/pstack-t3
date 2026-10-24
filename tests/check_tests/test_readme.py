@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 import contextlib
 import io
 import json
@@ -138,7 +150,6 @@ class BadgeCheckTest(unittest.TestCase):
             self.assertEqual((status, output.getvalue()), (0, "ok\n"))
 
 
-
 class SkillCountCheckTest(unittest.TestCase):
     def _tree(self, guide, skills=(), readme=None):
         temporary = tempfile.TemporaryDirectory()
@@ -253,7 +264,6 @@ class SkillCountCheckTest(unittest.TestCase):
         with mock.patch.object(check, "TESTS_DIR", tests), contextlib.redirect_stdout(output):
             status = check.main([str(root)])
         self.assertEqual((status, output.getvalue()), (0, "ok\n"))
-
 
 
 class MinimumT3CodeVersionCheckTest(unittest.TestCase):

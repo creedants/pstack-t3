@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 from ..support import setUpModule
 from ..support import BrigadeTest, CLAUDE, CODEX, Path, ProcessReason, SCRIPT, call, call_in_process, real_process, run_globals, _ReportingRace, _owner_words, _shown_root, datetime, io, json, mock, os, runpy, subprocess, sys, timezone
 import shlex
