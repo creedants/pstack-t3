@@ -1,0 +1,5 @@
+- kind fix
+- A test process points HOME, XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME, XDG_RUNTIME_DIR, and TMPDIR at one temporary run root, and activation failure stops the process instead of keeping a real path
+- One audit hook refuses a delete outside the run root, a write inside the user's real home outside this checkout, and a HOME or XDG assignment that names the real home
+- `scripts/run_tests.py` gives each listing child and worker a home and five XDG directories inside its shard, including a start directory whose modules install nothing
+- `python3 -m unittest discover` from the repository root finds the suite, and every area package and top-level test module activates isolation before its first project import

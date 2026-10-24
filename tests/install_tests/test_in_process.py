@@ -1,5 +1,17 @@
 """In-process restore behavior."""
 
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 import ctypes
 import errno
 import os
@@ -45,10 +57,22 @@ class InProcessRestoreTest(unittest.TestCase):
         wrapper, home = fresh_home()
         self.addCleanup(wrapper.cleanup)
         checkout = make_checkout(home, "a")
-        installed = run(home, checkout, "--harness", "grok")
+        env = {"XDG_CONFIG_HOME": str(home / ".config")}
+        previous = os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+
+        def restore():
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+
+        self.addCleanup(restore)
+        before = in_process.runs_here()
+        installed = run(home, checkout, "--harness", "grok", env=env)
         self.assertEqual(installed.returncode, 0, installed.stderr)
         swarm = provider_link(home, "grok", "swarm")
-        raced = uninstall_hooked(home, checkout, put_back_race(swarm, "link", link_error=True, rename="libc"))
+        raced = uninstall_hooked(home, checkout, put_back_race(swarm, "link", link_error=True, rename="libc"), env=env)
         self.assertEqual(raced.returncode, 3, raced.stderr + raced.stdout)
         self.assertEqual(noreplace_result(home), errno.ENOSYS)
         self.assertIs(ctypes.CDLL, saved)
+        self.assertEqual(in_process.runs_here() - before, 2)

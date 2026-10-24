@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 import json
 import os
 import tempfile
@@ -5,7 +17,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from tests import test_activity
+import tests.test_activity as test_activity
 from tests.activity_tests.browser import PINNED, RENDER_TIMEOUT, TITLE, confined_run, select_browser
 from tests.activity_tests.pages import CLEAN, DATA, PROGRAM, data_of, group, item, page, row
 from tests.activity_tests.support import Fixture, worker

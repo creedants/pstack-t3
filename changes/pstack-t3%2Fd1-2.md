@@ -1,0 +1,9 @@
+- kind fix
+- `scripts/run_tests.py` installs and verifies the guard in the listing child and in every worker before discovery, and `tests/__init__.py` and every `tests/**/test_*.py` install it before the module's other imports, after `__future__`, the guard module, and the direct-run branch's `sys` and `pathlib` imports, so runner discovery, `python3 -m unittest discover`, a named module, and a direct file run all start guarded
+- Every guard check resolves symlinks in the directory part of a path first, so a path through a symlink out of the run root counts as outside it, a delete or rename of a final symlink acts on the link, and an adopted root that resolves into a protected root stops the process
+- The guard refuses a write through `os.open` with `dir_fd`, `os.chmod`, `os.utime`, and `sqlite3.connect` inside a protected root outside the checkout
+- A rename or move treats its source and any destination it replaces as deletes, so it cannot remove a path outside the run root, the checkout included
+- Removing HOME, an XDG home variable, XDG_RUNTIME_DIR, TMPDIR, the pointer, or the token is refused, as is setting one to an empty value. Setting any of them but the token to a relative or protected value is refused. A repeat `install()` verifies the environment again
+- A child adopts a run root only when the root holds a marker from a live process of the same user with the token in its environment, and HOME, every XDG home variable, and TMPDIR resolve inside it
+- Once install has run, a guarded process writes its bytecode under the run root, so the refused rename in the checkout leaves no temporary bytecode file there
+- An in-process program run whose environment drops a guarded name or gives it a refused value starts a real interpreter instead

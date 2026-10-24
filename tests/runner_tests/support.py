@@ -48,6 +48,7 @@ MARKS = """
     import os
     import subprocess
     import sys
+    import tempfile
     import time
     from pathlib import Path
 
@@ -99,9 +100,13 @@ MARKS = """
         return reported(name)
 
     def mark(name, report):
-        '''Write the report a test gives for name. A report is a pid with the start time /proc reported for the process it names. A report that holds only a pid leaves the mark without a start time, and cleanup records nothing from it.'''
-        (PROJECT / (name + ".tmp")).write_text(str(report))
-        os.replace(PROJECT / (name + ".tmp"), PROJECT / name)
+        '''Write the report a test gives for name. A report is a pid with the start time /proc reported for the process it names. A report that holds only a pid leaves the mark without a start time, and cleanup records nothing from it.
+
+        The report is staged under this process's TMPDIR, inside its run root, because the guard refuses a rename whose source is outside it.'''
+        handle, staged = tempfile.mkstemp(prefix=name + ".")
+        with os.fdopen(handle, "w") as staging:
+            staging.write(str(report))
+        os.replace(staged, PROJECT / name)
 
     def orphan(name):
         '''Start a process whose parent starts a sleeper in a new session and ends. Return the sleeper's report.'''

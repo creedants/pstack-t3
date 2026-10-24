@@ -4,6 +4,18 @@ Discovery imports this file as test_release and collects the package itself, so 
 only when unittest imports this file by its qualified name or runs it as a script.
 """
 
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 import os
 import sys
 import unittest

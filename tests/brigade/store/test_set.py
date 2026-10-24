@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 from ..support import Path, ProcessReason, SCRIPT, json, real_process
 
 class SetMixin:
@@ -116,7 +128,8 @@ class SetMixin:
 
     def test_set_scratch_dir_reads_back_stores_the_resolved_path_and_a_clear_removes_the_key(self):
         self.open()
-        parent = str(Path.home().resolve())
+        # A system directory outside /tmp wherever the checkout is. This test never creates or writes it.
+        parent = str(Path("/usr").resolve())
         meta = json.loads(self.brigade("set", "--scratch-dir", f"{parent}/./x/.."))
         self.assertEqual(meta["scratchDir"], parent)
         meta = json.loads(self.brigade("set", "--scratch-dir", ""))
