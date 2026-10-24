@@ -289,6 +289,7 @@ class ReviewsSplit4Test(BrigadeTest):
             "### Unassigned", "",
             "- polish T8: Tidy the docs",
             "- T9: Installer",
+            "", "## Send-back reasons (last 7 days)", "", "other 1",
             "", "## Spend", "",
             "goal not recorded  wall 0m (1 open)  rounds 1  send-backs 0  threads not recorded",
             "G1  wall open  rounds 0  send-backs 0  threads not recorded",

@@ -494,7 +494,7 @@ Any refusal happens before the pass row is written, so nothing is recorded and n
 | `--report REPORT` |  |  |  | the round's findings file under reports/, such as D2-review-1.md |
 | `--edits EDITS` |  |  |  | the round's review report under reports/, such as D2-review-1.md; --verdict pass-with-edits needs it, and no other verdict takes it; refused with one line that says why when its edits cannot be read |
 | `--reviewer-thread REVIEWER_THREAD` |  |  |  | the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt |
-| `--reason REASON` |  | `false-wording`, `missing-test`, `wrong-behavior`, `out-of-lease`, `scope`, `other` |  | why the review sent the work back, one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other; --reason goes only with --verdict send-back |
+| `--reason REASON` |  | `false-wording`, `missing-test`, `wrong-behavior`, `out-of-lease`, `scope`, `other` |  | why the review sent the work back, one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other; a send-back verdict needs it, and no other verdict takes it |
 | `--member` |  |  |  | a panel member's row that does not carry the item's verdict; the dish is left as it is |
 | `--late` |  |  |  | a round found unrecorded after the dish moved on; the dish is left as it is |
 

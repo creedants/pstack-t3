@@ -1,6 +1,7 @@
 import functools
 import json
 import runpy
+from datetime import datetime, timedelta, timezone
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import OWING_STATES, REASONS, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, UNRECORDED_REASON, roles_script, round_budget_of
 
@@ -114,6 +115,15 @@ def reviewed_items(rows, last):
     return newest_first[:last]
 
 
+SEND_BACK_DAYS = 7
+
+
+def _at_utc(text):
+    """The datetime of a pass.tsv at cell, with a naive value read as UTC."""
+    moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
 def reason_counts(items):
     """How many send-back rows of these items carry each reason, and how many carry none.
 
@@ -126,6 +136,27 @@ def reason_counts(items):
             if row["verdict"] == "send-back":
                 counts[row["reason"] if row["reason"] in REASONS else UNRECORDED_REASON] += 1
     return counts
+
+
+def send_back_window(rows, cutoff):
+    """(dish, rows) pairs for the non-member send-back rows at or after cutoff, in table order."""
+    by_dish = {}
+    for row in rows:
+        if not row["member"] and row["verdict"] == "send-back" and _at_utc(row["at"]) >= cutoff:
+            by_dish.setdefault(row["dish"], []).append(row)
+    return list(by_dish.items())
+
+
+def reason_summary(counts):
+    """`reason N, ...` in REASONS then unrecorded order, or an empty string when every count is 0."""
+    return ", ".join(f"{reason} {counts[reason]}" for reason in (*REASONS, UNRECORDED_REASON) if counts[reason])
+
+
+def send_back_section(rows, now):
+    """The `## Send-back reasons (last 7 days)` lines for these pass.tsv rows."""
+    cutoff = _at_utc(now) - timedelta(days=SEND_BACK_DAYS)
+    return ["## Send-back reasons (last 7 days)", "",
+            reason_summary(reason_counts(send_back_window(rows, cutoff))) or "No send-backs in the last 7 days.", ""]
 
 
 def pass_rate(passed, items):
@@ -155,6 +186,5 @@ def pass_stats(restaurant, last):
         passes = by_author[author]
         lines.append(f"first pass {author}: {pass_rate(sum(passes), len(passes))}")
     counts = reason_counts(items)
-    named = [f"{reason} {counts[reason]}" for reason in (*REASONS, UNRECORDED_REASON) if counts[reason]]
-    lines.append(f"send-backs: {', '.join(named) if named else 'none'}")
+    lines.append(f"send-backs: {reason_summary(counts) or 'none'}")
     return "\n".join(lines)
