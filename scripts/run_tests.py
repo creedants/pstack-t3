@@ -98,8 +98,8 @@ if isolation is None:
     sys.modules["pstack_test_isolation"] = isolation
     _loader.loader.exec_module(isolation)
 
-# Recorded before any child environment is rewritten, so each worker protects the caller's original
-# home directories as well as its own run root.
+# Record the currently visible protected roots before rewriting any child environment.
+# tests/isolation.py documents the propagation limits of PSTACK_TEST_PROTECTED_ROOTS.
 isolation.remember_originals()
 
 _original_child_env = processes.child_env

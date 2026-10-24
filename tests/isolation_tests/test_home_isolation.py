@@ -47,7 +47,7 @@ def outside():
 
 
 def snapshot(path):
-    """Return every name under path with its mode, modification time, and file contents."""
+    """Return walked entries with mode, modification time, and contents only where os.path.isfile accepts the entry."""
     found = {}
     for top, dirs, files in os.walk(path):
         for name in dirs + files:
