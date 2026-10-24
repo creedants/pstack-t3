@@ -1,7 +1,7 @@
 """Each common way to start a test arms the guard before the first test body runs.
 
-Each case starts test_environment in a fresh process from the checkout. The four unittest cases drop the
-pointer and the token, as a new shell would, so the child must make its own run root.
+Each case starts test_environment in a fresh process from the checkout. Every case drops the pointer
+and the token, as a new shell would, so the child must make its own run root.
 """
 
 if __package__ in (None, ""):

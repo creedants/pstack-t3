@@ -1,4 +1,4 @@
-"""Every test module, the tests package, and every area package arm the guard before anything else they run."""
+"""Every test module, the tests package, and every area package arm the guard before any import of the code under test."""
 
 if __package__ in (None, ""):
     import sys

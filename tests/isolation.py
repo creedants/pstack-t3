@@ -1,17 +1,20 @@
 """Isolate a test process from the user's real home.
 
-Importing this module has no side effect. `install()` is the one entry. Without the pointer it makes
-a run root, marks it, and points HOME, the five XDG variables, and TMPDIR into it. With the pointer
-it adopts the run root the pointer names, after proving that a live run of this user marked it with
-the token in the environment and that every variable resolves inside it. Every install, the first
-and each repeat, rereads the environment and raises SystemExit on the first value that escapes, so a
-process can never fall back to a real path.
+Importing this module only registers it as `pstack_test_isolation` in `sys.modules`. `install()` is
+the one entry. Without the pointer it makes a run root, marks it, and points HOME, the five XDG
+variables, and TMPDIR into it. With the pointer it adopts the run root the pointer names, after
+proving that a live run of this user marked it with the token in the environment and that every
+variable resolves inside it. Every install, the first and each repeat, rereads the environment and
+raises SystemExit on the first value that escapes, so an install that finds a variable outside the
+run root stops the process instead of letting it use a real path.
 
-The guard is one audit hook and a wrapper around os.open. Every check resolves symlinks first. A
-delete, a rename source, and a replaced rename destination must sit inside the run root. A create, a
-write, a mode or time change, and a sqlite3 database must not sit inside a protected real root
-outside the checkout. Removing a guarded variable, or setting it to an empty, relative, or protected
-value, is refused, and os.environ.clear() keeps the guarded variables.
+The guard is one audit hook, a wrapper around os.open, and a replacement os.environ.clear. Every
+check resolves symlinks in the directory part of a path first, and a delete or rename acts on a final
+symlink name itself. A delete, a rename source, and a replaced rename destination must sit inside the
+run root. A create, a write, a mode or time change, and a sqlite3 database must not sit inside a
+protected real root outside the checkout. Removing a guarded variable is refused, and so is setting
+one of them except the token to a relative or protected value. Setting any of them, the token
+included, to an empty value is refused. os.environ.clear() keeps the guarded variables.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
 XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state directory.
@@ -64,7 +67,8 @@ def _real(path) -> str:
 def _entry(path) -> str:
     """Return the real path of the directory holding path, joined to its last name unresolved.
 
-    A delete or rename acts on that name itself, so a symlink there is the link, not its target.
+    A delete or rename acts on that name itself, so a symlink there is the link, not its target. A
+    last name of `.` or `..` resolves the whole path.
     """
     text = os.fsdecode(os.fspath(path))
     head, tail = os.path.split(text)
@@ -82,8 +86,8 @@ def _real_roots(root: str | None, environ) -> tuple[str, ...]:
     """Return the real home and the home variables of environ that sit outside root, as real paths.
 
     A value that is root or below it belongs to root, so it is not protected. A value that holds root
-    is an enclosing run root, which a nested runner makes, so it is not protected either. The real home
-    from pwd is always protected, even when it holds root, so adopting a root inside it is refused.
+    is not protected either, which covers an enclosing run root that a nested runner makes. The real
+    home from pwd is always protected, even when it holds root, so adopting a root inside it is refused.
     Nothing here lists a directory.
     """
     found: list[str] = []
