@@ -1,0 +1,2 @@
+- kind fix
+- `tests/runner_tests/test_ci_jobs.py` reads the workflow TMPDIR and fails when it is missing or long enough to push the macOS Chromium `SingletonSocket` path over the 107-character limit

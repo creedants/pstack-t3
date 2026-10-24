@@ -10,6 +10,8 @@ from tests import isolation
 
 isolation.install()
 
+from tests.activity_tests.browser import SOCKET_LIMIT
+
 from .support import (
     AT_EXIT,
     DURING_THE_TEST,
@@ -49,6 +51,41 @@ from .workflow import (
     job_body,
     macos_part_run,
 )
+
+MACOS_PRIVATE_ROOTS = ("/tmp", "/var", "/etc")
+
+# 22 run root, 16 browser temp dir, 45 socket suffix (reports/D7.md in the brigade store).
+SELECT_BROWSER_SOCKET_OFFSET = 22 + 16 + 45
+
+# 1 + 10 + pid + 1 + 8 scratch name, 5 shard home, 4 worker TMPDIR, 12 browser temp dir, 45 suffix (reports/D7.md in the brigade store).
+WORKER_SOCKET_OFFSET = 1 + 10 + 7 + 1 + 8 + 5 + 4 + 12 + 45
+
+
+def workflow_environment(text):
+    lines = text.splitlines()
+    start = next((index for index, line in enumerate(lines) if line == "env:"), None)
+    values = {}
+    if start is None:
+        return values
+    for line in lines[start + 1:]:
+        if line.strip() and not line.startswith(" "):
+            break
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        values[key.strip()] = value
+    return values
+
+
+def macos_path_length(path):
+    for root in MACOS_PRIVATE_ROOTS:
+        if path == root or path.startswith(root + "/"):
+            return len(path) + len("/private")
+    return len(path)
 
 
 class CiJobsMixin:
@@ -213,3 +250,13 @@ class CiJobsMixin:
         self.assertEqual(block["group"], "${{ github.workflow }}-${{ github.ref }}", "concurrency group pins the workflow and ref.")
         self.assertIs(block["cancel-in-progress"], True, "cancel-in-progress pins true.")
 
+    def test_the_workflow_tmpdir_is_short_enough_for_the_macos_chromium_socket_path(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        env = workflow_environment(text)
+        tmpdir = env.get("TMPDIR")
+        self.assertTrue(tmpdir, "the workflow env pins a TMPDIR for the macOS socket path.")
+        length = macos_path_length(tmpdir)
+        self.assertLessEqual(length + SELECT_BROWSER_SOCKET_OFFSET, SOCKET_LIMIT,
+                             "the select-browser socket path stays within SOCKET_LIMIT.")
+        self.assertLessEqual(length + WORKER_SOCKET_OFFSET, SOCKET_LIMIT,
+                             "a run_tests.py worker's socket path stays within SOCKET_LIMIT.")
