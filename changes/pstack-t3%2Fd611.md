@@ -1,0 +1,2 @@
+- kind fix
+- The `pass record` help text and the page `docs/cli/brigade.md` state that a line of a report's `## Threads` section is plain prose when it starts, after any leading whitespace, with neither a list marker nor a `#`, and holds no backticked thread id, which is the rule `report_threads` applies.
