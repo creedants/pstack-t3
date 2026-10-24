@@ -1,2 +1,0 @@
-- kind fix
-- The housekeeping reference says the house-rules template holds only the two project rules, one on plain prose and one on landing through the queue, and that a store gains the worker size limit and the test standard only by pasting them into `house-rules.md`. It no longer states that the template holds a size limit and a test standard, which `HOUSE_RULES` in `t3/added/brigade/scripts/brigade_lib/_store/opening.py` never did
