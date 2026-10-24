@@ -74,8 +74,13 @@ def accepted_after(budget, row):
 
 
 def edits_outcome(edits_rows, row):
-    """`upheld` when edits.tsv recorded this dish's edits from this row's SHA, else `""`."""
-    if any(edit["dish"] == row["dish"] and edit["from"] == row["sha"] for edit in edits_rows):
+    """`upheld` when edits.tsv recorded this dish's edits from this row's SHA for this row's report, else `""`.
+
+    The report cell must match too. Edits verified from one review report do not uphold another report's round at
+    the same SHA.
+    """
+    if any(edit["dish"] == row["dish"] and edit["from"] == row["sha"] and edit["report"] == row["report"]
+           for edit in edits_rows):
         return "upheld"
     return ""
 
