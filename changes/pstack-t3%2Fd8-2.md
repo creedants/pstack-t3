@@ -1,0 +1,2 @@
+- kind fix
+- edits verify follows a change note renamed to the new branch's name during a fix round, and only a .md file in the change-note directory can stand in for the old note

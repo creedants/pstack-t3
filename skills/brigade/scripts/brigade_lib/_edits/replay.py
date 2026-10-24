@@ -2,6 +2,7 @@ import ast
 import hashlib
 import io
 import os
+import posixpath
 import stat
 import subprocess
 import sys
@@ -235,6 +236,19 @@ def compared_paths(project_root, before, after, extracted, edited, built):
                   or extracted.get(path) != edited.get(path) or edited.get(path) != built.get(path))
 
 
+def renamed_note(before, after, skipped):
+    """The one .md file in the skipped fragment's directory that the reviewed tree holds and the new head does not.
+
+    Only a regular .md file in the fragment's directory is a candidate, so another file there, such as a deleted
+    .json, is never the note. The empty string when there is not exactly one such file.
+    """
+    directory = posixpath.dirname(skipped)
+    found = [path for path, entry in before.items()
+             if posixpath.dirname(path) == directory and path.endswith(".md") and path not in after
+             and BLOB_MODES.get(entry.mode, ("other", False))[0] == "file"]
+    return found[0] if len(found) == 1 else ""
+
+
 def path_lines(paths, edited, built, head, sha, skipped=""):
     """One line per path, and whether the scratch copy and the head agree at every compared path.
 
@@ -315,7 +329,9 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha, skip
     """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output.
 
     A path named by skip is left out of the comparison when the reviewed commit holds no entry at it and the new head
-    does, and it prints SKIPPED_LINE instead.
+    does, and it prints SKIPPED_LINE instead. When the reviewed commit holds exactly one regular .md file in that
+    path's directory that the new head does not, that file is the same note under its old name and is compared at
+    skip's digest. A file there that does not end in .md is never the old note, so a deleted .json is not one.
     Raises BrigadeError when the applied change counts more than SMALL_FIX_LINES lines.
     """
     with seam.tempfile.TemporaryDirectory() as directory:
@@ -343,8 +359,12 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha, skip
         built = digests(scratch)
         paths = compared_paths(project_root, before, after, extracted, edited, built)
         head = {path: head_digest(project_root, after[path]) for path in paths if path in after}
-        lines, clean = path_lines(paths, edited, built, head, sha,
-                                  skip if skip and skip not in before and skip in after else "")
+        skipped = skip if skip and skip not in before and skip in after else ""
+        if skipped:
+            old = renamed_note(before, after, skipped)
+            if old:
+                head[old] = head[skipped]
+        lines, clean = path_lines(paths, edited, built, head, sha, skipped)
         if clean and check != NO_COMMAND:
             code = exit_code(scratch, check)
             lines.append(f"FAIL check: {check} exited {code}" if code else "ok check")
