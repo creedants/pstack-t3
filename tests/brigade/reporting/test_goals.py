@@ -235,7 +235,7 @@ class ReportingTest(BrigadeTest):
         self.assertEqual(self.brigade("watch"), f"{idle}\nno work in progress")
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
         self.assertEqual(self.close_run("--dry-run"),
-                         (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.\n\n## Spend\n\nnone\n\n## Follow-up share\n\n- no ticket was created in the last 14 days.", ""))
+                         (0, "# Perf report\n\nSince opening. nothing on record.\n\nNothing new.\n\n## Send-back reasons (last 7 days)\n\nNo send-backs in the last 7 days.\n\n## Spend\n\nnone\n\n## Follow-up share\n\n- no ticket was created in the last 14 days.", ""))
         self.assertEqual(self.brigade("walk").splitlines(), [
             f"{_shown_root(self.project)}: local mode onto refs/landing/lane. empty. author policy: any",
             "  Perf (reports milestones): nothing on record",

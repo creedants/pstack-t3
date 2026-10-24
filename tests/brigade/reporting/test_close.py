@@ -183,6 +183,7 @@ class ReportingTest(BrigadeTest, _ReportingRace):
             f"Since opening. merged: 1.", "",
             "## Merged", "", "- fix D1 (T1): Fix s", "",
             "## Dropped", "", "- T2: UI", "",
+            "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.", "",
             "## Spend", "", "goal not recorded  wall 0m  rounds 1  send-backs 0  threads not recorded", "",
             "## Follow-up share", "", "- 0 of 2 tickets created in the last 14 days came from a report (0%).",
         ]))
