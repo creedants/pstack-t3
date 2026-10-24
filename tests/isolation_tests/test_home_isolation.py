@@ -1,4 +1,4 @@
-"""A test process cannot delete or write anything under the user's real home."""
+"""A test process cannot delete outside its run root, or write inside the real home outside this checkout."""
 import os
 import pwd
 import shutil
