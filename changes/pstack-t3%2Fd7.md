@@ -1,0 +1,2 @@
+- kind fix
+- `.github/workflows/ci.yml` sets a workflow-level `TMPDIR` of `/tmp`, which resolves to `/private/tmp` on a macOS runner, so the isolated test run root is 34 characters and the browser's modelled Chromium `SingletonSocket` path is 95 characters, under the 107-character limit
