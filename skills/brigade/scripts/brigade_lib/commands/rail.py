@@ -27,7 +27,7 @@ from brigade_lib.leases import holding_blocks
 from brigade_lib.reports import item_report
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import GOAL_STATES, KINDS, NOTHING_HANDED, PRIORITIES_BY_RANK, TICKET_STATES
-from brigade_lib.tickets import EVERY_ROW, GOALS_ONLY, add_goal, add_ticket, file_follow_ups, finish_request, follow_ups, frozen_label, in_flight_tickets, count_labels, move_ticket, open_goal, read_labels, record_paths, set_goal, sibling_rails, take_inbox, take_tickets, ticket_paths, tracked_paths
+from brigade_lib.tickets import EVERY_ROW, GOALS_ONLY, Assign, Drop, add_goal, add_ticket, file_follow_ups, finish_request, follow_ups, frozen_label, in_flight_tickets, count_labels, move_ticket, open_goal, read_labels, record_paths, set_goal, sibling_rails, sweep_tickets, take_inbox, take_tickets, ticket_paths, tracked_paths
 from brigade_lib.reporting import goal_lines
 from brigade_lib.wake import ticket_lines
 
@@ -99,6 +99,18 @@ def register_ticket(sub):
     picked = a.add_mutually_exclusive_group(required=True)
     picked.add_argument("--paths", help="comma-separated files and directories; prints the notes that name them")
     picked.add_argument("--all", action="store_true", help="prints every note")
+    a = t.add_parser("sweep", help="list waiting tickets filed more than N days ago that have no kind or no goal, "
+                                   "or drop them or give them a goal with --confirm")
+    a.add_argument("--older-than", required=True, type=int, metavar="N",
+                   help="list tickets filed strictly more than this many days ago; takes 1 or more")
+    picked = a.add_mutually_exclusive_group()
+    picked.add_argument("--drop", action="store_true",
+                        help="drop each listed ticket; needs the digest the list printed as --confirm")
+    picked.add_argument("--goal", metavar="G<n>",
+                        help="give each listed ticket with no goal this open or paused goal; never overwrites a goal in goals.tsv; "
+                             "needs the digest the list printed as --confirm")
+    a.add_argument("--confirm", metavar="DIGEST",
+                   help="the digest the list printed; needs --drop or --goal, and refuses a stale digest")
 
 
 def register_goal(sub):
@@ -189,6 +201,13 @@ def handle_ticket(restaurant, args):
         raise BrigadeError("--dry-run needs --from-report")
     if args.action in ("add", "set") and args.paths is not None:
         args.paths = ticket_paths(args.paths)
+    if args.action == "sweep":
+        if args.older_than < 1:
+            raise BrigadeError("--older-than takes a whole number of 1 or more")
+        if args.confirm is not None and not (args.drop or args.goal is not None):
+            raise BrigadeError("--confirm needs --drop or --goal")
+        if (args.drop or args.goal is not None) and args.confirm is None:
+            raise BrigadeError("--drop or --goal needs --confirm")
     rails = None
     if args.action == "move" or args.action == "add" and args.ref:
         rails = sibling_rails(restaurant)
@@ -218,6 +237,13 @@ def handle_locked(restaurant, args, view):
         labels = read_labels(restaurant, EVERY_ROW)
         return goal_lines(labels, count_labels(restaurant, labels), args.all)
     if args.command == "ticket":
+        if args.action == "sweep":
+            if args.drop or args.goal is not None:
+                with restaurant.guarded():
+                    action = Drop() if args.drop else Assign(args.goal)
+                    return sweep_tickets(restaurant, args.older_than, action, args.confirm)
+            with restaurant.checked():
+                return sweep_tickets(restaurant, args.older_than, None, None)
         if args.action == "notes":
             if args.all:
                 with restaurant.checked():
