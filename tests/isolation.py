@@ -60,7 +60,7 @@ _sibling("pstack_test_isolation_paths", "isolation_paths.py")
 # MARKER stays exported because the adoption tests read isolation.MARKER to reach a run root's marker file.
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
-    _entry, _fail, _fd_target, _placed, _probe, _real, _real_roots, _refuse, _within,
+    _entry, _fail, _fd_target, _frozen, _placed, _probe, _real, _real_roots, _refuse, _within,
     _write_intent, encode_roots, layout, parse_roots, write_marker,
 )
 
@@ -261,7 +261,7 @@ def _open(path, flags, mode=0o777, *, dir_fd=None):
 
     The open audit event leaves out dir_fd, so the hook alone would judge a relative name against the working directory.
     """
-    path = os.fspath(path)
+    path = _frozen(path)
     if dir_fd is not None and flags & _WRITE_FLAGS and not isinstance(path, int):
         target = _at(path, dir_fd)
         if target is None:
@@ -277,21 +277,21 @@ def _mkfifo(path, mode=0o666, *, dir_fd=None):
 
     CPython raises no audit event for this call, so the guard wraps it as it wraps os.open.
     """
-    path = os.fspath(path)
+    path = _frozen(path)
     _deny_write("os.mkfifo", path, dir_fd, _entry)
     return _os_mkfifo(path, mode, dir_fd=dir_fd)
 
 
 def _mknod(path, mode=0o600, device=0, *, dir_fd=None):
     """os.mknod, refusing an entry inside a protected real root outside the checkout."""
-    path = os.fspath(path)
+    path = _frozen(path)
     _deny_write("os.mknod", path, dir_fd, _entry)
     return _os_mknod(path, mode, device, dir_fd=dir_fd)
 
 
 def _chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
     """os.chown, refusing a change to the link name itself inside a protected real root outside the checkout."""
-    path = os.fspath(path)
+    path = _frozen(path)
     if not follow_symlinks:
         _deny_write("os.chown", path, dir_fd, _entry)
     return _os_chown(path, uid, gid, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
@@ -299,7 +299,7 @@ def _chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
 
 def _lchown(path, uid, gid):
     """os.lchown, refusing a change to the link name itself inside a protected real root outside the checkout."""
-    path = os.fspath(path)
+    path = _frozen(path)
     _deny_write("os.lchown", path, None, _entry)
     return _os_lchown(path, uid, gid)
 

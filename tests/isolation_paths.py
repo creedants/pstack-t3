@@ -363,3 +363,8 @@ def _write_intent(mode, flags) -> bool:
     if isinstance(mode, str) and any(mark in mode for mark in "wax+"):
         return True
     return isinstance(flags, int) and bool(flags & _WRITE_FLAGS)
+
+
+def _frozen(path):
+    """Return the one value a call acts on: the descriptor itself, or the path string the syscall will read."""
+    return path if isinstance(path, int) else os.fspath(path)
