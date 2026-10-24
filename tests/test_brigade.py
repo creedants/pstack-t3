@@ -4,6 +4,15 @@ Each brigade test calls the command in the test process through the shared helpe
 does. The release test builds a temporary repository with committed fragments, the way tests/test_release.py
 builds one, and runs scripts/release.py in the test process.
 """
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests import isolation
+
+isolation.install()
+
 import json
 import os
 import shutil

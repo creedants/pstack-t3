@@ -1,10 +1,19 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests import isolation
+
+isolation.install()
+
 import os
 import tempfile
 import unittest
 from pathlib import Path
 
 try:
-    from tests import test_activity
+    import tests.test_activity as test_activity
 except ImportError:
     import test_activity
 

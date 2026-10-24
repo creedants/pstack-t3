@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import quote
 
-from tests import test_activity
+import tests.test_activity as test_activity
 
 Fixture = test_activity.Fixture
 MOD = test_activity.MOD

@@ -82,13 +82,14 @@ def stderr_segment(failed):
     return f": {' '.join(lines)}" if lines else ""
 
 def confined_run(browser, target, directory, prefix, timeout):
-    """Run browser on target with a timeout of timeout seconds, headless_flags(MACOS), a profile under directory, HOME and XDG state confined there, and TMPDIR under /tmp."""
+    """Run browser on target with a timeout of timeout seconds, headless_flags(MACOS), a profile under directory, HOME and XDG state confined there, and TMPDIR under the test's temporary directory."""
     environment = dict(os.environ)
     for variable, name in (("HOME", "h"), ("XDG_CONFIG_HOME", "c"), ("XDG_CACHE_HOME", "a"), ("XDG_STATE_HOME", "s")):
         path = Path(directory) / name
         path.mkdir(parents=True, exist_ok=True)
         environment[variable] = str(path)
-    short_tmp = tempfile.mkdtemp(dir="/tmp")
+    # Inside the run root, so the cleanup is allowed, and still short enough for the chromium socket.
+    short_tmp = tempfile.mkdtemp()
     try:
         socket_path = os.path.join(short_tmp, "org.chromium.Chromium.XXXXXX", "SingletonSocket")
         if len(socket_path) > SOCKET_LIMIT:

@@ -57,6 +57,30 @@ class WorkersMixin:
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nOK\n"), result.stderr)
 
+    def test_a_worker_gets_a_home_and_every_xdg_directory_inside_its_shard_home_and_outside_the_real_home(self):
+        self.write("test_home_env.py", """
+            import os
+            import pwd
+            import unittest
+            from pathlib import Path
+
+            NAMES = ("HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "TMPDIR")
+
+            class HomeEnvTest(unittest.TestCase):
+                def test_home_env(self):
+                    shard = Path(os.environ["PSTACK_TEST_HOME_ROOT"]).resolve()
+                    real = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+                    self.assertTrue(shard.is_dir(), shard)
+                    for name in NAMES:
+                        path = Path(os.environ[name]).resolve()
+                        self.assertIn(shard, [path, *path.parents], name)
+                        self.assertNotIn(real, [path, *path.parents], name)
+        """)
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(RAN.search(result.stderr).group(1), "1")
+        self.assertTrue(result.stderr.endswith("\n\nOK\n"), result.stderr)
+
     def test_a_worker_gets_no_variable_with_the_uppercase_git_underscore_prefix_from_the_runners_environment(self):
         self.write("test_git_env.py", """
             import os

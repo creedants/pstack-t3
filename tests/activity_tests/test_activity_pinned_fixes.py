@@ -5,7 +5,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from tests import test_activity
+import tests.test_activity as test_activity
 from tests.activity_tests.browser import PINNED, RENDER_TIMEOUT, TITLE, confined_run, select_browser
 from tests.activity_tests.pages import CLEAN, DATA, PROGRAM, data_of, group, item, page, row
 from tests.activity_tests.support import Fixture, worker
