@@ -13,16 +13,17 @@ and a replacement os.environ.clear. Its filesystem path checks resolve symlinks 
 part first. A checked delete or rename acts on a final symlink name itself. Checked deletes, rename
 sources, and replaced rename destinations must sit inside the run root. The write handlers check
 protected real roots outside the checkout. SQLite ATTACH remains unguarded. Removing a guarded
-variable is refused, and so is setting one of them except the token to a relative or protected
-value. Setting any of them, the token included, to an empty value is refused. os.environ.clear()
+variable or setting one to an empty value is refused. Guarded path variables reject relative or
+protected paths. The token and root record have their own assignment rules. os.environ.clear()
 keeps the guarded variables.
 
-PSTACK_TEST_PROTECTED_ROOTS carries the trusted record, a JSON array of protected real roots. The
-record is guarded and can only grow, so removing it, rewriting it, or clearing the environment
-cannot lower the roots a process and its children protect. A malformed record stops the process,
-and an assignment that drops a recorded root is refused. os.chown with follow_symlinks False and
-os.lchown are wrapped, because the os.chown audit event carries no follow_symlinks field, so a
-protected link name whose target is outside protection stays refused.
+PSTACK_TEST_PROTECTED_ROOTS carries a JSON array of absolute paths. This process keeps its trusted
+roots in memory, and a run root's marker carries the roots of the process that marked it, so a child
+that adopts the root protects them whatever record its environment holds. Assignments cannot drop
+those roots, and os.environ.clear() keeps the record. A malformed inherited record or marker stops
+the process. A malformed assignment is refused. os.chown with follow_symlinks False and os.lchown
+are wrapped, because the os.chown audit event carries no follow_symlinks field, so a protected link
+name whose target is outside protection stays refused.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
 XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state directory.
@@ -31,9 +32,7 @@ XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state dire
 from __future__ import annotations
 
 import contextlib
-import json
 import os
-import secrets
 import sys
 import tempfile
 import threading
@@ -55,10 +54,11 @@ def _sibling(name: str, filename: str):
 
 
 _sibling("pstack_test_isolation_paths", "isolation_paths.py")
+# MARKER stays exported because the adoption tests read isolation.MARKER to reach a run root's marker file.
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
     _entry, _fail, _fd_target, _probe, _real, _real_roots, _refuse, _within,
-    _write_intent, encode_roots, layout, parse_roots,
+    _write_intent, encode_roots, layout, parse_roots, write_marker,
 )
 
 
@@ -142,31 +142,27 @@ def _handout(path) -> str:
     )
 
 
-def mark(root) -> str:
-    """Write the marker that lets a child adopt root, owned by this process and this user, and return its token."""
-    token = secrets.token_hex(16)
-    active = _handout(root)
-    info = os.lstat(active)
-    path = os.path.join(active, MARKER)
-    with open(path, "w", encoding="utf-8") as marker:
-        json.dump({"uid": os.getuid(), "pid": os.getpid(), "token": token,
-                   "device": info.st_dev, "inode": info.st_ino}, marker)
-    return token
+def mark(root, roots=None) -> str:
+    """Write the marker that lets a child adopt root and carries the trusted roots, and return its token."""
+    return write_marker(_handout(root), _originals if roots is None else tuple(roots))
 
 
 def worker_env(env: dict[str, str], home) -> dict[str, str]:
-    """Return env with the seven variables, the pointer, the token, and the record set to the shard home, creating its directories and marker."""
+    """Return a copy of env with the shard's layout, pointer, token, and protected-root record.
+
+    Create the shard directories and a marker that carries the merged roots. Merge the trusted roots
+    held in memory with the roots env names, so an empty or rewritten input drops none.
+    """
     active = _handout(home)
-    # Merge the record held in memory with the roots env names, so neither an empty env nor a rewritten one drops one.
-    record = encode_roots(tuple(dict.fromkeys(_originals + _real_roots(active, env))))
+    roots = tuple(dict.fromkeys(_originals + _real_roots(active, env)))
     values = layout(active)
     for name, path in values.items():
         os.makedirs(path, mode=0o700 if name == "XDG_RUNTIME_DIR" else 0o777, exist_ok=True)
     environ = dict(env)
     environ.update(values)
     environ[POINTER] = active
-    environ[TOKEN] = mark(active)
-    environ[ORIGINALS] = record
+    environ[TOKEN] = mark(active, roots)
+    environ[ORIGINALS] = encode_roots(roots)
     return environ
 
 
@@ -228,7 +224,7 @@ def _create(protected: tuple[str, ...]) -> str:
         os.makedirs(path, mode=0o700 if name == "XDG_RUNTIME_DIR" else 0o777, exist_ok=True)
     os.environ.update(values)
     os.environ[POINTER] = active
-    os.environ[TOKEN] = mark(active)
+    os.environ[TOKEN] = mark(active, protected)
     return active
 
 
@@ -294,10 +290,10 @@ def _chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
     return _os_chown(path, uid, gid, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
 
 
-def _lchown(path, uid, gid, *, dir_fd=None):
+def _lchown(path, uid, gid):
     """os.lchown, refusing a change to the link name itself inside a protected real root outside the checkout."""
-    _deny_write("os.lchown", path, dir_fd, _entry)
-    return _os_lchown(path, uid, gid, dir_fd=dir_fd)
+    _deny_write("os.lchown", path, None, _entry)
+    return _os_lchown(path, uid, gid)
 
 
 def _clear_environ() -> None:

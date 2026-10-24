@@ -98,8 +98,7 @@ if isolation is None:
     sys.modules["pstack_test_isolation"] = isolation
     _loader.loader.exec_module(isolation)
 
-# Record the currently visible protected roots before rewriting any child environment.
-# tests/isolation.py documents the propagation limits of PSTACK_TEST_PROTECTED_ROOTS.
+# Record the visible protected roots, and the roots the pointer's marker carries, before rewriting any child environment.
 isolation.remember_originals()
 
 _original_child_env = processes.child_env

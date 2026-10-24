@@ -61,8 +61,9 @@ def _real_roots(root: str | None, environ) -> tuple[str, ...]:
     A value that is root or below it belongs to root, so it is not protected. A value that holds root
     is not protected either, which covers an enclosing run root that a nested runner makes. The real
     home from pwd is always protected, even when it holds root, so adopting a root inside it is refused.
-    The roots a caller recorded in ORIGINALS are appended whatever else the environment says.
-    Nothing here lists a directory.
+    The roots a caller recorded in ORIGINALS are appended whatever else the environment says, and so
+    are the roots the marker of the pointer's run root records for environ's token. Nothing here lists
+    a directory.
     """
     found: list[str] = []
     home = ""
@@ -83,12 +84,33 @@ def _real_roots(root: str | None, environ) -> tuple[str, ...]:
     for text in _original_roots(environ):
         if text not in found:
             found.append(text)
+    pointer = environ.get(POINTER, "")
+    if os.path.isabs(pointer):
+        for text in marker_roots(_real(pointer), environ.get(TOKEN, "")):
+            if text not in found:
+                found.append(text)
     return tuple(found)
 
 
 def encode_roots(roots) -> str:
     """Return the unambiguous record ORIGINALS carries: a JSON array of the roots, in order."""
     return json.dumps([os.fspath(root) for root in roots])
+
+
+def _path_items(items) -> tuple[str, ...]:
+    """Return the real path of each absolute path string in a JSON array, or raise ValueError."""
+    if not isinstance(items, list):
+        raise ValueError("it is not a JSON array")
+    found: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            raise ValueError(f"it holds {item!r}, which is not a path string")
+        if not os.path.isabs(item):
+            raise ValueError(f"it holds {item!r}, which is not an absolute path")
+        text = _real(item)
+        if text not in found:
+            found.append(text)
+    return tuple(found)
 
 
 def parse_roots(value: str) -> tuple[str, ...]:
@@ -102,18 +124,7 @@ def parse_roots(value: str) -> tuple[str, ...]:
         items = json.loads(value)
     except ValueError as problem:
         raise ValueError(f"it is not JSON: {problem}") from None
-    if not isinstance(items, list):
-        raise ValueError("it is not a JSON array")
-    found: list[str] = []
-    for item in items:
-        if not isinstance(item, str):
-            raise ValueError(f"it holds {item!r}, which is not a path string")
-        if not os.path.isabs(item):
-            raise ValueError(f"it holds {item!r}, which is not an absolute path")
-        text = _real(item)
-        if text not in found:
-            found.append(text)
-    return tuple(found)
+    return _path_items(items)
 
 
 def _original_roots(environ) -> tuple[str, ...]:
@@ -161,6 +172,38 @@ def _adopt(environ, protected: tuple[str, ...]) -> str:
         if not _within(_real(value), active):
             raise _fail(f"{name} is {value!r}, which resolves outside the run root {active!r}")
     return active
+
+
+def write_marker(active: str, roots) -> str:
+    """Write the marker of active with its owner, pid, token, device, inode, and trusted roots, and return the token."""
+    token = secrets.token_hex(16)
+    info = os.lstat(active)
+    record = {"uid": os.getuid(), "pid": os.getpid(), "token": token,
+              "device": info.st_dev, "inode": info.st_ino, "roots": list(roots)}
+    with open(os.path.join(active, MARKER), "w", encoding="utf-8") as marker:
+        json.dump(record, marker)
+    return token
+
+
+def marker_roots(active: str, token: str) -> tuple[str, ...]:
+    """Return the trusted real roots the marker of active records for token.
+
+    Return () when the marker is missing or names another token. A marker that names token but holds
+    no well-formed root array stops the process.
+    """
+    try:
+        with open(os.path.join(active, MARKER), encoding="utf-8") as marker:
+            record = json.load(marker)
+    except OSError:
+        return ()
+    except ValueError as problem:
+        raise _fail(f"the marker of {active!r} is not JSON: {problem}") from None
+    if not isinstance(record, dict) or record.get("token") != token:
+        return ()
+    try:
+        return _path_items(record["roots"])
+    except (KeyError, ValueError) as problem:
+        raise _fail(f"the marker of {active!r} does not record its trusted roots: {problem}") from None
 
 
 def _verify_marker(active: str, token: str) -> None:
