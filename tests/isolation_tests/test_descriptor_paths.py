@@ -226,6 +226,50 @@ OUTSIDE = [
 ]
 
 
+CHANGING_HEAD = [
+    "protected = os.path.join(str(root), 'protected')",
+    "os.makedirs(protected)",
+    "unexpected = os.path.join(protected, 'unexpected-entry')",
+    "class ChangingPath:",
+    "    def __init__(self):",
+    "        self.calls = 0",
+    "    def __fspath__(self):",
+    "        self.calls += 1",
+    "        return 'safe-entry' if self.calls < 2 else unexpected",
+    "fd = os.open(str(root), os.O_RDONLY)",
+    "try:",
+    "    with isolation.protecting(protected):",
+]
+
+CHANGING_TAIL = [
+    "except PermissionError:",
+    "    print('REFUSED PERMITTED NAME')",
+    "else:",
+    "    print('CREATED PERMITTED NAME')",
+    "finally:",
+    "    os.close(fd)",
+    "print('SAFE ENTRY', os.path.lexists(os.path.join(str(root), 'safe-entry')))",
+    "print('PROTECTED ENTRY', os.path.lexists(unexpected))",
+]
+
+MKNOD_PROBE = [
+    "import stat",
+    "probe = os.path.join(str(root), 'mknod-probe')",
+    "try:",
+    "    os.mknod(probe, stat.S_IFREG | 0o600)",
+    "except OSError:",
+    "    print('MKNOD UNSUPPORTED')",
+    "    raise SystemExit(0)",
+    "os.unlink(probe)",
+    "print('MKNOD SUPPORTED')",
+]
+
+
+def changing(call):
+    """Return a child body that runs call with a path object that changes after its first read."""
+    return CHANGING_HEAD + ["        " + call] + CHANGING_TAIL
+
+
 def root_of(done):
     """Return the run root a child printed on its first line."""
     head = done.stdout.splitlines()[0]
@@ -328,3 +372,28 @@ class DescriptorPathTest(unittest.TestCase):
         self.assertNotIn("MADE OUTSIDE", done.stdout)
         self.assertEqual((self.real / "outside.txt").stat().st_size, 17)
         self.assertFalse(os.path.lexists(self.real / "made"))
+
+    def test_a_mkfifo_path_that_changes_after_its_first_read_creates_only_the_permitted_entry(self):
+        done = self.run_child(changing("os.mkfifo(ChangingPath(), 0o600, dir_fd=fd)"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("CREATED PERMITTED NAME", done.stdout)
+        self.assertIn("SAFE ENTRY True", done.stdout)
+        self.assertIn("PROTECTED ENTRY False", done.stdout)
+        self.assertNotIn("REFUSED PERMITTED NAME", done.stdout)
+        root = root_of(done)
+        self.assertTrue(os.path.lexists(root / "safe-entry"))
+        self.assertEqual(os.listdir(root / "protected"), [])
+
+    def test_a_mknod_path_that_changes_after_its_first_read_creates_only_the_permitted_entry(self):
+        done = self.run_child(MKNOD_PROBE + changing("os.mknod(ChangingPath(), stat.S_IFREG | 0o600, dir_fd=fd)"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        if "MKNOD UNSUPPORTED" in done.stdout:
+            raise unittest.SkipTest("this host refuses a regular-file os.mknod")
+        self.assertIn("MKNOD SUPPORTED", done.stdout)
+        self.assertIn("CREATED PERMITTED NAME", done.stdout)
+        self.assertIn("SAFE ENTRY True", done.stdout)
+        self.assertIn("PROTECTED ENTRY False", done.stdout)
+        self.assertNotIn("REFUSED PERMITTED NAME", done.stdout)
+        root = root_of(done)
+        self.assertTrue(os.path.lexists(root / "safe-entry"))
+        self.assertEqual(os.listdir(root / "protected"), [])
