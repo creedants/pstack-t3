@@ -278,8 +278,8 @@ def _with_cap(text, cap):
 def sync_meta(meta):
     """Write autoCompactWindow into the project's settings file and keep every other byte of it.
 
-    Only two callers reach this. Creation with --context-cap or --coordinator-provider, and set --context-cap. Every
-    other path leaves the settings file alone.
+    Only two callers reach this, and each only when the effective provider reads as claude. Creation with
+    --context-cap or --coordinator-provider, and set --context-cap. Every other path leaves the settings file alone.
 
     A file that holds no strict JSON object, a settings directory reached through a symbolic link, an entry or a
     resolved file that either lookup in _git_refusal reports as tracked or unreadable, and a git command that cannot
