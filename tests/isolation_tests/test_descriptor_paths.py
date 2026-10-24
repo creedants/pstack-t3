@@ -1,4 +1,10 @@
-"""A descriptor's path without /proc, and the delete-only proof for a directory descriptor whose path cannot be read."""
+"""A descriptor's path without /proc, and the refusal of every operation whose descriptor has none.
+
+Each case runs in its own child. A child hides `/proc/self/fd`, records every descriptor opened
+through `os.open` with its real path, and answers `F_GETPATH` from that record. The guard's own
+`os.stat` and `os.fstat` identity check still runs, so a lying answer would be rejected. The case that
+pins the `/proc` branch keeps `/proc` visible and skips that simulation.
+"""
 
 if __package__ in (None, ""):
     import sys
@@ -23,7 +29,7 @@ from pathlib import Path
 
 from tests.isolation_tests.fixtures import ROOT
 
-PREAMBLE = [
+HIDE = [
     "import os",
     "_real_readlink = os.readlink",
     "def without_procfs(path, *args, **kwargs):",
@@ -31,16 +37,56 @@ PREAMBLE = [
     "        raise FileNotFoundError(2, 'No such file or directory', os.fsdecode(path))",
     "    return _real_readlink(path, *args, **kwargs)",
     "os.readlink = without_procfs",
-    "import pwd",
-    "import shutil",
-    "import sys",
 ]
 
 HEAD = [
+    "import errno",
+    "import fcntl",
+    "import os",
+    "import pwd",
+    "import shutil",
+    "import sys",
     f"sys.path.insert(0, {str(ROOT)!r})",
     "from tests import isolation",
     "root = isolation.install()",
     'print("ROOT", root)',
+]
+
+RECORDER = [
+    "guarded_open = os.open",
+    "_real_close = os.close",
+    "_recorded = {}",
+    "def _recording_open(path, flags, mode=0o777, *, dir_fd=None):",
+    "    number = guarded_open(path, flags, mode, dir_fd=dir_fd)",
+    "    name = os.fsdecode(os.fspath(path))",
+    "    parent = _recorded.get(dir_fd)",
+    "    if isinstance(dir_fd, int) and dir_fd >= 0 and not os.path.isabs(name):",
+    "        if parent is not None:",
+    "            _recorded[number] = os.path.realpath(os.path.join(parent, name))",
+    "    else:",
+    "        _recorded[number] = os.path.realpath(name)",
+    "    return number",
+    "def _recording_close(number):",
+    "    _recorded.pop(number, None)",
+    "    return _real_close(number)",
+    "os.open = _recording_open",
+    "os.close = _recording_close",
+    "os.supports_dir_fd.add(_recording_open)",
+]
+
+SIMULATION = [
+    "_real_fcntl = fcntl.fcntl",
+    "fcntl.F_GETPATH = 9999",
+    "def _simulated_getpath(number, command, buffer):",
+    "    if command != 9999:",
+    "        return _real_fcntl(number, command, buffer)",
+    "    assert isinstance(buffer, bytes) and len(buffer) == 1024, (type(buffer), len(buffer))",
+    "    path = _recorded.get(number)",
+    "    if path is None:",
+    "        raise OSError(errno.EINVAL, 'Inappropriate ioctl for device')",
+    "    answer = path.encode()",
+    "    return answer + b'\\0' * (1024 - len(answer))",
+    "fcntl.fcntl = _simulated_getpath",
 ]
 
 WRITE = [
@@ -84,6 +130,108 @@ REFUSE = WRITE + [
     "    print('WROTE IN REAL HOME')",
 ]
 
+DELETE_INSIDE = [
+    "sub = os.path.join(str(root), 'sub')",
+    "os.makedirs(sub)",
+    "goner = os.path.join(sub, 'gone.txt')",
+    "with open(goner, 'w') as handle:",
+    "    handle.write('x')",
+    "fd = os.open(sub, os.O_RDONLY)",
+    "try:",
+    "    os.unlink('gone.txt', dir_fd=fd)",
+    "finally:",
+    "    os.close(fd)",
+    'print("DELETED", not os.path.lexists(goner))',
+    "tree = os.path.join(str(root), 'deep', 'leaf')",
+    "os.makedirs(tree)",
+    "with open(os.path.join(tree, 'inner.txt'), 'w') as handle:",
+    "    handle.write('x')",
+    "shutil.rmtree(os.path.join(str(root), 'deep'))",
+    'print("TREE GONE", not os.path.lexists(os.path.join(str(root), "deep")))',
+]
+
+DELETE_PROTECTED = [
+    "guarded = os.path.join(str(root), 'guarded')",
+    "os.makedirs(guarded)",
+    "kept = os.path.join(guarded, 'kept.txt')",
+    "with open(kept, 'w') as handle:",
+    "    handle.write('kept')",
+    "with isolation.protecting(guarded):",
+    "    fd = os.open(guarded, os.O_RDONLY)",
+    "    try:",
+    "        os.unlink('kept.txt', dir_fd=fd)",
+    "    except PermissionError:",
+    "        print('REFUSED PROTECTED DELETE')",
+    "    else:",
+    "        print('DELETED PROTECTED')",
+    "    finally:",
+    "        os.close(fd)",
+    'print("KEPT PROTECTED", os.path.lexists(kept))',
+]
+
+DELETE_UNPLACED = [
+    "sub = os.path.join(str(root), 'sub')",
+    "os.makedirs(sub)",
+    "kept = os.path.join(sub, 'kept.txt')",
+    "with open(kept, 'w') as handle:",
+    "    handle.write('kept')",
+    "fd = guarded_open(sub, os.O_RDONLY)",
+    "try:",
+    "    os.unlink('kept.txt', dir_fd=fd)",
+    "except PermissionError:",
+    "    print('REFUSED UNPLACED DELETE')",
+    "else:",
+    "    print('DELETED UNPLACED')",
+    "finally:",
+    "    os.close(fd)",
+    'print("KEPT INSIDE", os.path.lexists(kept))',
+]
+
+OUTSIDE = [
+    "beside = os.path.dirname(str(root))",
+    "outside = os.path.join(beside, 'outside.txt')",
+    "with open(outside, 'w') as handle:",
+    "    handle.write('0123456789abcdefg')",
+    "fd = os.open(outside, os.O_RDWR)",
+    "try:",
+    "    os.ftruncate(fd, 0)",
+    "except PermissionError:",
+    "    print('REFUSED OUTSIDE TRUNCATE')",
+    "else:",
+    "    print('TRUNCATED OUTSIDE')",
+    "finally:",
+    "    os.close(fd)",
+    'print("OUTSIDE SIZE", os.path.getsize(outside))',
+    "d = os.open(beside, os.O_RDONLY)",
+    "try:",
+    "    os.mkdir('made', dir_fd=d)",
+    "except PermissionError:",
+    "    print('REFUSED OUTSIDE MKDIR')",
+    "else:",
+    "    print('MADE OUTSIDE')",
+    "finally:",
+    "    os.close(d)",
+    "assert not os.path.lexists(os.path.join(beside, 'made')), 'the guard created made'",
+    "print('NO MADE')",
+    "inside = os.path.join(str(root), 'inside.txt')",
+    "with open(inside, 'w') as handle:",
+    "    handle.write('x')",
+    "fd = os.open(inside, os.O_RDWR)",
+    "try:",
+    "    os.ftruncate(fd, 0)",
+    "    assert os.fstat(fd).st_size == 0, os.fstat(fd).st_size",
+    "finally:",
+    "    os.close(fd)",
+    "print('TRUNCATED INSIDE')",
+]
+
+
+def root_of(done):
+    """Return the run root a child printed on its first line."""
+    head = done.stdout.splitlines()[0]
+    assert head.startswith("ROOT "), head
+    return Path(head.split(" ", 1)[1])
+
 
 class DescriptorPathTest(unittest.TestCase):
     def setUp(self):
@@ -97,13 +245,14 @@ class DescriptorPathTest(unittest.TestCase):
                     if key not in (isolation.POINTER, isolation.TOKEN, isolation.ORIGINALS)}
         self.env["TMPDIR"] = str(self.alias)
 
-    def child(self, body):
-        """Return the source of a child that hides /proc/self/fd, makes its run root under the alias's real target, and runs body."""
+    def child(self, body, simulate=True):
+        """Return the source of a child that hides /proc/self/fd when simulate is true, makes its run root under the alias's real target, and runs body."""
         under = f"assert str(root).startswith({os.path.realpath(self.real)!r} + os.sep), root"
-        return "\n".join(PREAMBLE + HEAD + [under] + body)
+        lines = (HIDE if simulate else []) + HEAD + RECORDER + (SIMULATION if simulate else []) + [under] + body
+        return "\n".join(lines)
 
-    def run_child(self, body):
-        return subprocess.run([sys.executable, "-c", self.child(body)], env=self.env,
+    def run_child(self, body, simulate=True):
+        return subprocess.run([sys.executable, "-c", self.child(body, simulate)], env=self.env,
                               capture_output=True, text=True, cwd=str(self.scratch))
 
     def test_a_process_without_procfs_writes_and_removes_inside_its_run_root_through_a_symlinked_tmpdir(self):
@@ -127,3 +276,55 @@ class DescriptorPathTest(unittest.TestCase):
         self.assertTrue((self.real / "beside" / "kept.txt").is_file())
         home = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
         self.assertFalse(os.path.lexists(os.path.join(home, "pstack-d11-probe")))
+
+    def test_a_delete_inside_the_run_root_through_a_directory_descriptor_passes(self):
+        done = self.run_child(DELETE_INSIDE)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("DELETED True", done.stdout)
+        self.assertIn("TREE GONE True", done.stdout)
+        root = root_of(done)
+        self.assertFalse(os.path.lexists(root / "sub" / "gone.txt"))
+        self.assertFalse(os.path.lexists(root / "deep"))
+
+    def test_a_delete_inside_a_protected_root_inside_the_run_root_through_a_directory_descriptor_is_refused(self):
+        done = self.run_child(DELETE_PROTECTED)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("REFUSED PROTECTED DELETE", done.stdout)
+        self.assertIn("KEPT PROTECTED True", done.stdout)
+        self.assertNotIn("DELETED PROTECTED", done.stdout)
+        self.assertTrue(os.path.lexists(root_of(done) / "guarded" / "kept.txt"))
+
+    def test_a_delete_through_a_descriptor_that_resolves_through_neither_is_refused_even_inside_the_run_root(self):
+        done = self.run_child(DELETE_UNPLACED)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("REFUSED UNPLACED DELETE", done.stdout)
+        self.assertIn("KEPT INSIDE True", done.stdout)
+        self.assertNotIn("DELETED UNPLACED", done.stdout)
+        self.assertTrue(os.path.lexists(root_of(done) / "sub" / "kept.txt"))
+
+    def test_a_truncate_and_a_mkdir_placed_outside_the_run_root_are_refused_and_a_truncate_inside_passes(self):
+        done = self.run_child(OUTSIDE)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("REFUSED OUTSIDE TRUNCATE", done.stdout)
+        self.assertIn("OUTSIDE SIZE 17", done.stdout)
+        self.assertIn("REFUSED OUTSIDE MKDIR", done.stdout)
+        self.assertIn("NO MADE", done.stdout)
+        self.assertIn("TRUNCATED INSIDE", done.stdout)
+        self.assertNotIn("TRUNCATED OUTSIDE", done.stdout)
+        self.assertNotIn("MADE OUTSIDE", done.stdout)
+        self.assertEqual((self.real / "outside.txt").stat().st_size, 17)
+        self.assertFalse(os.path.lexists(self.real / "made"))
+
+    @unittest.skipUnless(os.path.isdir("/proc/self/fd"), "this host has no /proc/self/fd")
+    def test_the_same_outsides_are_refused_through_the_proc_branch_with_proc_visible(self):
+        done = self.run_child(OUTSIDE, simulate=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("REFUSED OUTSIDE TRUNCATE", done.stdout)
+        self.assertIn("OUTSIDE SIZE 17", done.stdout)
+        self.assertIn("REFUSED OUTSIDE MKDIR", done.stdout)
+        self.assertIn("NO MADE", done.stdout)
+        self.assertIn("TRUNCATED INSIDE", done.stdout)
+        self.assertNotIn("TRUNCATED OUTSIDE", done.stdout)
+        self.assertNotIn("MADE OUTSIDE", done.stdout)
+        self.assertEqual((self.real / "outside.txt").stat().st_size, 17)
+        self.assertFalse(os.path.lexists(self.real / "made"))
