@@ -151,9 +151,24 @@ class _Full:
     unmapped: tuple
 
 
+class _PathTable(dict):
+    """A picker table where a key ending in `/*` answers for any path under that directory, so a test that reads a directory joined with names from a list maps every file in it."""
+
+    def get(self, key, default=None):
+        if key in self:
+            return self[key]
+        for pattern, value in self.items():
+            if pattern.endswith("/*") and key.startswith(pattern[:-1]):
+                return value
+        return default
+
+
 @dataclass(frozen=True)
 class _Closed:
     table: dict
+
+    def __post_init__(self):
+        object.__setattr__(self, "table", _PathTable(self.table))
 
 
 @dataclass(frozen=True)

@@ -287,9 +287,8 @@ def _canonicals(norm, gen_map):
     except Exception:
         return [norm]
     sources = sorted(t for t in twins if t.startswith("t3/"))
-    if sources:
-        return sources
-    return [norm]
+    others = sorted(t for t in twins if not t.startswith("t3/"))
+    return sources + others
 
 
 PIN_CHARS = 40
@@ -337,6 +336,32 @@ def _resolve_expr(node, singles):
                 return _resolve_expr(node.args[0], singles)
         return None
     return None
+
+
+def _read_prefix(node, singles):
+    """The directory a read's path expression starts with when the whole path cannot resolve."""
+    operands = []
+    cur = node
+    while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
+        operands.append(cur.right)
+        cur = cur.left
+    operands.append(cur)
+    spine = ""
+    resolved = False
+    for operand in reversed(operands):
+        got = _resolve_expr(operand, singles)
+        if got is None:
+            if not resolved:
+                return ""
+            break
+        resolved = True
+        if got:
+            spine = f"{spine}/{got}" if spine else got
+    else:
+        return ""
+    if not spine or spine.startswith("/") or ".." in spine.split("/") or "/" not in spine:
+        return ""
+    return _norm(spine)
 
 
 def _singles(mod):
@@ -395,6 +420,10 @@ def _load_refs(mod, singles):
                 got = _resolve_expr(inner, singles) if inner is not None else None
             if got and _looks_repo(got):
                 found.add(got)
+            else:
+                prefix = _read_prefix(recv, singles)
+                if prefix:
+                    found.add(prefix + "/*")
         elif is_proc:
             if not sub.args:
                 continue
