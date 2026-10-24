@@ -61,6 +61,7 @@ class TicketFlows:
 
     def send_back(self, sha, *extra):
         return self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", "send-back",
+                            "--reason", "other",
                             "--author", CODEX, "--verifier", CLAUDE, *extra)
 
 

@@ -38,6 +38,7 @@ class ArchiveThreadsTest(BrigadeTest):
 
     def record_send_back(self, *extra):
         return self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                            "--reason", "other",
                             "--author", CLAUDE, "--verifier", CODEX, *extra)
 
     def record_pass(self, *extra):
@@ -47,6 +48,7 @@ class ArchiveThreadsTest(BrigadeTest):
     def test_pass_record_send_back_with_reviewer_thread_prints_only_that_thread(self):
         self.fired_bug_fix()
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_A),
                          [f"archive thread: {THREAD_A}"])
@@ -61,6 +63,7 @@ class ArchiveThreadsTest(BrigadeTest):
     def test_pass_record_without_reviewer_thread_prints_nothing(self):
         self.fired_bug_fix()
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX), [])
 
     def test_fix_round_thread_prints_the_replaced_worker_only(self):

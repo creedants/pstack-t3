@@ -26,6 +26,7 @@ class ItemsNextTest(BrigadeTest):
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
         for number in range(3):
             self.brigade("pass", "record", "D1", "--sha", f"s{number}", "--verdict", "send-back",
+                         "--reason", "other",
                          "--author", CLAUDE, "--verifier", CODEX, "--late")
         inbox = self.at / "inbox"
         inbox.mkdir()

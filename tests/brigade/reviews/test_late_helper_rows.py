@@ -44,12 +44,14 @@ class LateHelperRowTest(BrigadeTest):
         self.brigade("dish", "D1", "--state", "in-progress")
         self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C, "--late"),
                          [f"archive thread: {THREAD_C}"])
         self.brigade("dish", "D1", "--thread", THREAD_D)
         self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}", f"archive thread: {THREAD_B}"])
@@ -63,9 +65,11 @@ class LateHelperRowTest(BrigadeTest):
         self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
         self.brigade("dish", "D1", "--thread", THREAD_D)
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, "--member"),
                          "D1: member send-back on record; D1 stays in-progress")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}"])
@@ -77,6 +81,7 @@ class LateHelperRowTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_D)
         self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C, "--late"),
                          [f"archive thread: {THREAD_C}"])
@@ -85,6 +90,7 @@ class LateHelperRowTest(BrigadeTest):
         self.assertIn(THREAD_B, (self.at / "threads.tsv").read_text())
         self.attempt_report("findings\n")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}"])
@@ -99,6 +105,7 @@ class LateHelperRowTest(BrigadeTest):
         self.brigade("dish", "D1", "--state", "in-progress")
         self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}", f"archive thread: {THREAD_B}"])
@@ -106,6 +113,7 @@ class LateHelperRowTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_D)
         self.attempt_report(f"findings\n\n## Threads\n\n{HELPER}")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}"])

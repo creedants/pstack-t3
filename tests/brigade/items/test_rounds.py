@@ -25,6 +25,7 @@ class RoundsMixin:
         self.fired_bug_fix()
         self.record("abc", "pass")
         self.assertEqual(self.brigade("pass", "record", "D1", "--pr", "u/9", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", "grok/grok-4.7", "--note", "nit", "--member"),
                          "D1: member send-back on record; D1 stays passed")
         self.assertEqual(self.dish_fields("state", "pr", "sha"), ("passed", "", "abc"))
@@ -170,7 +171,7 @@ class RoundsMixin:
         self.started()
         self.sent_back(2)
         for seat in ("grok/grok-4.7", "opencode/kimi-k3"):
-            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a2", "--verdict", "send-back", "--author", CODEX,
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a2", "--verdict", "send-back", "--reason", "other", "--author", CODEX,
                                           "--verifier", seat, "--member"),
                              "D1: member send-back on record; D1 stays sent-back")
         self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back")
@@ -186,6 +187,7 @@ class RoundsMixin:
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "s")
         self.brigade("fire", "--tickets", "T1", "--station", "bug-fix", "--summary", "Fix s")
         self.brigade("pass", "record", "D1", "--pr", "u/1", "--sha", "abc", "--verdict", "send-back",
+                     "--reason", "other",
                      "--author", CLAUDE, "--verifier", CODEX, "--note", "test asserts the bug")
         self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "abc", ok=False),
                          "brigade: D1 at abc: send-back (test asserts the bug)")

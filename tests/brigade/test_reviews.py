@@ -157,7 +157,7 @@ class ReviewsTest(BrigadeTest):
         elsewhere.mkdir()
         (elsewhere / "D1-review-1.md").write_text("another file\n")
         before = (self.at / "pass.tsv").read_bytes()
-        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         for report in (str(elsewhere / "D1-review-1.md"), "no/such/dir/D1-review-1.md"):
             self.assertEqual(self.brigade(*record, "--report", report, ok=False),
                              f"brigade: {report} is outside this store's reports/; name reports/D1-review-1.md")
@@ -175,7 +175,7 @@ class ReviewsTest(BrigadeTest):
         (reports / "D1-review-3.md").symlink_to(outside / "gone.md")
         self.record("abc", "send-back", "--report", "D1-review-4.md")
         before = (self.at / "pass.tsv").read_bytes()
-        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         self.assertEqual(self.brigade(*record, "--report", "D1-review-1.md", ok=False),
                          "brigade: reports/D1-review-1.md is not a regular file; nothing recorded")
         self.assertEqual(self.brigade(*record, "--report", "D1-review-2.md", ok=False),
@@ -192,6 +192,7 @@ class ReviewsTest(BrigadeTest):
     def test_a_member_send_back_recorded_before_the_passing_rows_changes_no_verdict(self):
         self.fired_bug_fix()
         self.assertEqual(self.brigade("pass", "record", "D1", "--pr", "u/9", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", "grok/grok-4.7", "--note", "nit", "--member"),
                          "D1: member send-back on record; D1 stays in-progress")
         self.assertEqual(self.dish_fields("state", "pr", "sha"), ("in-progress", "", ""))
@@ -202,11 +203,11 @@ class ReviewsTest(BrigadeTest):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(json.loads(out), {"verdict": "pass", "author": CLAUDE, "verifier": CODEX, "note": "", "crossFamily": True})
         self.assertEqual([row[4:] for row in self.pass_rows()],
-                         [["send-back", CLAUDE, "grok/grok-4.7", "nit", "", "yes", ""], ["pass", CLAUDE, CODEX, "", "", "", ""]])
+                         [["send-back", CLAUDE, "grok/grok-4.7", "nit", "", "yes", "other"], ["pass", CLAUDE, CODEX, "", "", "", ""]])
 
     def test_a_member_row_follows_the_family_rule_and_takes_no_late_flag(self):
         self.fired_bug_fix()
-        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--member")
+        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--member")
         self.assertIn("same model family", self.brigade(*member, "--verifier", "cursor/claude-sonnet-5-5", ok=False))
         self.assertIn("not allowed with argument", self.brigade(*member, "--verifier", CODEX, "--late", ok=False))
         self.assertEqual(self.pass_rows(), [])
@@ -230,6 +231,7 @@ class ReviewsTest(BrigadeTest):
                                   f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n"
                                   f"- claims check `{THREAD_C}` {CODEX}\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_D),
                          "D1 sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
@@ -239,6 +241,7 @@ class ReviewsTest(BrigadeTest):
                           ["D1", "1", "claims check", THREAD_C, CODEX, "", "stamp"]])
         after = (self.at / "threads.tsv").read_bytes()
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_D,
                                       "--same-family"), "D1 sent-back")
         self.assertEqual((self.at / "threads.tsv").read_bytes(), after)
@@ -251,6 +254,7 @@ class ReviewsTest(BrigadeTest):
         self.review_file("D1.md", "findings\n\n## Threads\n\n"
                                   f"- claims check `{THREAD_B}` grok/grok-4.7\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
@@ -258,6 +262,7 @@ class ReviewsTest(BrigadeTest):
         self.review_file("D1.md", "findings\n\n## Threads\n\n- claims check\n")
         before = self.store_files()
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "ghi", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
                          "brigade: D1: reports/D1.md cannot be read; line 5 is not one list item of the form "
                          "- <role> `<thread id>` <seat>; nothing recorded")
@@ -274,6 +279,7 @@ class ReviewsTest(BrigadeTest):
                                   "Both children finished before the reviewer read the report.\n"
                                   f"- claims check `{THREAD_C}` {CODEX}\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
@@ -287,6 +293,7 @@ class ReviewsTest(BrigadeTest):
                                   f"- code delegate {THREAD_B} opencode-go/step-5-preview-free\n")
         before = self.store_files()
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
                          "brigade: D1: reports/D1.md cannot be read; line 5 is not one list item of the form "
                          "- <role> `<thread id>` <seat>; nothing recorded")
