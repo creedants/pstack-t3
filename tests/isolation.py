@@ -417,6 +417,12 @@ def _guard_create(path_index: int, fd_index: int | None):
     return guard
 
 
+def _guard_link(event: str, args: tuple) -> None:
+    """A hard link is a second name for its source, so a write through it lands in the source. The source follows the write rule."""
+    _deny_write(event, args[0], _arg(args, 2), _real)
+    _deny_write(event, args[1], _arg(args, 3), _entry)
+
+
 def _guard_change(fd_index: int | None):
     def guard(event: str, args: tuple) -> None:
         _deny_write(event, args[0], _arg(args, fd_index), _real)
@@ -506,7 +512,7 @@ _HANDLERS = {
     "os.rename": _guard_rename,
     "os.mkdir": _guard_create(0, 2),
     "os.symlink": _guard_create(1, 2),
-    "os.link": _guard_create(1, 3),
+    "os.link": _guard_link,
     "os.truncate": _guard_change(None),
     "os.chmod": _guard_change(2),
     "os.utime": _guard_change(3),

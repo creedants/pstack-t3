@@ -178,6 +178,13 @@ class DescriptorAndModeTest(Fixture):
                 self.assertUnchanged()
         sqlite3.connect(":memory:").close()
 
+    def test_a_hard_link_in_the_run_root_to_a_protected_file_is_refused_so_no_write_reaches_it(self):
+        alias = self.link.parent / "alias"
+        with self.assertRaises(PermissionError):
+            os.link(self.protected / "file", alias)
+        self.assertFalse(os.path.lexists(alias))
+        self.assertUnchanged()
+
 
 class RenameTest(unittest.TestCase):
     def test_a_rename_that_removes_a_path_outside_the_run_root_is_refused_and_both_paths_stay(self):
