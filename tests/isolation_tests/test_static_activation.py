@@ -26,7 +26,7 @@ class ActivationTest(unittest.TestCase):
             with self.subTest(area=path.parent.name):
                 self.assertTrue(activates(path), f"tests/{path.parent.name}/__init__.py does not call isolation.install()")
 
-    def test_every_top_level_facade_calls_install_before_any_project_import(self):
+    def test_every_top_level_facade_calls_install_in_its_module_body(self):
         paths = sorted(TESTS.glob("test_*.py"))
         self.assertGreater(len(paths), 0)
         for path in paths:

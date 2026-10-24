@@ -1,9 +1,10 @@
 """Isolate a test process from the user's real home.
 
-Importing this module has no side effect. `install()` is the one entry. It makes or adopts a run
-root, points HOME, the five XDG variables, and TMPDIR into it, and installs one audit hook. The hook
-refuses a delete outside the run root and a write inside a protected real root. An activation failure
-raises SystemExit, so a process can never fall back to a real path.
+Importing this module has no side effect. `install()` is the one entry. Without the pointer it makes
+a run root and points HOME, the five XDG variables, and TMPDIR into it. With the pointer it adopts
+that run root and verifies the variables. Either way it installs one audit hook. The hook refuses a
+delete outside the run root and a write inside a protected real root outside the checkout. An
+activation failure raises SystemExit, so a process can never fall back to a real path.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
 XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state directory.
@@ -119,7 +120,8 @@ def root() -> Path:
 
 
 def install() -> Path:
-    """Create or adopt the run root, point the environment at it, and install the guard. Idempotent per process."""
+    """Create the run root and point the environment at it, or adopt and verify the one the pointer
+    names, then install the guard. Idempotent per process."""
     global _root, _protected
     if _root is not None:
         return Path(_root)
