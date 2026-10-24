@@ -23,7 +23,7 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import seam, spend
 from brigade_lib._notes import share_lines
 from brigade_lib.leases import holding_blocks
-from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, send_back_section
+from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, hit_section, send_back_section
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural
 from brigade_lib.store import CLOSED_GOAL_STATES, KINDS, Restaurant, holder_prefix, is_admin, parse_row, reporting_of, siblings, store_path
 from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell
@@ -99,6 +99,7 @@ def report(restaurant, write=True):
     if len(lines) == 4:
         lines += ["Nothing new.", ""]
     lines += send_back_section(restaurant.rows("pass.tsv"), stamp)
+    lines += hit_section(restaurant.rows("pass.tsv"), restaurant.rows("edits.tsv"), restaurant.rows("86.tsv"), stamp)
     lines += spend_section(restaurant, since)
     lines += share_lines(restaurant)
     text = "\n".join(lines)

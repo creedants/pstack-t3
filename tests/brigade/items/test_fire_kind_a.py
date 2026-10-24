@@ -44,6 +44,7 @@ class FireKindAMixin:
         self.assertEqual(out["ticket list"], "T1 assigned normal [user] s")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## In progress", "", "- D1 (T1): Fix s",
                                                                   "", "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.",
+                                                                  "", "## Reviewer hit rate (last 7 days)", "", "No reviewed rounds in the last 7 days.",
                                                                   "", "## Spend", "",
                                                                   "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded",
                                                                   "", "## Follow-up share", "",
@@ -58,6 +59,7 @@ class FireKindAMixin:
         self.assertEqual(self.close_run("--dry-run")[1].splitlines()[4:],
                          ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- polish T2: b",
                           "", "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.",
+                          "", "## Reviewer hit rate (last 7 days)", "", "No reviewed rounds in the last 7 days.",
                           "", "## Spend", "", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded",
                           "", "## Follow-up share", "",
                           "- 0 of 2 tickets created in the last 14 days came from a report (0%)."])

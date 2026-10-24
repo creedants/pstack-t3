@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.items import announce_archive
-from brigade_lib.reviews import latest_verdict, pass_check, pass_json, pass_stats, reason_refusal, record_pass, round_decision, verify_edits, write_threads
+from brigade_lib.reviews import latest_verdict, pass_check, pass_hits, pass_json, pass_stats, reason_refusal, record_pass, round_decision, verify_edits, write_threads
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import EDITS_VERDICT, REASONS, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
 from brigade_lib.wake import closing_options, open_item_decisions, option_key
@@ -120,6 +120,31 @@ def register_pass(sub):
     a = t.add_parser("stats", help=stats_help, description=stats_help)
     a.add_argument("--last", type=non_negative_int, default=20,
                    help="how many items to cover, counting back from the most recently reviewed; default 20")
+    hits_help = (
+        "Print a per-reviewer table of rounds, passes, pass-with-edits rounds, send-backs, upheld and overruled "
+        "findings, and the upheld rate, over the last N days.\n"
+        "\n"
+        "A row counts for the verifier its verifier cell names, including a --member row and a --late row. "
+        "Rows are judged in table order. A round is one pass.tsv row whose at cell is at or after the window's "
+        "start, which is the given number of days back from now.\n"
+        "\n"
+        "A send-back is upheld when the same dish's next recorded round is at a different SHA. It is overruled "
+        "when the dish's next recorded verdict is a pass at the same SHA, or when the dish's round-budget decision "
+        "was answered known limits or drop after the send-back row's at cell and no later non-member row of the "
+        "dish is at another SHA. A send-back that neither rule settles counts in neither upheld nor overruled. "
+        "A pass-with-edits round is "
+        "upheld when edits.tsv recorded the edits for the dish from that row's SHA and that row's report, and "
+        "counts in neither otherwise. A pass round and a blocked round are rounds and nothing more, and a "
+        "send-back that is still pending counts as a send-back round.\n"
+        "\n"
+        "The upheld rate is upheld over upheld plus overruled, one decimal place, and n/a when a seat has "
+        "neither. A member row settles nothing for the dish, so the next recorded round is always a non-member "
+        "row, but a member row still counts as a round for its own seat and is judged by these definitions. An "
+        "empty window prints no reviewed rounds in the last N days."
+    )
+    a = t.add_parser("hits", help=hits_help, description=hits_help)
+    a.add_argument("--last", type=non_negative_int, default=7,
+                   help="how many days to cover, counting back from now; default 7")
 
 
 def register_edits(sub):
@@ -166,6 +191,8 @@ def handle(restaurant, args):
         return verify_edits(restaurant, args.dish, args.from_sha, args.to)
     if args.command == "pass" and args.action == "stats":
         return pass_stats(restaurant, args.last)
+    if args.command == "pass" and args.action == "hits":
+        return pass_hits(restaurant, args.last)
     if args.command == "pass" and args.action == "record" and (refusal := reason_refusal(args.verdict, args.reason)):
         raise BrigadeError(refusal)
     if args.command in ("thread", "pass", "86"):
