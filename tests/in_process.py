@@ -18,10 +18,11 @@ from dataclasses import dataclass
 
 from tests import isolation
 
-__all__ = ["Reason", "Invocation", "invoke", "finished", "spawn"]
+__all__ = ["Reason", "Invocation", "invoke", "finished", "spawn", "runs_here"]
 
 _MISSING = object()
 _depth = 0
+_runs_here = 0
 _interpreter_filters = list(warnings.filters)
 
 
@@ -412,6 +413,8 @@ def _execute(saved, invocation):
 
 
 def _run_here(invocation):
+    global _runs_here
+    _runs_here += 1
     parent_encoding = _pipe_encoding()
     saved = _save()
     try:
@@ -422,6 +425,11 @@ def _run_here(invocation):
         stdout = _text_from_pipe(stdout, parent_encoding)
         stderr = _text_from_pipe(stderr, parent_encoding)
     return subprocess.CompletedProcess(_command(invocation), code, stdout, stderr)
+
+
+def runs_here() -> int:
+    """Return how many invocations this process has run itself instead of starting a real interpreter."""
+    return _runs_here
 
 
 def invoke(invocation):

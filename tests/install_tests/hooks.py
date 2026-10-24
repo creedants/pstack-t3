@@ -147,7 +147,7 @@ def interleave_removal(home, checkout, paths, call, *args, occupy=None):
         cwd=home,
     ))
 
-def uninstall_hooked(home, checkout, code, *, reason=None):
+def uninstall_hooked(home, checkout, code, *, reason=None, env=None):
     """Run this checkout's uninstall with `code` run first against the loaded installer, named `module`."""
     wrapper, installer = _wrapper(home, "hooked", checkout)
     wrapper.write_text(
@@ -163,7 +163,7 @@ def uninstall_hooked(home, checkout, code, *, reason=None):
     invocation = in_process.Invocation(
         program=wrapper,
         argv=("--harness", "grok", "uninstall"),
-        env=_env(home),
+        env={**_env(home), **(env or {})},
         cwd=home,
     )
     if reason is None:

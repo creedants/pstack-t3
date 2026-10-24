@@ -8,13 +8,13 @@ variable resolves inside it. Every install, the first and each repeat, rereads t
 raises SystemExit on the first value that escapes, so an install that finds a variable outside the
 run root stops the process instead of letting it use a real path.
 
-The guard is one audit hook, a wrapper around os.open, and a replacement os.environ.clear. Every
-check resolves symlinks in the directory part of a path first, and a delete or rename acts on a final
-symlink name itself. A delete, a rename source, and a replaced rename destination must sit inside the
-run root. A create, a write, a mode or time change, and a sqlite3 database must not sit inside a
-protected real root outside the checkout. Removing a guarded variable is refused, and so is setting
-one of them except the token to a relative or protected value. Setting any of them, the token
-included, to an empty value is refused. os.environ.clear() keeps the guarded variables.
+The guard is one audit hook, wrappers around os.open, os.mkfifo, and os.mknod, and a replacement
+os.environ.clear. Its filesystem path checks resolve symlinks in the directory part first. A checked
+delete or rename acts on a final symlink name itself. Checked deletes, rename sources, and replaced
+rename destinations must sit inside the run root. The write handlers check protected real roots
+outside the checkout. SQLite ATTACH remains unguarded. Removing a guarded variable is refused, and
+so is setting one of them except the token to a relative or protected value. Setting any of them, the
+token included, to an empty value is refused. os.environ.clear() keeps the guarded variables.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
 XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state directory.
@@ -36,6 +36,7 @@ from pathlib import Path
 
 POINTER = "PSTACK_TEST_HOME_ROOT"
 TOKEN = "PSTACK_TEST_HOME_TOKEN"
+ORIGINALS = "PSTACK_TEST_PROTECTED_ROOTS"
 MARKER = ".pstack-t3-test-home"
 
 _LAYOUT = {
@@ -55,8 +56,11 @@ _WRITE_FLAGS = os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_TRUNC
 _root: str | None = None
 _protected: tuple[str, ...] = ()
 _armed = False
+_created: set[str] = set()
 _local = threading.local()
 _os_open = os.open
+_os_mkfifo = getattr(os, "mkfifo", None)
+_os_mknod = getattr(os, "mknod", None)
 
 
 def _real(path) -> str:
@@ -88,6 +92,7 @@ def _real_roots(root: str | None, environ) -> tuple[str, ...]:
     A value that is root or below it belongs to root, so it is not protected. A value that holds root
     is not protected either, which covers an enclosing run root that a nested runner makes. The real
     home from pwd is always protected, even when it holds root, so adopting a root inside it is refused.
+    The roots a caller recorded in ORIGINALS are appended whatever else the environment says.
     Nothing here lists a directory.
     """
     found: list[str] = []
@@ -106,7 +111,34 @@ def _real_roots(root: str | None, environ) -> tuple[str, ...]:
             continue
         if text not in found:
             found.append(text)
+    for text in _original_roots(environ):
+        if text not in found:
+            found.append(text)
     return tuple(found)
+
+
+def _original_roots(environ) -> tuple[str, ...]:
+    """Return the protected real roots a caller recorded in environ, without an empty or relative entry."""
+    found: list[str] = []
+    for entry in environ.get(ORIGINALS, "").split(os.pathsep):
+        if not entry or not os.path.isabs(entry):
+            continue
+        text = _real(entry)
+        if text not in found:
+            found.append(text)
+    return tuple(found)
+
+
+def remember_originals() -> tuple[str, ...]:
+    """Record the protected real roots this process starts with in ORIGINALS, and return them.
+
+    A runner calls this once, before it rewrites the environment of each child, so the child protects
+    the caller's original home directories as well as its own run root.
+    """
+    pointer = os.environ.get(POINTER, "")
+    roots = _real_roots(_real(pointer) if os.path.isabs(pointer) else None, os.environ)
+    os.environ[ORIGINALS] = os.pathsep.join(roots)
+    return roots
 
 
 def _protected_write(real: str) -> bool:
@@ -139,24 +171,57 @@ def layout(root) -> dict[str, str]:
     return {name: os.path.join(base, part) for name, part in _LAYOUT.items()}
 
 
+def allocate(base=None) -> Path:
+    """Make a directory this process owns, under base or beside the run root, and return it.
+
+    A guarded process hands out only a directory it created, so every path made here is recorded.
+    """
+    parent = _real(base) if base is not None else _base(_protected)
+    created = _real(tempfile.mkdtemp(prefix="pstack-tests-", dir=parent))
+    _created.add(created)
+    return Path(created)
+
+
+def _handout(path) -> str:
+    """Return the real path a guarded process may write a marker or a hand-built home into.
+
+    An unarmed process may write anywhere. An armed one may write inside its run root, or into a
+    directory it allocated here. Any other directory predates the run, so a child handed it could
+    delete data this run never made.
+    """
+    real = _real(path)
+    if not _armed or _root is None or _within(real, _root) or real in _created:
+        return real
+    raise PermissionError(
+        f"the test isolation guard refuses {real!r} because it is outside the run root {_root!r} "
+        "and this process did not create it"
+    )
+
+
 def mark(root) -> str:
     """Write the marker that lets a child adopt root, owned by this process and this user, and return its token."""
     token = secrets.token_hex(16)
-    path = os.path.join(os.fspath(root), MARKER)
+    active = _handout(root)
+    info = os.lstat(active)
+    path = os.path.join(active, MARKER)
     with open(path, "w", encoding="utf-8") as marker:
-        json.dump({"uid": os.getuid(), "pid": os.getpid(), "token": token}, marker)
+        json.dump({"uid": os.getuid(), "pid": os.getpid(), "token": token,
+                   "device": info.st_dev, "inode": info.st_ino}, marker)
     return token
 
 
 def worker_env(env: dict[str, str], home) -> dict[str, str]:
     """Return env with the seven variables, the pointer, and the token set to the shard home, creating its directories and marker."""
-    values = layout(home)
+    active = _handout(home)
+    values = layout(active)
     for name, path in values.items():
         os.makedirs(path, mode=0o700 if name == "XDG_RUNTIME_DIR" else 0o777, exist_ok=True)
     environ = dict(env)
     environ.update(values)
-    environ[POINTER] = os.path.abspath(os.fspath(home))
-    environ[TOKEN] = mark(home)
+    environ[POINTER] = active
+    environ[TOKEN] = mark(active)
+    # The child protects the caller's roots outside its own home, so a hand-built environment carries them too.
+    environ[ORIGINALS] = os.pathsep.join(_real_roots(active, env))
     return environ
 
 
@@ -193,6 +258,8 @@ def install() -> Path:
         sys.pycache_prefix = os.path.join(active, "pycache")
     _root = active
     _protected = tuple(dict.fromkeys(_protected + protected))
+    # A subprocess of a test inherits these, so a nested runner keeps protecting the originals.
+    os.environ[ORIGINALS] = os.pathsep.join(_protected)
     _arm()
     _check(active)
     _probe(active)
@@ -239,12 +306,19 @@ def _verify_marker(active: str, token: str) -> None:
         with open(path, encoding="utf-8") as marker:
             record = json.load(marker)
         uid, pid, written = record["uid"], record["pid"], record["token"]
+        device, inode = record["device"], record["inode"]
     except (OSError, ValueError, KeyError, TypeError) as problem:
         raise _fail(f"the run root {active!r} has no readable marker {MARKER}: {problem}") from None
     if uid != os.getuid():
         raise _fail(f"the marker of {active!r} names uid {uid!r}, not this user")
+    try:
+        current = os.lstat(active)
+    except OSError:
+        raise _fail(f"the run root {active!r} has no marker {MARKER} to compare") from None
+    if (device, inode) != (current.st_dev, current.st_ino):
+        raise _fail(f"the marker of {active!r} was written for another directory, so no run made this one")
     if not token or written != token:
-        raise _fail(f"the marker of {active!r} does not hold the token in {TOKEN}, so no run of this process made it")
+        raise _fail(f"the marker of {active!r} does not hold the token in {TOKEN}")
     if not isinstance(pid, int) or pid <= 0:
         raise _fail(f"the marker of {active!r} names no process: {pid!r}")
     try:
@@ -257,8 +331,7 @@ def _verify_marker(active: str, token: str) -> None:
 
 def _create(protected: tuple[str, ...]) -> str:
     """Make a fresh marked run root outside every protected real root, point the environment at it, and return it."""
-    base = _base(protected)
-    active = _real(tempfile.mkdtemp(prefix="pstack-tests-", dir=base))
+    active = str(allocate(_base(protected)))
     for real in protected:
         if _within(active, real):
             raise _fail(f"the new run root {active!r} is inside the real path {real!r}")
@@ -315,13 +388,19 @@ def _probe(active: str) -> None:
 
 
 def _arm() -> None:
-    """Add the audit hook, the os.open wrapper, and the os.environ.clear replacement, once per process."""
+    """Add the audit hook, the function wrappers, and the os.environ.clear replacement, once per process."""
     global _armed
     if _armed:
         return
     sys.addaudithook(_hook)
     os.open = _open
     os.supports_dir_fd.add(_open)
+    if _os_mkfifo is not None:
+        os.mkfifo = _mkfifo
+        os.supports_dir_fd.add(_mkfifo)
+    if _os_mknod is not None:
+        os.mknod = _mknod
+        os.supports_dir_fd.add(_mknod)
     os.environ.clear = _clear_environ
     _armed = True
 
@@ -339,6 +418,21 @@ def _open(path, flags, mode=0o777, *, dir_fd=None):
         if not inside(target) or any(_within(target, base) for base in _protected):
             raise _refuse("os.open", "write", target, f"outside the run root {_root!r} or inside a protected root")
     return _os_open(path, flags, mode, dir_fd=dir_fd)
+
+
+def _mkfifo(path, mode=0o666, *, dir_fd=None):
+    """os.mkfifo, refusing an entry outside the run root or inside a protected root.
+
+    CPython raises no audit event for this call, so the guard wraps it as it wraps os.open.
+    """
+    _deny_write("os.mkfifo", path, dir_fd, _entry)
+    return _os_mkfifo(path, mode, dir_fd=dir_fd)
+
+
+def _mknod(path, mode=0o600, device=0, *, dir_fd=None):
+    """os.mknod, refusing an entry outside the run root or inside a protected root."""
+    _deny_write("os.mknod", path, dir_fd, _entry)
+    return _os_mknod(path, mode, device, dir_fd=dir_fd)
 
 
 def _clear_environ() -> None:
@@ -506,7 +600,7 @@ def _guard_putenv(event: str, args: tuple) -> None:
 def _guard_unsetenv(event: str, args: tuple) -> None:
     key = os.fsdecode(args[0])
     if key in _GUARDED:
-        raise _refuse(event, "removal", key, "because the process would fall back to the real home")
+        raise _refuse(event, "removal", key, "because it is required by the test isolation environment")
 
 
 _HANDLERS = {
@@ -520,6 +614,7 @@ _HANDLERS = {
     "os.truncate": _guard_change(None),
     "os.chmod": _guard_change(2),
     "os.utime": _guard_change(3),
+    "os.chown": _guard_change(3),
     "open": _guard_open,
     "sqlite3.connect": _guard_sqlite,
     "os.putenv": _guard_putenv,
