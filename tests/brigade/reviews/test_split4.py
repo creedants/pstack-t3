@@ -267,7 +267,7 @@ class ReviewsSplit4Test(BrigadeTest):
         self.record("abc", "pass")
         self.brigade("dish", "D1", "--state", "merged")
         self.brigade("dish", "D4", "--state", "in-review", "--sha", "def")
-        self.brigade("pass", "record", "D4", "--sha", "def", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
+        self.brigade("pass", "record", "D4", "--sha", "def", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX,
                      "--note", "still hangs")
         code, out, err = self.close_run("--dry-run")
         self.assertEqual((code, err), (0, ""))
@@ -289,6 +289,7 @@ class ReviewsSplit4Test(BrigadeTest):
             "### Unassigned", "",
             "- polish T8: Tidy the docs",
             "- T9: Installer",
+            "", "## Send-back reasons (last 7 days)", "", "other 1",
             "", "## Spend", "",
             "goal not recorded  wall 0m (1 open)  rounds 1  send-backs 0  threads not recorded",
             "G1  wall open  rounds 0  send-backs 0  threads not recorded",

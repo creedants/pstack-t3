@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.items import announce_archive
-from brigade_lib.reviews import latest_verdict, pass_check, pass_json, pass_stats, record_pass, round_decision, verify_edits, write_threads
+from brigade_lib.reviews import latest_verdict, pass_check, pass_json, pass_stats, reason_refusal, record_pass, round_decision, verify_edits, write_threads
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import EDITS_VERDICT, REASONS, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
 from brigade_lib.wake import closing_options, open_item_decisions, option_key
@@ -100,8 +100,8 @@ def register_pass(sub):
     a.add_argument("--reviewer-thread", default="",
                    help="the reviewer's thread id; writes the reviewer row of threads.tsv for this attempt")
     a.add_argument("--reason", default="", choices=REASONS,
-                   help=f"why the review sent the work back, one of {', '.join(REASONS)}; --reason goes only with "
-                        "--verdict send-back")
+                   help=f"why the review sent the work back, one of {', '.join(REASONS)}; a send-back verdict needs "
+                        "it, and no other verdict takes it")
     kind = a.add_mutually_exclusive_group()
     kind.add_argument("--member", action="store_true",
                       help="a panel member's row that does not carry the item's verdict; the dish is left as it is")
@@ -166,6 +166,8 @@ def handle(restaurant, args):
         return verify_edits(restaurant, args.dish, args.from_sha, args.to)
     if args.command == "pass" and args.action == "stats":
         return pass_stats(restaurant, args.last)
+    if args.command == "pass" and args.action == "record" and (refusal := reason_refusal(args.verdict, args.reason)):
+        raise BrigadeError(refusal)
     if args.command in ("thread", "pass", "86"):
         with restaurant.checked():
             return seam.command(restaurant, args)

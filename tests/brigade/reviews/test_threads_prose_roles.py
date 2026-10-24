@@ -32,6 +32,7 @@ class ThreadsProseRoleTest(BrigadeTest):
                                   f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n"
                                   f"{PROSE}\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
@@ -44,6 +45,7 @@ class ThreadsProseRoleTest(BrigadeTest):
                                   f"{PROSE}\n"
                                   f"- claims check `{THREAD_C}` {CODEX}\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""],
@@ -57,6 +59,7 @@ class ThreadsProseRoleTest(BrigadeTest):
                                   f"- claims check {THREAD_C} {CODEX}\n")
         before = self.store_files()
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
                          "brigade: D1: reports/D1.md cannot be read; line 6 is not one list item of the form "
                          "- <role> `<thread id>` <seat>; nothing recorded")

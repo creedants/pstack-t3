@@ -97,7 +97,7 @@ class UsageLimitDocChecks:
             "`<restaurant dir>/reports/<dish>-review-<k>-panel-<n>.md`",
             rows,
             passes,
-            "record that member's `send-back` with no other flag and every other member with `--member`",
+            "record that member's `send-back` with `--reason <reason>` and every other member with `--member`",
             "When fewer than two pass and none reproduces a blocker, record every member with `--member`, "
             "and the dish stays in review as on `park`.",
             resumed,

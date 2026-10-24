@@ -53,14 +53,14 @@ class ReviewsSplit5Test(BrigadeTest):
         ])
         self.fresh()
         review = self.next_sheet("review", "D1", "--verdict", "send-back")
-        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         self.assertEqual(self.execute_conditionals(review), ["dish D1 --state in-progress"])
         self.fresh()
-        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
-        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         owed = self.next_sheet("review", "D1", "--verdict", "send-back")
         self.assertIn("if D1 reaches the round budget and no decision is open: run 86 add --dish D1 --round-budget", owed)
-        self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         self.assertEqual(self.execute_commands([["86", "add", "--dish", "D1", "--round-budget"]]),
                          ["86 add --dish D1 --round-budget"])
         shutil.rmtree(self.at)
@@ -82,29 +82,30 @@ class ReviewsSplit5Test(BrigadeTest):
         below = self.next_sheet("review", "D1", "--verdict", "send-back")
         self.assertIn("if the old worker's wait for D1 is terminal and D1 may take a fix round: run dish D1 --state in-progress", below)
         self.assertNotIn("round-budget", below)
-        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         self.assertEqual(self.execute_conditionals(below), ["dish D1 --state in-progress"])
         self.fresh()
         for number in range(3):
             self.brigade("pass", "record", "D1", "--sha", f"s{number}", "--verdict", "send-back",
+                         "--reason", "other",
                          "--author", CLAUDE, "--verifier", CODEX)
         owed = self.next_sheet("review", "D1", "--verdict", "send-back")
         self.assertIn("\nrun 86 add --dish D1 --round-budget\n", f"\n{owed}\n")
         self.assertNotIn("run dish D1 --state in-progress", owed)
         self.execute_sheet(owed)
         self.fresh()
-        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
-        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         crossing = self.next_sheet("review", "D1", "--verdict", "send-back")
         self.assertIn("if D1 reaches the round budget and no decision is open: run 86 add --dish D1 --round-budget", crossing)
         self.assertNotIn("run dish D1 --state in-progress", crossing)
-        self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s3", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         self.assertEqual(self.execute_conditionals(crossing), ["86 add --dish D1 --round-budget"])
 
     def test_next_restarts_a_pass_with_edits_review_after_two_send_backs(self):
         self.fresh()
-        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
-        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s1", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
+        self.brigade("pass", "record", "D1", "--sha", "s2", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX)
         sheet = self.next_sheet("review", "D1", "--verdict", "pass-with-edits")
         self.assertIn(
             "if the old worker's wait for D1 is terminal and D1 may take a fix round: run dish D1 --state in-progress",
@@ -119,6 +120,7 @@ class ReviewsSplit5Test(BrigadeTest):
         self.fresh()
         for number in range(3):
             self.brigade("pass", "record", "D1", "--sha", f"s{number}", "--verdict", "send-back",
+                         "--reason", "other",
                          "--author", CLAUDE, "--verifier", CODEX)
         at_budget = self.next_sheet("review", "D1", "--verdict", "pass-with-edits")
         self.assertNotIn("run dish D1 --state in-progress", at_budget)
@@ -175,6 +177,7 @@ class ReviewsSplit5Test(BrigadeTest):
         self.brigade("pass", "record", "D2", "--sha", "d2a", "--verdict", "send-back",
                      "--author", CLAUDE, "--verifier", CODEX, "--reason", "missing-test")
         self.brigade("pass", "record", "D2", "--sha", "d2b", "--verdict", "send-back",
+                     "--reason", "other",
                      "--author", CLAUDE, "--verifier", CODEX)
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "u")
         self.brigade("fire", "--tickets", "T3", "--station", "bug-fix", "--summary", "Fix u")
@@ -186,7 +189,7 @@ class ReviewsSplit5Test(BrigadeTest):
             "first pass overall: 1 of 3 (33.3%)",
             f"first pass {CLAUDE}: 0 of 2 (0.0%)",
             f"first pass {CODEX}: 1 of 1 (100.0%)",
-            "send-backs: missing-test 1, unrecorded 1",
+            "send-backs: missing-test 1, other 1",
         ]))
 
     def test_pass_stats_prints_no_items_with_a_verdict_when_no_pass_row_exists(self):

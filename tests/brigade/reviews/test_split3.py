@@ -70,9 +70,9 @@ class ReviewsSplit3Test(BrigadeTest):
         self.assertEqual(self.record_edits("abc", ok=False), "brigade: --verdict pass-with-edits needs --edits <review report>")
         self.assertEqual(self.record_edits("abc", "--report", "D1-review-1.md", ok=False),
                          "brigade: --verdict pass-with-edits needs --edits <review report>")
-        for verdict in ("pass", "send-back", "blocked"):
-            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", verdict, "--author", CODEX,
-                                          "--verifier", CLAUDE, "--edits", "D1-review-1.md", ok=False),
+        for verdict, extra in (("pass", ()), ("send-back", ("--reason", "other")), ("blocked", ())):
+            self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", verdict, *extra,
+                                          "--author", CODEX, "--verifier", CLAUDE, "--edits", "D1-review-1.md", ok=False),
                              "brigade: --edits goes only with --verdict pass-with-edits", verdict)
         self.assertEqual(self.record_edits("abc", "--edits", "D1-review-1.md", "--report", "D1-review-1.md", ok=False),
                          "brigade: --edits names the round's report; drop --report")

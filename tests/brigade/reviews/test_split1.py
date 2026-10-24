@@ -77,6 +77,7 @@ class ReviewsSplit1Test(BrigadeTest):
                                           f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n{third}\n")
                 before = self.store_files()
                 record = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                          "--reason", "other",
                           "--author", CLAUDE, "--verifier", CODEX)
                 if error:
                     self.assertEqual(self.brigade(*record, ok=False), error)
@@ -95,6 +96,7 @@ class ReviewsSplit1Test(BrigadeTest):
         before = self.store_files()
         for _ in range(2):
             self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                          "--reason", "other",
                                           "--author", CLAUDE, "--verifier", CODEX, ok=False),
                              "brigade: D1: reports/D1.md cannot be read; line 5 holds a thread id that the "
                              "table would change; nothing recorded")
@@ -106,6 +108,7 @@ class ReviewsSplit1Test(BrigadeTest):
         self.fired_bug_fix()
         self.review_file("D1.md", "findings\n\n## Threads\n\n- claims check ` ` grok/grok-4.7\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
                          "brigade: D1: reports/D1.md cannot be read; line 5 holds a thread id that the "
                          "table would change; nothing recorded")
@@ -122,6 +125,7 @@ class ReviewsSplit1Test(BrigadeTest):
                                   "```\n"
                                   "````\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
@@ -136,6 +140,7 @@ class ReviewsSplit1Test(BrigadeTest):
                                   "~~~\n"
                                   "```\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX), "D1 sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
                          [["D1", "1", "worker", THREAD_A, "", "stamp", ""]])
@@ -174,6 +179,7 @@ class ReviewsSplit1Test(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_A)
         self.review_file("D1.md", f"findings\n\n## Threads\n\n- fixer `{THREAD_B}` grok/grok-4.7\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
                          "brigade: D1: reports/D1.md cannot be read; line 5 holds role 'fixer', which is not "
                          "code delegate, claims check, or architect runner; nothing recorded")
@@ -182,6 +188,7 @@ class ReviewsSplit1Test(BrigadeTest):
             with self.subTest(role=role):
                 self.review_file("D1.md", f"findings\n\n## Threads\n\n- {role} `{THREAD_B}` grok/grok-4.7\n")
                 self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                              "--reason", "other",
                                               "--author", CLAUDE, "--verifier", CODEX, ok=False),
                                  f"brigade: D1: reports/D1.md cannot be read; line 5 holds role '{role}', "
                                  f"which {writer} writes; nothing recorded")
@@ -193,7 +200,7 @@ class ReviewsSplit1Test(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_A)
         self.review_file("D1.md", "findings\n\n## Threads\n\n- claims check\n")
         before = self.store_files()
-        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--member")
+        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--member")
         for extra in (("--reviewer-thread", THREAD_B),):
             self.assertEqual(self.brigade(*member, "--verifier", CODEX, *extra, ok=False),
                              "brigade: --member takes no --reviewer-thread; record a panel member's row with "
@@ -205,6 +212,7 @@ class ReviewsSplit1Test(BrigadeTest):
                                                "--seat", "grok/grok-4.7", ok=False),
                                    "--role", "architect runner", ("panel member",))
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, ok=False),
                          "brigade: D1: reports/D1.md cannot be read; line 5 is not one list item of the form "
                          "- <role> `<thread id>` <seat>; nothing recorded")
@@ -236,6 +244,7 @@ class ReviewsSplit1Test(BrigadeTest):
         self.review_file("D1.md", f"findings\n\n## Threads\n\n- architect runner `{THREAD_B}` "
                                   "opencode-go/muse-spark-1.3-contributor\n")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX),
                          "D1 sent-back")
         after = (self.at / "threads.tsv").read_bytes()
@@ -249,6 +258,7 @@ class ReviewsSplit1Test(BrigadeTest):
         self.assertEqual(self.brigade("thread", "D9", "--role", "panel member", "--thread", THREAD_C,
                                       "--seat", "grok/grok-4.7", ok=False), "brigade: no D9 in dishes.tsv")
         self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", "grok/grok-4.7", "--member", "--note", "nit"),
                          "D1: member send-back on record; D1 stays sent-back")
         self.assertEqual([row[1:] for row in self.thread_rows()],
@@ -259,7 +269,7 @@ class ReviewsSplit1Test(BrigadeTest):
     def test_a_member_row_takes_no_reviewer_thread(self):
         self.fired_bug_fix()
         before = self.store_files()
-        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--member")
+        member = ("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--member")
         self.assertEqual(self.brigade(*member, "--verifier", CODEX, "--reviewer-thread", THREAD_A, ok=False),
                          "brigade: --member takes no --reviewer-thread; record a panel member's row with "
                          f"thread D1 --role \"panel member\" --thread <id> --seat <provider/model>")
@@ -273,7 +283,7 @@ class ReviewsSplit1Test(BrigadeTest):
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "t")
         self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "Fix t")
         self.review_file("D2-review-1.md")
-        self.brigade("pass", "record", "D2", "--sha", "abc", "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
+        self.brigade("pass", "record", "D2", "--sha", "abc", "--verdict", "send-back", "--reason", "other", "--author", CLAUDE, "--verifier", CODEX,
                      "--report", "D2-review-1.md")
         table = self.at / "pass.tsv"
         table.write_text(table.read_text().replace("D2-review-1.md", "D1-review-7.md"))

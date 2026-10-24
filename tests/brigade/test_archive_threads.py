@@ -38,6 +38,7 @@ class ArchiveThreadsTest(BrigadeTest):
 
     def record_send_back(self, *extra):
         return self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                            "--reason", "other",
                             "--author", CLAUDE, "--verifier", CODEX, *extra)
 
     def record_pass(self, *extra):
@@ -47,6 +48,7 @@ class ArchiveThreadsTest(BrigadeTest):
     def test_pass_record_send_back_with_reviewer_thread_prints_only_that_thread(self):
         self.fired_bug_fix()
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_A),
                          [f"archive thread: {THREAD_A}"])
@@ -61,6 +63,7 @@ class ArchiveThreadsTest(BrigadeTest):
     def test_pass_record_without_reviewer_thread_prints_nothing(self):
         self.fired_bug_fix()
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX), [])
 
     def test_fix_round_thread_prints_the_replaced_worker_only(self):
@@ -125,8 +128,8 @@ class ArchiveThreadsTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_A)
         outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
                                       *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc",
-                                      "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
-                                      "--reviewer-thread", THREAD_A])
+                                      "--verdict", "send-back", "--reason", "other",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_A])
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
         self.assertEqual(outcome.stderr_text().splitlines(), [])
         self.assertEqual(outcome.stdout_text().strip(), "D1 sent-back")
@@ -137,8 +140,8 @@ class ArchiveThreadsTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_A)
         outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
                                       *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc",
-                                      "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
-                                      "--reviewer-thread", THREAD_A, "--late"])
+                                      "--verdict", "send-back", "--reason", "other",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_A, "--late"])
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
         self.assertEqual(outcome.stderr_text().splitlines(), [])
         self.assertEqual(outcome.stdout_text().strip(), "D1: late send-back on record; D1 stays in-progress")

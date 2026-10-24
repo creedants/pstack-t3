@@ -129,12 +129,13 @@ class ModeRoundsMixin:
         self.record("a2", "send-back")
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.brigade("pass", "record", "D1", "--pr", "u/1", "--sha", "a1", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, "--note", "round 1", "--late"),
                          "D1: late send-back on record; D1 stays in-progress")
         self.assertEqual(self.dish_fields("state", "pr", "sha", "thread"), ("in-progress", "", "a2", ""))
         self.assertEqual(self.brigade("pass", "check", "D1", "--sha", "a1", ok=False),
                          "brigade: D1 at a1: send-back (round 1)")
-        self.assertEqual(self.pass_rows()[1][3:], ["a1", "send-back", CLAUDE, CODEX, "round 1", "", "", ""])
+        self.assertEqual(self.pass_rows()[1][3:], ["a1", "send-back", CLAUDE, CODEX, "round 1", "", "", "other"])
         self.assertIn("Mode: full\nMode source: escalated: second send-back\nAttempt: fix\n", self.brigade(*self.BRIEF))
 
     def test_a_fix_brief_names_the_report_of_the_latest_send_back(self):

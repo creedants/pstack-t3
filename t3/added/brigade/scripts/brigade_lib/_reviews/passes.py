@@ -9,7 +9,7 @@ from brigade_lib.edits import NEEDS_COMMANDS, commit_tree, replay, report_edits
 from brigade_lib.leases import fragment_for
 from brigade_lib.reports import NOT_A_REPORT, REVIEW_FILE, in_reports, report_stat
 from brigade_lib.shared import BrigadeError, clean
-from brigade_lib.store import EDITS_VERDICT, REASON_VERDICTS, VERDICTS
+from brigade_lib.store import EDITS_VERDICT, REASONS, REASON_VERDICTS, VERDICTS
 
 CLAIMS_LINE = re.compile(r"^[ \t#>*+\-_`\d.)]*Claims check", re.M)
 
@@ -55,13 +55,22 @@ def worker_report(restaurant, dish_id):
         raise BrigadeError(f"reports/{name} is not UTF-8; nothing recorded") from None
 
 
+def reason_refusal(verdict, reason):
+    """The refusal line when this verdict and reason may not be recorded together, or None."""
+    if verdict in REASON_VERDICTS and not reason.strip():
+        return f"--verdict {', '.join(REASON_VERDICTS)} needs --reason, one of {', '.join(REASONS)}"
+    if reason and verdict not in REASON_VERDICTS:
+        return f"--reason goes only with --verdict {', '.join(REASON_VERDICTS)}"
+    return None
+
+
 def record_pass(restaurant, dish_id, pr, sha, verdict, author, verifier, note="", same_family=False, report="",
                 member=False, late=False, edits="", reviewer_thread="", reason=""):
     _, dish = restaurant.find("dishes.tsv", dish_id)
     if verdict not in VERDICTS:
         raise BrigadeError(f"verdict must be one of {', '.join(VERDICTS)}")
-    if reason and verdict not in REASON_VERDICTS:
-        raise BrigadeError(f"--reason goes only with --verdict {', '.join(REASON_VERDICTS)}")
+    if refusal := reason_refusal(verdict, reason):
+        raise BrigadeError(refusal)
     if reviewer_thread and member:
         raise BrigadeError("--member takes no --reviewer-thread; record a panel member's row with "
                            f"thread {dish_id} --role \"panel member\" --thread <id> --seat <provider/model>")

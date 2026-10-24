@@ -84,7 +84,7 @@ class ReviewsSplit2Test(BrigadeTest):
         self.started()
         self.sent_back(3)
         self.assertEqual(self.brigade(*self.PASS, "a4"), "D1 passed")
-        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a4", "--verdict", "send-back", "--author", CODEX,
+        self.assertEqual(self.brigade("pass", "record", "D1", "--sha", "a4", "--verdict", "send-back", "--reason", "other", "--author", CODEX,
                                       "--verifier", CLAUDE, "--member"),
                          "D1: member send-back on record; D1 stays passed")
         self.assertEqual(self.brigade("dish", "D1", "--state", "merged"), "D1 merged")
@@ -94,7 +94,7 @@ class ReviewsSplit2Test(BrigadeTest):
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("merged"))
         self.assertEqual(self.brigade("ticket", "set", "T1", "--state", "waiting"), "T1 waiting")
         self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
-        self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--author", CODEX,
+        self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--reason", "other", "--author", CODEX,
                                       "--verifier", CLAUDE), "D2 sent-back")
         self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD2: sent back")
         self.assertEqual(self.brigade("86", "list"), "no open decisions")
@@ -106,7 +106,7 @@ class ReviewsSplit2Test(BrigadeTest):
         self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nno work in progress")
         self.assertEqual(self.brigade(*self.ROUND_BUDGET, ok=False), self.NO_DECISION.format("dropped"))
         self.assertEqual(self.brigade(*self.FIRE_AGAIN), "D2")
-        self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--author", CODEX,
+        self.assertEqual(self.brigade("pass", "record", "D2", "--sha", "b1", "--verdict", "send-back", "--reason", "other", "--author", CODEX,
                                       "--verifier", CLAUDE), "D2 sent-back")
         self.assertEqual(self.brigade("watch"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD2: sent back")
         self.assertEqual(self.brigade("86", "list"), "no open decisions")

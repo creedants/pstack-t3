@@ -70,6 +70,7 @@ class HelperArchiveTest(BrigadeTest):
         self.attempt_report("findings\n\n## Threads\n\n"
                             f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C, "--late"),
                          [f"archive thread: {THREAD_C}"])
@@ -80,12 +81,14 @@ class HelperArchiveTest(BrigadeTest):
         self.attempt_report("findings\n\n## Threads\n\n"
                             f"- code delegate `{THREAD_B}` opencode-go/step-5-preview-free\n")
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}", f"archive thread: {THREAD_B}"])
         self.brigade("dish", "D1", "--state", "in-progress")
         self.brigade("dish", "D1", "--thread", THREAD_D)
         self.assertEqual(self.archived("pass", "record", "D1", "--sha", "def", "--verdict", "send-back",
+                                       "--reason", "other",
                                        "--author", CLAUDE, "--verifier", CODEX,
                                        "--reviewer-thread", THREAD_C),
                          [f"archive thread: {THREAD_C}"])
