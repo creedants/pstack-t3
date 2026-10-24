@@ -4,4 +4,4 @@
 - A marker records the device and inode of the directory it was written for, and adoption refuses a marker that names another directory, so a copied marker no longer adopts the copy
 - The guard refuses `os.mkfifo`, `os.mknod`, `os.chown`, and `os.fchown` inside a protected real root. CPython raises no audit event for `os.mkfifo` or `os.mknod`, so those two are refused by a wrapper beside `os.open`
 - `tests/install_tests/test_in_process.py` runs the module-restoration case in this process again, and `tests/in_process.py` reports how many runs it executed here
-- The module docstring names the wrappers and the calls that stay unguarded, and the foreign-token and guarded-removal messages state the reason they apply
+- The module docstring names the wrappers and the calls that stay unguarded, and the guarded-removal message states the reason it applies
