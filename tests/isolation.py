@@ -261,6 +261,7 @@ def _open(path, flags, mode=0o777, *, dir_fd=None):
 
     The open audit event leaves out dir_fd, so the hook alone would judge a relative name against the working directory.
     """
+    path = os.fspath(path)
     if dir_fd is not None and flags & _WRITE_FLAGS and not isinstance(path, int):
         target = _at(path, dir_fd)
         if target is None:
@@ -276,18 +277,21 @@ def _mkfifo(path, mode=0o666, *, dir_fd=None):
 
     CPython raises no audit event for this call, so the guard wraps it as it wraps os.open.
     """
+    path = os.fspath(path)
     _deny_write("os.mkfifo", path, dir_fd, _entry)
     return _os_mkfifo(path, mode, dir_fd=dir_fd)
 
 
 def _mknod(path, mode=0o600, device=0, *, dir_fd=None):
     """os.mknod, refusing an entry inside a protected real root outside the checkout."""
+    path = os.fspath(path)
     _deny_write("os.mknod", path, dir_fd, _entry)
     return _os_mknod(path, mode, device, dir_fd=dir_fd)
 
 
 def _chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
     """os.chown, refusing a change to the link name itself inside a protected real root outside the checkout."""
+    path = os.fspath(path)
     if not follow_symlinks:
         _deny_write("os.chown", path, dir_fd, _entry)
     return _os_chown(path, uid, gid, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
@@ -295,6 +299,7 @@ def _chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
 
 def _lchown(path, uid, gid):
     """os.lchown, refusing a change to the link name itself inside a protected real root outside the checkout."""
+    path = os.fspath(path)
     _deny_write("os.lchown", path, None, _entry)
     return _os_lchown(path, uid, gid)
 
