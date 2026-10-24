@@ -366,5 +366,5 @@ def _write_intent(mode, flags) -> bool:
 
 
 def _frozen(path):
-    """Return the one value a call acts on: the descriptor itself, or the path string the syscall will read."""
+    """Return the one value a call acts on: the descriptor itself, or the path the syscall will read, as str or bytes."""
     return path if isinstance(path, int) else os.fspath(path)
