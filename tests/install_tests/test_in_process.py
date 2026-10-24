@@ -58,6 +58,15 @@ class InProcessRestoreTest(unittest.TestCase):
         self.addCleanup(wrapper.cleanup)
         checkout = make_checkout(home, "a")
         env = {"XDG_CONFIG_HOME": str(home / ".config")}
+        previous = os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+
+        def restore():
+            if previous is None:
+                os.environ.pop("PSTACK_TEST_REAL_PROCESS", None)
+            else:
+                os.environ["PSTACK_TEST_REAL_PROCESS"] = previous
+
+        self.addCleanup(restore)
         before = in_process.runs_here()
         installed = run(home, checkout, "--harness", "grok", env=env)
         self.assertEqual(installed.returncode, 0, installed.stderr)
