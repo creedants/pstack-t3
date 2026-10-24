@@ -239,9 +239,8 @@ def compared_paths(project_root, before, after, extracted, edited, built):
 def renamed_note(before, after, skipped):
     """The one .md file in the skipped fragment's directory that the reviewed tree holds and the new head does not.
 
-    Only a path a branch's change-note fragment can name is a candidate, so the fragment's directory and a .md
-    extension are both required and another file there, such as a deleted .json, is never the note. The empty string
-    when there is not exactly one such file.
+    Only a regular .md file in the fragment's directory is a candidate, so another file there, such as a deleted
+    .json, is never the note. The empty string when there is not exactly one such file.
     """
     directory = posixpath.dirname(skipped)
     found = [path for path, entry in before.items()
@@ -330,9 +329,9 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha, skip
     """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output.
 
     A path named by skip is left out of the comparison when the reviewed commit holds no entry at it and the new head
-    does, and it prints SKIPPED_LINE instead. When the reviewed commit holds exactly one .md file in that path's
-    directory that the new head does not, that file is the same note under its old name and is compared at skip's digest.
-    A path a branch's change-note fragment cannot name is never the old note, so a deleted .json is not one.
+    does, and it prints SKIPPED_LINE instead. When the reviewed commit holds exactly one regular .md file in that
+    path's directory that the new head does not, that file is the same note under its old name and is compared at
+    skip's digest. A file there that does not end in .md is never the old note, so a deleted .json is not one.
     Raises BrigadeError when the applied change counts more than SMALL_FIX_LINES lines.
     """
     with seam.tempfile.TemporaryDirectory() as directory:
