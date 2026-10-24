@@ -116,7 +116,8 @@ class SetMixin:
 
     def test_set_scratch_dir_reads_back_stores_the_resolved_path_and_a_clear_removes_the_key(self):
         self.open()
-        parent = str(Path.home().resolve())
+        # A directory outside /tmp that this test never creates or writes.
+        parent = str(Path(__file__).resolve().parents[3])
         meta = json.loads(self.brigade("set", "--scratch-dir", f"{parent}/./x/.."))
         self.assertEqual(meta["scratchDir"], parent)
         meta = json.loads(self.brigade("set", "--scratch-dir", ""))

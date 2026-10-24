@@ -1,5 +1,14 @@
 """Thin facade over tests/ops_tests/. See that package for the suites."""
 
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests import isolation
+
+isolation.install()
+
 import os
 import unittest
 

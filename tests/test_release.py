@@ -4,6 +4,15 @@ Discovery imports this file as test_release and collects the package itself, so 
 only when unittest imports this file by its qualified name or runs it as a script.
 """
 
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests import isolation
+
+isolation.install()
+
 import os
 import sys
 import unittest

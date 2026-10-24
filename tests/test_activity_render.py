@@ -1,6 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests import isolation
+
+isolation.install()
+
 import os
 import unittest
-from tests import test_activity
+import tests.test_activity as test_activity
 from tests.activity_tests.browser import select_browser
 Fixture = test_activity.Fixture
 populate = test_activity.populate

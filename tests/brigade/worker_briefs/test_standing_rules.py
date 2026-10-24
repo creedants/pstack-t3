@@ -54,7 +54,8 @@ class StandingRulesMixin:
 
     def test_the_standing_rules_paste_the_scratch_rule_only_when_the_store_records_a_parent(self):
         self.coordinator()
-        parent = str(Path.home().resolve())
+        # The checkout root is outside /tmp, and this test never creates or writes it.
+        parent = str(ROOT)
         self.brigade("set", "--scratch-dir", parent)
         text = self.brigade(*self.BRIEF)
         self.assertIn(
@@ -166,7 +167,8 @@ class StandingRulesMixin:
 
     def test_a_scratch_path_prefix_does_not_drop_the_scratch_rule(self):
         self.coordinator()
-        parent = str(Path.home().resolve())
+        # The checkout root is outside /tmp, and this test never creates or writes it.
+        parent = str(ROOT)
         self.brigade("set", "--scratch-dir", parent)
         text = self.brigade(*self.BRIEF, "--context", f"`mktemp -d -p {parent}-old`")
         self.assertIn(

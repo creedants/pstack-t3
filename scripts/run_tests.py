@@ -71,6 +71,7 @@ process has, and a removal that fails leaves it.
 from __future__ import annotations
 
 import sys
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -80,12 +81,28 @@ from _run_tests.events import EVENTS, STATUSES, PROBLEM, SETUP, Accounting, Chan
 from _run_tests.plan import build_shards, launch_order, tests_in_part
 from _run_tests.pool import kill_group, launch, list_tests, read_output, run_pool
 from _run_tests.pool import run as _pool_run
-from _run_tests.processes import Watch, adopt_orphans, child_env, children_by_parent, start_child
+from _run_tests.processes import Watch, adopt_orphans, children_by_parent, start_child
 from _run_tests.report import account, block, render
 from _run_tests.worker import Recorder, class_name, discover, enter, list_main, worker_main
-from _run_tests import parse_part, positive
+from _run_tests import parse_part, positive, processes
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Loaded by path, not as tests.isolation. A `tests` package on sys.path or in sys.modules shadows a
+# fixture tree that imports its own top-level tests package, which is a shape the runner must support.
+_loader = spec_from_file_location("pstack_test_isolation", ROOT / "tests" / "isolation.py")
+isolation = module_from_spec(_loader)
+_loader.loader.exec_module(isolation)
+
+_original_child_env = processes.child_env
+
+
+def child_env(environ: dict[str, str], home: Path, start: Path) -> dict[str, str]:
+    """Return a worker's environment with a home inside its own run root, whatever start directory it uses."""
+    return isolation.worker_env(_original_child_env(environ, home, start), home)
+
+
+processes.child_env = child_env
 
 
 def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = None) -> int:
