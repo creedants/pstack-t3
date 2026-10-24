@@ -75,6 +75,20 @@ def workflow_environment(text):
             continue
         key, _, value = stripped.partition(":")
         value = value.strip()
+        quote = None
+        escaped = False
+        for index, char in enumerate(value):
+            if escaped:
+                escaped = False
+            elif char == "\\" and quote == '"':
+                escaped = True
+            elif char == quote == "'" and value[index:index + 2] == "''":
+                escaped = True
+            elif char in "'\"" and (index == 0 or char == quote):
+                quote = None if quote else char
+            elif char == "#" and quote is None and (index == 0 or value[index - 1].isspace()):
+                value = value[:index].rstrip()
+                break
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
             value = value[1:-1]
         values[key.strip()] = value
@@ -249,6 +263,11 @@ class CiJobsMixin:
         self.assertIsNotNone(block, "concurrency block is present.")
         self.assertEqual(block["group"], "${{ github.workflow }}-${{ github.ref }}", "concurrency group pins the workflow and ref.")
         self.assertIs(block["cancel-in-progress"], True, "cancel-in-progress pins true.")
+
+    def test_the_workflow_env_reader_ignores_comments_after_empty_tmpdir(self):
+        for value in ("# x", "'' # x", '"" # x'):
+            with self.subTest(value=value):
+                self.assertEqual(workflow_environment(f"env:\n  TMPDIR: {value}\n"), {"TMPDIR": ""})
 
     def test_the_workflow_tmpdir_is_short_enough_for_the_macos_chromium_socket_path(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
