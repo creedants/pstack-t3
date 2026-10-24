@@ -19,6 +19,8 @@ OTHER_FRAGMENT = "changes/pstack-t3%2Fother.md"
 NOTE = "- kind fix\n- edits verify skips the round's own change note\n"
 OTHER_NOTE = "- kind fix\n- a note for another branch\n"
 OLD_NOTE = "- kind fix\n- the note the reviewed commit holds\n"
+OLD_FRAGMENT = "changes/pstack-t3%2Fd0.md"
+REWORDED_NOTE = "- kind fix\n- the note the fix round reworded\n"
 
 
 def block(number, path, old, new):
@@ -43,6 +45,20 @@ class EditsRoundChangeNoteTest(BrigadeTest):
     def applied_head(self, **files):
         """The new head of a round that applies the edit verbatim and commits these extra files."""
         return self.head_commit(self.QUOTED_APPLIED, **files)
+
+    def renamed_round(self, head_note, *note_edits):
+        """(reviewed, head) of a round whose fix renamed pstack-t3/d0's note to pstack-t3/d1's and committed it."""
+        reviewed = self.edits_store(**{OLD_FRAGMENT: OLD_NOTE})
+        self.brigade("set", "--change-note-dir", "changes")
+        self.brigade("dish", "D1", "--branch", BRANCH)
+        self.review_file("D1-review-1.md", report(block("1", "src/greeting.txt", "helo", "hello"), *note_edits))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        (self.project / OLD_FRAGMENT).unlink()
+        return reviewed, self.applied_head(**{FRAGMENT: head_note})
+
+    def renamed_pass(self, reviewed, head):
+        return (0, f"edited {OLD_FRAGMENT}\nskipped {FRAGMENT}: this round's change note\n"
+                   f"built out/greeting.txt\nedited src/greeting.txt\nok check\n{self.verified(reviewed, head)}", "")
 
     def edge(self, reviewed, head):
         """(exit code, the lines a refused verify prints, the refusal) of edits verify for the round."""
@@ -95,6 +111,42 @@ class EditsRoundChangeNoteTest(BrigadeTest):
         head = self.applied_head(**{FRAGMENT: NOTE})
         self.assertEqual(self.edge(reviewed, head),
                          (1, [f"FAIL {FRAGMENT}: differs from {reviewed} with the edits applied",
+                              "built out/greeting.txt",
+                              "edited src/greeting.txt"],
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_a_rename_with_the_edits_applied_verifies_instead_of_reporting_the_old_note_deleted(self):
+        reviewed, head = self.renamed_round(REWORDED_NOTE,
+                                            block("2", OLD_FRAGMENT, OLD_NOTE, REWORDED_NOTE))
+        self.assertEqual(self.verify(reviewed, head), self.renamed_pass(reviewed, head))
+        self.assertEqual(self.edits_rows(), [["D1", reviewed, head, "D1-review-1.md"]])
+
+    def test_a_rename_whose_note_differs_from_the_edited_note_still_fails(self):
+        reviewed, head = self.renamed_round(NOTE,
+                                            block("2", OLD_FRAGMENT, OLD_NOTE, REWORDED_NOTE))
+        self.assertEqual(self.edge(reviewed, head),
+                         (1, [f"FAIL {OLD_FRAGMENT}: differs from {reviewed} with the edits applied",
+                              f"skipped {FRAGMENT}: this round's change note",
+                              "built out/greeting.txt",
+                              "edited src/greeting.txt"],
+                          self.not_verified(reviewed, head)))
+        self.assertEqual(self.edits_rows(), [])
+
+    def test_a_rename_with_no_edit_to_the_note_and_unchanged_text_verifies(self):
+        reviewed, head = self.renamed_round(OLD_NOTE)
+        self.assertEqual(self.verify(reviewed, head), self.renamed_pass(reviewed, head))
+        self.assertEqual(self.edits_rows(), [["D1", reviewed, head, "D1-review-1.md"]])
+
+    def test_a_deleted_file_that_is_not_a_change_note_rename_still_fails(self):
+        reviewed = self.edits_store(**{"notes/round.md": OTHER_NOTE})
+        self.brigade("dish", "D1", "--branch", BRANCH)
+        self.review_file("D1-review-1.md", report(block("1", "src/greeting.txt", "helo", "hello")))
+        self.record_edits(reviewed, "--edits", "D1-review-1.md")
+        (self.project / "notes/round.md").unlink()
+        head = self.applied_head()
+        self.assertEqual(self.edge(reviewed, head),
+                         (1, ["FAIL notes/round.md: differs from " + f"{reviewed} with the edits applied",
                               "built out/greeting.txt",
                               "edited src/greeting.txt"],
                           self.not_verified(reviewed, head)))
