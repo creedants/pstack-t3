@@ -152,15 +152,27 @@ class _Full:
 
 
 class _PathTable(dict):
-    """A picker table where a key ending in `/*` answers for any path under that directory, so a test that reads a directory joined with names from a list maps every file in it."""
+    """A picker table where a key ending in `/*` joins the answer for a document under that directory.
+
+    A test that reads a directory joined with names from a list maps every document in it.
+    Only a markdown document takes a directory key. Any other path keeps the exact entry and import edges
+    that answered for it before, because a directory key would otherwise hide them.
+    One key answering from an exact entry and from several directory entries returns their union.
+    """
 
     def get(self, key, default=None):
-        if key in self:
-            return self[key]
-        for pattern, value in self.items():
-            if pattern.endswith("/*") and key.startswith(pattern[:-1]):
-                return value
-        return default
+        found = [self[key]] if key in self else []
+        if key.endswith(".md"):
+            found.extend(value for pattern, value in self.items()
+                         if pattern.endswith("/*") and key.startswith(pattern[:-1]))
+        if not found:
+            return default
+        if len(found) == 1:
+            return found[0]
+        merged = set()
+        for value in found:
+            merged.update(value)
+        return tuple(sorted(merged))
 
 
 @dataclass(frozen=True)

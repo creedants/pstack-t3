@@ -282,13 +282,23 @@ def _test_files(root):
 
 
 def _canonicals(norm, gen_map):
+    """The source-path candidates for norm, with a markdown document's whole twin class included.
+
+    A generated copy and every source behind it answer for the same document, so each candidate gets the class's
+    tests and a directory entry on one candidate cannot hide a later candidate's exact entry. Every other path keeps
+    the candidates it had, because its exact entry and import edges already answer for it.
+    """
     try:
         twins = generated.twins(gen_map, norm)
+        if norm.endswith(".md"):
+            for twin in list(twins):
+                twins = twins + tuple(one for one in generated.twins(gen_map, twin) if one not in twins)
     except Exception:
         return [norm]
     sources = sorted(t for t in twins if t.startswith("t3/"))
-    others = sorted(t for t in twins if not t.startswith("t3/"))
-    return sources + others
+    if sources:
+        return sources
+    return [norm]
 
 
 PIN_CHARS = 40
@@ -338,28 +348,63 @@ def _resolve_expr(node, singles):
     return None
 
 
-def _read_prefix(node, singles):
-    """The directory a read's path expression starts with when the whole path cannot resolve."""
+def _joined_operands(node):
+    """The operands of a joined path expression, left to right, with one str or Path wrapper removed."""
+    while (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("str", "Path")
+           and len(node.args) == 1 and not node.keywords):
+        node = node.args[0]
     operands = []
     cur = node
     while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
         operands.append(cur.right)
         cur = cur.left
     operands.append(cur)
-    spine = ""
-    resolved = False
-    for operand in reversed(operands):
+    operands.reverse()
+    return operands
+
+
+def _names_outside(node):
+    """Whether this operand names an absolute path, a parent step, or text no repository path holds."""
+    if isinstance(node, ast.Name):
+        return False
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        text = node.value.strip().replace("\\", "/")
+        if not text or text.startswith("/") or ".." in text.split("/") or re.search(r"\s", text):
+            return True
+        made = posixpath.normpath(text).lstrip("/")
+        return made in ("", ".", "..") or made.startswith("../")
+    if isinstance(node, ast.Call):
+        return len(node.args) == 1 and not node.keywords and _names_outside(node.args[0])
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _names_outside(node.left) or _names_outside(node.right)
+    return False
+
+
+def _read_prefix(node, singles):
+    """The directory a read's path expression starts with when the whole path cannot resolve.
+
+    The expression must join one directory spine with exactly one unresolved name at its end, such as
+    `ROOT / "docs" / name`. An unresolved operand before the end, an absolute or parent-step operand anywhere,
+    and an empty spine each give an empty string.
+    """
+    operands = _joined_operands(node)
+    if any(_names_outside(one) for one in operands):
+        return ""
+    parts = []
+    unresolved = 0
+    for index, operand in enumerate(operands):
         got = _resolve_expr(operand, singles)
         if got is None:
-            if not resolved:
+            unresolved += 1
+            if index != len(operands) - 1:
                 return ""
-            break
-        resolved = True
+            continue
         if got:
-            spine = f"{spine}/{got}" if spine else got
-    else:
+            parts.append(got)
+    if unresolved != 1:
         return ""
-    if not spine or spine.startswith("/") or ".." in spine.split("/") or "/" not in spine:
+    spine = "/".join(parts)
+    if not spine or spine.startswith("/") or ".." in spine.split("/"):
         return ""
     return _norm(spine)
 
