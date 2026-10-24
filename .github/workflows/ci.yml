@@ -7,8 +7,8 @@ on:
 
 env:
   PSTACK_TEST_REAL_PROCESS: '1'
-  # Chromium puts its SingletonSocket under TMPDIR and aborts past 107 characters. The macOS runner's
-  # default TMPDIR is a long /var/folders path, and the isolated test run root sits under it.
+  # Chromium puts its SingletonSocket under TMPDIR and the probe models a 107-character limit. The macOS
+  # runner's default TMPDIR is a long /var/folders path, and the isolated test run root sits under it.
   TMPDIR: /tmp
 
 concurrency:
