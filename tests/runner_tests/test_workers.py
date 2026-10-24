@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 from .support import (
     AT_EXIT,
     DURING_THE_TEST,
@@ -57,7 +69,8 @@ class WorkersMixin:
         self.assertEqual(RAN.search(result.stderr).group(1), "1")
         self.assertTrue(result.stderr.endswith("\n\nOK\n"), result.stderr)
 
-    def test_a_worker_gets_a_home_and_every_xdg_directory_inside_its_shard_home_and_outside_the_real_home(self):
+    def test_a_worker_and_the_listing_get_a_home_inside_the_shard_home_and_a_guard_that_refuses_a_delete_beside_it(self):
+        # The fixture tree has no isolation prelude, so only the runner can have armed the guard.
         self.write("test_home_env.py", """
             import os
             import pwd
@@ -66,8 +79,22 @@ class WorkersMixin:
 
             NAMES = ("HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "TMPDIR")
 
+            def refused():
+                absent = Path(os.environ["PSTACK_TEST_HOME_ROOT"]).parent / f".absent-{os.getpid()}"
+                try:
+                    os.rmdir(absent)
+                except PermissionError:
+                    return True
+                except OSError:
+                    return False
+                return False
+
+            if not refused():
+                raise RuntimeError("this process imported a test module with no guard")
+
             class HomeEnvTest(unittest.TestCase):
                 def test_home_env(self):
+                    self.assertTrue(refused())
                     shard = Path(os.environ["PSTACK_TEST_HOME_ROOT"]).resolve()
                     real = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
                     self.assertTrue(shard.is_dir(), shard)

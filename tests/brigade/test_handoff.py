@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 from .support import BrigadeTest, StoresTest, _HandoffRace, _owner_words, SCRIPT, call, call_in_process, json, setUpModule
 from .handoff.fixtures import WATCH
 from .handoff.test_sources import SourcesMixin

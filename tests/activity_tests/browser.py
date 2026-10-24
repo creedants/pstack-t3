@@ -88,7 +88,7 @@ def confined_run(browser, target, directory, prefix, timeout):
         path = Path(directory) / name
         path.mkdir(parents=True, exist_ok=True)
         environment[variable] = str(path)
-    # Inside the run root, so the cleanup is allowed, and still short enough for the chromium socket.
+    # Keep cleanup inside the run root. The check below skips a socket path that is too long.
     short_tmp = tempfile.mkdtemp()
     try:
         socket_path = os.path.join(short_tmp, "org.chromium.Chromium.XXXXXX", "SingletonSocket")

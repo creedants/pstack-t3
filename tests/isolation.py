@@ -1,10 +1,17 @@
 """Isolate a test process from the user's real home.
 
 Importing this module has no side effect. `install()` is the one entry. Without the pointer it makes
-a run root and points HOME, the five XDG variables, and TMPDIR into it. With the pointer it adopts
-that run root and verifies the variables. Either way it installs one audit hook. The hook refuses a
-delete outside the run root and a write inside a protected real root outside the checkout. An
-activation failure raises SystemExit, so a process can never fall back to a real path.
+a run root, marks it, and points HOME, the five XDG variables, and TMPDIR into it. With the pointer
+it adopts the run root the pointer names, after proving that a live run of this user marked it with
+the token in the environment and that every variable resolves inside it. Every install, the first
+and each repeat, rereads the environment and raises SystemExit on the first value that escapes, so a
+process can never fall back to a real path.
+
+The guard is one audit hook and a wrapper around os.open. Every check resolves symlinks first. A
+delete, a rename source, and a replaced rename destination must sit inside the run root. A create, a
+write, a mode or time change, and a sqlite3 database must not sit inside a protected real root
+outside the checkout. Removing a guarded variable, or setting it to an empty, relative, or protected
+value, is refused, and os.environ.clear() keeps the guarded variables.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
 XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state directory.
@@ -12,14 +19,21 @@ XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state dire
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import pwd
+import secrets
+import stat
 import sys
 import tempfile
 import threading
+import urllib.parse
 from pathlib import Path
 
 POINTER = "PSTACK_TEST_HOME_ROOT"
+TOKEN = "PSTACK_TEST_HOME_TOKEN"
+MARKER = ".pstack-t3-test-home"
 
 _LAYOUT = {
     "HOME": "home",
@@ -30,28 +44,42 @@ _LAYOUT = {
     "XDG_RUNTIME_DIR": "runtime",
     "TMPDIR": "tmp",
 }
+_GUARDED = frozenset(_LAYOUT) | {POINTER, TOKEN}
 
-_CHECKOUT = Path(__file__).resolve().parents[1]
+_CHECKOUT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 _WRITE_FLAGS = os.O_CREAT | os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_TRUNC
 
 _root: str | None = None
 _protected: tuple[str, ...] = ()
+_armed = False
 _local = threading.local()
+_os_open = os.open
 
 
-def _text(path) -> str:
-    """Return the absolute lexical form of a str, bytes, or path-like value. Calls os.fspath on it."""
-    return os.path.normpath(os.path.abspath(os.fsdecode(os.fspath(path))))
+def _real(path) -> str:
+    """Return the real path of a str, bytes, or path-like value, resolving every symlink, the last one too."""
+    return os.path.realpath(os.fsdecode(os.fspath(path)))
 
 
-def _within(path, base) -> bool:
-    """Return whether path is base or below it, comparing whole components of the lexical paths."""
-    path, base = _text(path), _text(base)
+def _entry(path) -> str:
+    """Return the real path of the directory holding path, joined to its last name unresolved.
+
+    A delete or rename acts on that name itself, so a symlink there is the link, not its target.
+    """
+    text = os.fsdecode(os.fspath(path))
+    head, tail = os.path.split(text)
+    if tail in ("", ".", ".."):
+        return _real(text)
+    return os.path.join(_real(head or "."), tail)
+
+
+def _within(path: str, base: str) -> bool:
+    """Return whether the real path is the real base or below it, comparing whole components."""
     return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
 
 
-def _real_roots(root: str | None) -> tuple[str, ...]:
-    """Return the real home and the inherited home variables that sit outside root, resolved as paths only.
+def _real_roots(root: str | None, environ) -> tuple[str, ...]:
+    """Return the real home and the home variables of environ that sit outside root, as real paths.
 
     A value that is root or below it belongs to root, so it is not protected. A value that holds root
     is an enclosing run root, which a nested runner makes, so it is not protected either. The real home
@@ -61,55 +89,76 @@ def _real_roots(root: str | None) -> tuple[str, ...]:
     found: list[str] = []
     home = ""
     try:
-        home = pwd.getpwuid(os.getuid()).pw_dir
+        home = _real(pwd.getpwuid(os.getuid()).pw_dir)
     except (KeyError, OSError):
         pass
-    candidates = [home, os.environ.get("HOME", "")]
-    candidates.extend(os.environ.get(name, "") for name in _LAYOUT if name.startswith("XDG_"))
-    home = _text(home) if home else ""
+    candidates = [home, environ.get("HOME", "")]
+    candidates.extend(environ.get(name, "") for name in _LAYOUT if name.startswith("XDG_"))
     for value in candidates:
         if not value or not os.path.isabs(value):
             continue
-        text = _text(value)
-        if root is not None and text != home:
-            if _within(text, root):
-                continue
-            if _within(root, text):
-                continue
+        text = _real(value)
+        if root is not None and text != home and (_within(text, root) or _within(root, text)):
+            continue
         if text not in found:
             found.append(text)
     return tuple(found)
 
 
-def _protected_write(path) -> bool:
-    """Return whether a write at path lands in a protected real root, with the checkout allowed."""
-    text = _text(path)
-    if _within(text, _CHECKOUT):
+def _protected_write(real: str) -> bool:
+    """Return whether a write at the real path lands in a protected real root, with the checkout allowed."""
+    if _within(real, _CHECKOUT):
         return False
-    return any(_within(text, real) for real in _protected)
+    return any(_within(real, base) for base in _protected)
+
+
+def _owned(entry: str) -> bool:
+    """Return whether a delete of the real entry stays inside the run root and outside every protected root."""
+    return _root is not None and _within(entry, _root) and not any(_within(entry, base) for base in _protected)
+
+
+@contextlib.contextmanager
+def protecting(*paths):
+    """Treat each path as one more protected real root until the block ends. It only adds protection."""
+    global _protected
+    before = _protected
+    _protected = before + tuple(_real(path) for path in paths)
+    try:
+        yield
+    finally:
+        _protected = before
 
 
 def layout(root) -> dict[str, str]:
     """Return the one mapping from each isolated variable to its directory under root."""
-    base = _text(root)
+    base = os.path.abspath(os.fspath(root))
     return {name: os.path.join(base, part) for name, part in _LAYOUT.items()}
 
 
+def mark(root) -> str:
+    """Write the marker that lets a child adopt root, owned by this process and this user, and return its token."""
+    token = secrets.token_hex(16)
+    path = os.path.join(os.fspath(root), MARKER)
+    with open(path, "w", encoding="utf-8") as marker:
+        json.dump({"uid": os.getuid(), "pid": os.getpid(), "token": token}, marker)
+    return token
+
+
 def worker_env(env: dict[str, str], home) -> dict[str, str]:
-    """Return env with the seven variables and the pointer set to the shard home, creating its directories."""
+    """Return env with the seven variables, the pointer, and the token set to the shard home, creating its directories and marker."""
     values = layout(home)
     for name, path in values.items():
         os.makedirs(path, mode=0o700 if name == "XDG_RUNTIME_DIR" else 0o777, exist_ok=True)
     environ = dict(env)
     environ.update(values)
-    environ[POINTER] = _text(home)
+    environ[POINTER] = os.path.abspath(os.fspath(home))
+    environ[TOKEN] = mark(home)
     return environ
 
 
 def inside(path) -> bool:
-    """Return whether path is the active run root or below it. Never returns None to mean safe."""
-    text = _text(path)
-    return _root is not None and _within(text, _root)
+    """Return whether path, resolved through every symlink, is the active run root or below it. Never returns None to mean safe."""
+    return _root is not None and _within(_real(path), _root)
 
 
 def root() -> Path:
@@ -120,29 +169,29 @@ def root() -> Path:
 
 
 def install() -> Path:
-    """Create the run root and point the environment at it, or adopt and verify the one the pointer
-    names, then install the guard. Idempotent per process."""
+    """Adopt and verify the run root the pointer names, or create one when the environment names none, then
+    arm the guard once and verify the environment it leaves. A repeat call verifies again from the environment."""
     global _root, _protected
-    if _root is not None:
-        return Path(_root)
-    adopted = POINTER in os.environ
-    if adopted:
+    if POINTER in os.environ:
         pointer = os.environ[POINTER]
-        if not pointer or not os.path.isabs(pointer):
-            raise SystemExit(f"pstack-t3 test isolation: {POINTER} is not an absolute path: {pointer!r}")
-        active = _text(pointer)
-        protected = _real_roots(active)
-        _verify_adopted(active, protected)
+        protected = _real_roots(_real(pointer) if os.path.isabs(pointer) else None, os.environ)
+        active = _adopt(os.environ, protected)
     else:
-        protected = _real_roots(None)
+        protected = _real_roots(None, os.environ)
         active = _create(protected)
-    _root, _protected = active, protected
-    sys.addaudithook(_hook)
-    if adopted:
-        _check_adopted(protected)
-    else:
-        _check(active, protected)
-    _probe(protected)
+    if _root is not None and active != _root:
+        raise _fail(f"{POINTER} now names {active!r}, not the run root {_root!r} this process installed")
+    if _root is None:
+        # tempfile caches its first gettempdir() result, so drop it for the TMPDIR verified here.
+        tempfile.tempdir = None
+        # The import system writes bytecode by renaming a temporary file over its entry in __pycache__. The guard
+        # refuses a rename in the checkout, so bytecode for this process goes under the run root instead.
+        sys.pycache_prefix = os.path.join(active, "pycache")
+    _root = active
+    _protected = tuple(dict.fromkeys(_protected + protected))
+    _arm()
+    _check(active)
+    _probe(active)
     return Path(active)
 
 
@@ -150,39 +199,62 @@ def _fail(problem: str) -> SystemExit:
     return SystemExit(f"pstack-t3 test isolation: {problem}")
 
 
-def _verify_adopted(active: str, protected: tuple[str, ...]) -> None:
-    """Raise SystemExit unless the pointer is a real directory outside every protected real root and every
-    home variable is set, absolute, and outside every protected real root.
-
-    A test may point a child at its own fixture config or state directory, so a value need not be the
-    layout directory of the run root. What it may never do is name a path in the real home.
-    """
-    for real in protected:
-        if _within(active, real):
-            raise _fail(f"{POINTER} names {active!r}, which is inside the real path {real!r}")
-    if not os.path.isdir(active):
-        raise _fail(f"{POINTER} names {active!r}, which is not a directory")
-    _verify_home_values(protected)
-    for name in ("HOME", "TMPDIR"):
-        if not os.path.isdir(os.environ[name]):
-            raise _fail(f"{name} names {os.environ[name]!r}, which is not a directory")
-
-
-def _verify_home_values(protected: tuple[str, ...]) -> None:
-    """Raise SystemExit unless each of the seven variables is set, absolute, and outside every protected real root."""
+def _adopt(environ, protected: tuple[str, ...]) -> str:
+    """Return the real run root environ's pointer names, or raise SystemExit unless this user's live run marked
+    it with environ's token, it sits outside every protected real root, and every isolated variable resolves inside it."""
+    pointer = environ.get(POINTER, "")
+    if not pointer or not os.path.isabs(pointer):
+        raise _fail(f"{POINTER} is not an absolute path: {pointer!r}")
+    active = _real(pointer)
+    for base in protected:
+        if _within(active, base):
+            raise _fail(f"{POINTER} names {pointer!r}, which resolves to {active!r} inside the real path {base!r}")
+    try:
+        info = os.lstat(active)
+    except OSError:
+        raise _fail(f"{POINTER} names {active!r}, which does not exist") from None
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise _fail(f"{POINTER} names {active!r}, which is not a directory this user owns")
+    _verify_marker(active, environ.get(TOKEN, ""))
     for name in _LAYOUT:
-        got = os.environ.get(name)
-        if not got or not os.path.isabs(got):
-            raise _fail(f"{name} is {got!r} and does not name an absolute directory")
-        for real in protected:
-            if _within(got, real):
-                raise _fail(f"{name} is {got!r}, which is inside the real path {real!r}")
+        value = environ.get(name, "")
+        if not value or not os.path.isabs(value):
+            raise _fail(f"{name} is {value!r} and does not name an absolute directory")
+        if not _within(_real(value), active):
+            raise _fail(f"{name} is {value!r}, which resolves outside the run root {active!r}")
+    return active
+
+
+def _verify_marker(active: str, token: str) -> None:
+    """Raise SystemExit unless active holds this user's marker, with token, written by a process that is still alive."""
+    path = os.path.join(active, MARKER)
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise ValueError("not a regular file this user owns")
+        with open(path, encoding="utf-8") as marker:
+            record = json.load(marker)
+        uid, pid, written = record["uid"], record["pid"], record["token"]
+    except (OSError, ValueError, KeyError, TypeError) as problem:
+        raise _fail(f"the run root {active!r} has no readable marker {MARKER}: {problem}") from None
+    if uid != os.getuid():
+        raise _fail(f"the marker of {active!r} names uid {uid!r}, not this user")
+    if not token or written != token:
+        raise _fail(f"the marker of {active!r} does not hold the token in {TOKEN}, so no run of this process made it")
+    if not isinstance(pid, int) or pid <= 0:
+        raise _fail(f"the marker of {active!r} names no process: {pid!r}")
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        raise _fail(f"the run that marked {active!r} has ended, so the root is stale") from None
+    except OSError:
+        raise _fail(f"the run that marked {active!r} belongs to another user") from None
 
 
 def _create(protected: tuple[str, ...]) -> str:
-    """Make a fresh run root outside every protected real root, point the environment at it, and return it."""
+    """Make a fresh marked run root outside every protected real root, point the environment at it, and return it."""
     base = _base(protected)
-    active = _text(tempfile.mkdtemp(prefix="pstack-tests-", dir=base))
+    active = _real(tempfile.mkdtemp(prefix="pstack-tests-", dir=base))
     for real in protected:
         if _within(active, real):
             raise _fail(f"the new run root {active!r} is inside the real path {real!r}")
@@ -191,8 +263,7 @@ def _create(protected: tuple[str, ...]) -> str:
         os.makedirs(path, mode=0o700 if name == "XDG_RUNTIME_DIR" else 0o777, exist_ok=True)
     os.environ.update(values)
     os.environ[POINTER] = active
-    # tempfile caches the first gettempdir() result, so drop it for the TMPDIR just set.
-    tempfile.tempdir = None
+    os.environ[TOKEN] = mark(active)
     return active
 
 
@@ -203,7 +274,7 @@ def _base(protected: tuple[str, ...]) -> str:
     for value in candidates:
         if not value or not os.path.isabs(value):
             continue
-        text = _text(value)
+        text = _real(value)
         if not os.path.isdir(text):
             continue
         if any(_within(text, real) for real in protected):
@@ -212,92 +283,144 @@ def _base(protected: tuple[str, ...]) -> str:
     raise _fail(f"no temporary directory outside {protected!r} to hold the run root")
 
 
-def _check(active: str, protected: tuple[str, ...]) -> None:
-    """Reread the environment instead of trusting what was assigned, and refuse the first value that escapes."""
-    values = layout(active)
-    for name, want in values.items():
-        got = os.environ.get(name)
-        if got != want or not os.path.isdir(got):
-            raise _fail(f"{name} is {got!r} after activation and should be the directory {want!r}")
-        for real in protected:
-            if _within(want, real):
-                raise _fail(f"{name} names {want!r}, which is inside the real path {real!r}")
-    if not _within(Path.home(), active) or not _within(os.path.expanduser("~"), active):
-        raise _fail(f"Path.home() is {Path.home()!r} and not inside the run root {active!r}")
-    if not _within(tempfile.gettempdir(), active):
-        raise _fail(f"tempfile.gettempdir() is {tempfile.gettempdir()!r} and not inside the run root {active!r}")
-
-
-def _check_adopted(protected: tuple[str, ...]) -> None:
-    """Reread the adopted environment and refuse the first value that escapes."""
-    _verify_home_values(protected)
-    for path in (Path.home(), os.path.expanduser("~")):
-        for real in protected:
-            if _within(path, real):
-                raise _fail(f"{path!r} is inside the real path {real!r}")
+def _check(active: str) -> None:
+    """Reread the environment instead of trusting what was assigned or verified, and refuse the first value that escapes."""
+    for name in _LAYOUT:
+        got = os.environ.get(name, "")
+        if not got or not os.path.isabs(got) or not _within(_real(got), active):
+            raise _fail(f"{name} is {got!r} and does not resolve inside the run root {active!r}")
     for name in ("HOME", "TMPDIR"):
         if not os.path.isdir(os.environ[name]):
             raise _fail(f"{name} names {os.environ[name]!r}, which is not a directory")
+    for label, value in (("Path.home()", Path.home()), ("expanduser('~')", os.path.expanduser("~")),
+                         ("tempfile.gettempdir()", tempfile.gettempdir())):
+        if not _within(_real(value), active):
+            raise _fail(f"{label} is {str(value)!r} and not inside the run root {active!r}")
 
 
-def _probe(protected: tuple[str, ...]) -> None:
-    """Delete a name that does not exist under a protected real root and refuse unless the guard stops it first."""
-    for real in protected:
-        target = os.path.join(real, f".pstack-t3-isolation-probe-{os.getpid()}")
-        if os.path.lexists(target):
-            continue
-        try:
-            os.remove(target)
-        except PermissionError:
-            return
-        except OSError:
-            raise _fail(f"the guard let os.remove({target!r}) through, so a test could delete a real file") from None
-        raise _fail(f"the guard let os.remove({target!r}) delete nothing, so it does not refuse a real path")
-    raise _fail("no protected real root is left to prove the guard refuses a delete")
-
-
-def _name(path, dir_fd) -> str | None:
-    """Return the lexical path a guarded call acts on, joining a relative path to its dir_fd, or None to refuse."""
+def _probe(active: str) -> None:
+    """Delete a name that does not exist beside the run root and refuse unless the guard stops it first."""
+    target = os.path.join(os.path.dirname(active), f".pstack-t3-isolation-probe-{secrets.token_hex(8)}")
     try:
-        text = os.fsdecode(os.fspath(path))
-    except TypeError:
-        return None
-    if dir_fd is not None and isinstance(dir_fd, int) and dir_fd >= 0 and not os.path.isabs(text):
+        os.rmdir(target)
+    except PermissionError:
+        return
+    except OSError:
+        raise _fail(f"the guard let os.rmdir({target!r}) through, so a test could delete outside its run root") from None
+    raise _fail(f"the guard let os.rmdir({target!r}) remove a directory outside the run root")
+
+
+def _arm() -> None:
+    """Add the audit hook, the os.open wrapper, and the os.environ.clear replacement, once per process."""
+    global _armed
+    if _armed:
+        return
+    sys.addaudithook(_hook)
+    os.open = _open
+    os.supports_dir_fd.add(_open)
+    os.environ.clear = _clear_environ
+    _armed = True
+
+
+def _open(path, flags, mode=0o777, *, dir_fd=None):
+    """os.open, refusing a write through dir_fd outside the run root or inside a protected root.
+
+    The open audit event leaves out dir_fd, so the hook alone would judge a relative name against the working directory.
+    """
+    if dir_fd is not None and flags & _WRITE_FLAGS and not isinstance(path, int):
+        target = _at(path, dir_fd)
+        if target is None:
+            raise _refuse("os.open", "write", path, "because its directory descriptor cannot be resolved")
+        target = _real(target)
+        if not inside(target) or any(_within(target, base) for base in _protected):
+            raise _refuse("os.open", "write", target, f"outside the run root {_root!r} or inside a protected root")
+    return _os_open(path, flags, mode, dir_fd=dir_fd)
+
+
+def _clear_environ() -> None:
+    """Remove every variable but the guarded ones, so clear() then update() still restores a saved environment."""
+    for name in [name for name in os.environ if name not in _GUARDED]:
+        del os.environ[name]
+
+
+def _at(path, dir_fd) -> str | None:
+    """Return the path a call acts on, joined to the directory dir_fd names when it is relative, or None when dir_fd cannot be read."""
+    text = os.fsdecode(os.fspath(path))
+    if isinstance(dir_fd, int) and dir_fd >= 0 and not os.path.isabs(text):
         try:
             anchor = os.readlink(f"/proc/self/fd/{dir_fd}")
         except OSError:
             return None
         text = os.path.join(anchor, text)
-    return _text(text)
+    return text
+
+
+def _fd_target(fd: int) -> str | None:
+    """Return the path an open descriptor names, "" when it names no filesystem path, or None when it cannot be read."""
+    try:
+        target = os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+        return None
+    return target if os.path.isabs(target) else ""
 
 
 def _refuse(event: str, action: str, path, detail: str) -> PermissionError:
     return PermissionError(f"{event} refused: the test isolation guard blocks the {action} of {path!r} {detail}")
 
 
-def _guard_delete(event: str, args: tuple) -> None:
-    path = args[0]
-    if isinstance(path, int):
-        return
-    target = _name(path, args[1] if len(args) > 1 else None)
+def _arg(args: tuple, index: int | None):
+    return args[index] if index is not None and index < len(args) else None
+
+
+def _deny_delete(event: str, path, dir_fd) -> None:
+    target = _at(path, dir_fd)
     if target is None:
         raise _refuse(event, "delete", path, "because its directory descriptor cannot be resolved")
-    if not inside(target):
-        raise _refuse(event, "delete", target, f"outside the run root {_root!r}")
+    entry = _entry(target)
+    if not _owned(entry):
+        raise _refuse(event, "delete", entry, f"outside the run root {_root!r} or inside a protected root")
 
 
-def _guard_write(event: str, args: tuple, pairs: tuple[tuple[int, int | None], ...]) -> None:
-    for index, fd_index in pairs:
-        if index >= len(args):
-            continue
-        path = args[index]
-        if isinstance(path, int):
-            continue
-        target = _name(path, args[fd_index] if fd_index is not None and fd_index < len(args) else None)
-        if target is None:
-            raise _refuse(event, "write", path, "because its directory descriptor cannot be resolved")
-        if _protected_write(target):
-            raise _refuse(event, "write", target, "inside a protected real home")
+def _deny_write(event: str, path, dir_fd, resolve) -> None:
+    if isinstance(path, int):
+        target = _fd_target(path)
+        if target == "":
+            return
+    else:
+        target = _at(path, dir_fd)
+    if target is None:
+        raise _refuse(event, "write", path, "because its descriptor cannot be resolved")
+    real = resolve(target)
+    if _protected_write(real):
+        raise _refuse(event, "write", real, "inside a protected real home")
+
+
+def _guard_delete(event: str, args: tuple) -> None:
+    if not isinstance(args[0], int):
+        _deny_delete(event, args[0], _arg(args, 1))
+
+
+def _guard_rename(event: str, args: tuple) -> None:
+    """A rename removes its source and any destination it replaces, so both follow the delete rule. A new destination is a create."""
+    source, dest = args[0], args[1]
+    _deny_delete(event, source, _arg(args, 2))
+    target = _at(dest, _arg(args, 3))
+    if target is not None and os.path.lexists(target):
+        _deny_delete(event, dest, _arg(args, 3))
+    else:
+        _deny_write(event, dest, _arg(args, 3), _entry)
+
+
+def _guard_create(path_index: int, fd_index: int | None):
+    def guard(event: str, args: tuple) -> None:
+        _deny_write(event, args[path_index], _arg(args, fd_index), _entry)
+    return guard
+
+
+def _guard_change(fd_index: int | None):
+    def guard(event: str, args: tuple) -> None:
+        _deny_write(event, args[0], _arg(args, fd_index), _real)
+    return guard
 
 
 def _write_intent(mode, flags) -> bool:
@@ -308,39 +431,89 @@ def _write_intent(mode, flags) -> bool:
 
 def _guard_open(event: str, args: tuple) -> None:
     path = args[0]
-    if isinstance(path, int):
+    if isinstance(path, int) or not _write_intent(_arg(args, 1), _arg(args, 2)):
         return
-    if not _write_intent(args[1] if len(args) > 1 else None, args[2] if len(args) > 2 else None):
+    _deny_write(event, path, None, _real)
+
+
+def _guard_sqlite(event: str, args: tuple) -> None:
+    database = os.fsdecode(os.fspath(args[0]))
+    if database in ("", ":memory:"):
         return
-    target = _name(path, None)
-    if target is None or _protected_write(target):
-        raise _refuse(event, "write", target if target is not None else path, "inside a protected real home")
+    if database.startswith("file:"):
+        parts = urllib.parse.urlsplit(database)
+        name = urllib.parse.unquote(parts.path)
+        if parts.netloc not in ("", "localhost") or not name:
+            raise _refuse(event, "write", database, "because its file URI names no local path")
+        if name == ":memory:":
+            return
+        database = name
+    _deny_write(event, database, None, _real)
+
+
+def _assignment_problem(key: str, value: str) -> str | None:
+    """Return why the guard refuses value as the guarded name key, or None when it accepts it."""
+    if not value:
+        return "because it is empty"
+    if key == TOKEN:
+        return None
+    if not os.path.isabs(value):
+        return "because it is not an absolute path"
+    target = _real(value)
+    for real in _protected:
+        if _within(target, real):
+            return f"because {target!r} is inside the real path {real!r}"
+    return None
+
+
+def admits(env) -> bool:
+    """Return whether this process can take env as its whole environment once the guard is armed.
+
+    The guard refuses to remove a guarded name or to give it a refused value, so a caller that swaps
+    the environment in place needs env to keep every guarded name it has now with a value it accepts.
+    """
+    if not _armed:
+        return True
+    for key in _GUARDED:
+        if key in env:
+            if _assignment_problem(key, env[key]) is not None:
+                return False
+        elif key in os.environ:
+            return False
+    return True
 
 
 def _guard_putenv(event: str, args: tuple) -> None:
-    key = os.fsdecode(args[0]) if isinstance(args[0], bytes) else str(args[0])
-    if key != "HOME" and not key.startswith("XDG_"):
+    key = os.fsdecode(args[0])
+    if key not in _GUARDED:
         return
-    value = os.fsdecode(args[1]) if isinstance(args[1], bytes) else str(args[1])
-    if not value or not os.path.isabs(value):
-        return
-    target = _text(value)
-    for real in _protected:
-        if _within(target, real):
-            raise _refuse(event, "assignment", target, f"as {key}, inside the real path {real!r}")
+    value = os.fsdecode(args[1])
+    problem = _assignment_problem(key, value)
+    if problem is not None:
+        raise _refuse(event, "assignment", value, f"as {key}, {problem}")
+
+
+def _guard_unsetenv(event: str, args: tuple) -> None:
+    key = os.fsdecode(args[0])
+    if key in _GUARDED:
+        raise _refuse(event, "removal", key, "because the process would fall back to the real home")
 
 
 _HANDLERS = {
     "shutil.rmtree": _guard_delete,
     "os.remove": _guard_delete,
     "os.rmdir": _guard_delete,
-    "os.mkdir": lambda event, args: _guard_write(event, args, ((0, 2),)),
-    "os.rename": lambda event, args: _guard_write(event, args, ((0, 2), (1, 3))),
-    "os.symlink": lambda event, args: _guard_write(event, args, ((1, 2),)),
-    "os.link": lambda event, args: _guard_write(event, args, ((0, 2), (1, 3))),
-    "os.truncate": lambda event, args: _guard_write(event, args, ((0, None),)),
+    "os.rename": _guard_rename,
+    "os.mkdir": _guard_create(0, 2),
+    "os.symlink": _guard_create(1, 2),
+    "os.link": _guard_create(1, 3),
+    "os.truncate": _guard_change(None),
+    "os.chmod": _guard_change(2),
+    "os.utime": _guard_change(3),
     "open": _guard_open,
+    "sqlite3.connect": _guard_sqlite,
     "os.putenv": _guard_putenv,
+    "os.unsetenv": _guard_unsetenv,
 }
 
 
@@ -353,3 +526,10 @@ def _hook(event: str, args: tuple) -> None:
         handler(event, args)
     finally:
         _local.busy = False
+
+
+# A runner child loads this file by path as pstack_test_isolation before discovery imports it as
+# tests.isolation. Both names give the first copy, so a process holds one guard and one run root.
+_first = sys.modules.setdefault("pstack_test_isolation", sys.modules[__name__])
+if _first is not sys.modules[__name__] and os.path.realpath(getattr(_first, "__file__", "") or "") == os.path.realpath(__file__):
+    sys.modules[__name__] = _first

@@ -1,1 +1,4 @@
-"""Tests for pstack-t3. Every area package isolates its process when it is imported."""
+"""Tests for pstack-t3. Importing this package, or any area package, isolates the process from the user's real home."""
+from . import isolation
+
+isolation.install()

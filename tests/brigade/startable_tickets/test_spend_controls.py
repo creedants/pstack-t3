@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 class SpendStandingMixin:
     def test_startable_with_no_waiting_ticket_prints_the_workers_line_and_says_so(self):
         self.queue()

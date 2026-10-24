@@ -1,3 +1,15 @@
+if __package__ in (None, ""):
+    import sys
+    from pathlib import Path
+
+    _repo_root = Path(__file__).resolve().parent
+    while _repo_root != _repo_root.parent and not (_repo_root / "tests" / "isolation.py").is_file():
+        _repo_root = _repo_root.parent
+    sys.path.insert(0, str(_repo_root))
+from tests import isolation
+
+isolation.install()
+
 class RefsRulingsMixin:
     def test_a_ref_moved_through_the_admin_frees_at_every_step_once_done(self):
         ref = "https://github.com/o/r/issues/7"
