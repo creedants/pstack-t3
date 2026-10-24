@@ -166,6 +166,7 @@ class ReportingTest(BrigadeTest):
         self.assertEqual(text.split("\n\n", 2)[2], "\n\n".join([
             "## Moved to full mode", "- D1 (T1): contested: two owners",
             "## Send-back reasons (last 7 days)", "No send-backs in the last 7 days.",
+            "## Reviewer hit rate (last 7 days)", "No reviewed rounds in the last 7 days.",
             "## Spend", "goal not recorded  wall open  rounds 0  send-backs 0  threads not recorded",
             "## Follow-up share", "- 0 of 1 tickets created in the last 14 days came from a report (0%)."]))
     def test_the_second_send_back_moves_the_item_to_full_once(self):

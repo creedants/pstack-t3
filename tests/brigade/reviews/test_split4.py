@@ -290,6 +290,8 @@ class ReviewsSplit4Test(BrigadeTest):
             "- polish T8: Tidy the docs",
             "- T9: Installer",
             "", "## Send-back reasons (last 7 days)", "", "other 1",
+            "", "## Reviewer hit rate (last 7 days)", "",
+            "codex/gpt-6.1-sol  rounds 2  pass 1  pass-with-edits 0  send-backs 1  upheld 0  overruled 0  rate n/a",
             "", "## Spend", "",
             "goal not recorded  wall 0m (1 open)  rounds 1  send-backs 0  threads not recorded",
             "G1  wall open  rounds 0  send-backs 0  threads not recorded",

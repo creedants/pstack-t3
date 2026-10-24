@@ -463,7 +463,7 @@ brigade.py [flags] pass <action>
 
 record or check a review verdict for a dish at a head SHA
 
-`<action>` is one of `record`, `check`, `stats`.
+`<action>` is one of `record`, `check`, `stats`, `hits`.
 
 ## brigade.py pass record
 
@@ -523,6 +523,24 @@ Print the first-pass rate overall and per author model. An item has at least one
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--last LAST` |  |  | `20` | how many items to cover, counting back from the most recently reviewed; default 20 |
+
+## brigade.py pass hits
+
+```text
+brigade.py [flags] pass hits [--last LAST]
+```
+
+Print a per-reviewer table of rounds, passes, pass-with-edits rounds, send-backs, upheld and overruled findings, and the upheld rate, over the last N days.
+
+A row counts for the verifier its verifier cell names, including a --member row and a --late row. Rows are judged in table order. A round is one pass.tsv row whose at cell is at or after the window's start, which is the given number of days back from now.
+
+A send-back is upheld when the same dish's next recorded round is at a different SHA. It is overruled when the dish's next recorded verdict is a pass at the same SHA, or when the dish's round-budget decision was answered known limits or drop after the send-back row's at cell and no later non-member row of the dish is at another SHA. A send-back that neither rule settles counts in neither upheld nor overruled. A pass-with-edits round is upheld when edits.tsv recorded the edits for the dish from that row's SHA, and counts in neither otherwise. A pass round and a blocked round are rounds and nothing more, and a send-back that is still pending counts as a send-back round.
+
+The upheld rate is upheld over upheld plus overruled, one decimal place, and n/a when a seat has neither. A member row settles nothing for the dish, so the next recorded round is always a non-member row, but a member row still counts as a round for its own seat and is judged by these definitions. An empty window prints no reviewed rounds in the last N days.
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--last LAST` |  |  | `7` | how many days to cover, counting back from now; default 7 |
 
 ## brigade.py edits
 

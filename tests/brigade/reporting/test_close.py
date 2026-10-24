@@ -184,6 +184,9 @@ class ReportingTest(BrigadeTest, _ReportingRace):
             "## Merged", "", "- fix D1 (T1): Fix s", "",
             "## Dropped", "", "- T2: UI", "",
             "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.", "",
+            "## Reviewer hit rate (last 7 days)", "",
+            "codex/gpt-6.1-sol  rounds 1  pass 1  pass-with-edits 0  send-backs 0  upheld 0  overruled 0  rate n/a",
+            "",
             "## Spend", "", "goal not recorded  wall 0m  rounds 1  send-backs 0  threads not recorded", "",
             "## Follow-up share", "", "- 0 of 2 tickets created in the last 14 days came from a report (0%).",
         ]))
