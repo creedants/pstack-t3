@@ -173,8 +173,8 @@ def layout(root) -> dict[str, str]:
 
 def allocate(base=None) -> Path:
     """Make a directory this process owns, under base or in a temporary directory outside every protected
-    root, and return it. A guarded process hands out only a directory it created, so every path made
-    here is recorded."""
+    root, and return it. A guarded process hands out a directory only inside its run root or one this
+    process allocated, so every path made here is recorded."""
     parent = _real(base) if base is not None else _base(_protected)
     created = _real(tempfile.mkdtemp(prefix="pstack-tests-", dir=parent))
     _created.add(created)
@@ -185,8 +185,8 @@ def _handout(path) -> str:
     """Return the real path a guarded process may write a marker or a hand-built home into.
 
     An unarmed process may write anywhere. An armed one may write inside its run root, or into a
-    directory it allocated here. Any other directory predates the run, so a child handed it could
-    delete data this run never made.
+    directory it allocated here. Any other directory is one this process did not make, so a child
+    handed it could delete data this run never made.
     """
     real = _real(path)
     if not _armed or _root is None or _within(real, _root) or real in _created:
@@ -315,7 +315,7 @@ def _verify_marker(active: str, token: str) -> None:
     except OSError:
         raise _fail(f"the run root {active!r} has no marker {MARKER} to compare") from None
     if (device, inode) != (current.st_dev, current.st_ino):
-        raise _fail(f"the marker of {active!r} was written for another directory, so no run made this one")
+        raise _fail(f"the marker of {active!r} was written for another directory")
     if not token or written != token:
         raise _fail(f"the marker of {active!r} does not hold the token in {TOKEN}")
     if not isinstance(pid, int) or pid <= 0:
