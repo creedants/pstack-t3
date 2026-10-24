@@ -68,6 +68,9 @@ class AdoptionTest(unittest.TestCase):
         root = self.scratch / "uid"
         cases["different uid"] = self.handed(root)
         self.rewrite(root, uid=os.getuid() + 1)
+        root = self.scratch / "roots"
+        cases["malformed marker roots"] = self.handed(root)
+        self.rewrite(root, roots="not a list")
         root = self.scratch / "home"
         cases["HOME outside the root"] = env = self.handed(root)
         env["HOME"] = str(self.scratch)

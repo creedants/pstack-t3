@@ -170,6 +170,108 @@ class EnvironmentRouteTest(unittest.TestCase):
 '''
 
 
+COPIED_FIXTURE = '''"""A fixture with no isolation prelude that copies its environment and drops a trusted root."""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, @REPO@)
+from tests import isolation
+
+isolation.install()
+
+ORIGINALS = "PSTACK_TEST_PROTECTED_ROOTS"
+TARGET = Path(@TARGET@)
+HARMLESS = @HARMLESS@
+REPORT = Path(@REPORT@)
+ROUTES = ("remove", "empty", "append")
+ENTRIES = ("named", "direct", "discover", "runner")
+PROBE = """import os
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, @REPO@)
+from tests import isolation
+
+isolation.install()
+
+
+class ProbeTest(unittest.TestCase):
+    def test_the_original_write_is_refused(self):
+        try:
+            Path(@TARGET@, "written").write_text("x")
+        except PermissionError:
+            Path(os.environ["PSTACK_D4_PROBE_REPORT"]).write_text("refused")
+            return
+        Path(os.environ["PSTACK_D4_PROBE_REPORT"]).write_text("wrote")
+        self.fail("the original root accepted a write")
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+
+
+def copied(route):
+    env = dict(os.environ)
+    if route == "remove":
+        del env[ORIGINALS]
+    elif route == "empty":
+        env[ORIGINALS] = "[]"
+    else:
+        env[ORIGINALS] = json.dumps([HARMLESS])
+    return env
+
+
+def command(entry, package, plain):
+    if entry == "named":
+        return [sys.executable, "-m", "unittest", "probe_pkg.test_probe"]
+    if entry == "direct":
+        return [sys.executable, str(package / "test_probe.py")]
+    if entry == "discover":
+        return [sys.executable, "-m", "unittest", "discover", "-s", str(plain), "-p", "test_probe.py"]
+    return [sys.executable, str(Path(@REPO@) / "scripts" / "run_tests.py"), "-s", str(plain), "-j", "1"]
+
+
+class CopiedEnvironmentTest(unittest.TestCase):
+    def test_a_copied_environment_that_drops_the_record_keeps_the_original_root_protected(self):
+        scratch = Path(tempfile.mkdtemp(prefix="copied-"))
+        package = scratch / "probe_pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        plain = scratch / "probe_dir"
+        plain.mkdir()
+        (package / "test_probe.py").write_text(PROBE)
+        (plain / "test_probe.py").write_text(PROBE)
+        reports = scratch / "reports"
+        reports.mkdir()
+        try:
+            TARGET.joinpath("direct").write_text("x")
+        except PermissionError:
+            direct = "refused"
+        else:
+            direct = "allowed"
+        found = {"direct": direct}
+        for entry in ENTRIES:
+            for route in ROUTES:
+                report = reports / f"{entry}-{route}.txt"
+                env = copied(route)
+                env["PSTACK_D4_PROBE_REPORT"] = str(report)
+                done = subprocess.run(command(entry, package, plain), cwd=scratch, env=env,
+                                      capture_output=True, text=True, timeout=600)
+                found[f"{entry} {route}"] = report.read_text() if report.exists() else f"no report: {done.stdout[-400:]}{done.stderr[-400:]}"
+        REPORT.write_text(json.dumps(found))
+        self.assertEqual(found.pop("direct"), "refused")
+        self.assertEqual({name: verdict for name, verdict in found.items() if verdict != "refused"}, {}, found)
+'''
+
+
 COLON_FIXTURE = '''"""A fixture with no isolation prelude that writes into a directory whose name holds a colon."""
 
 import sys
@@ -306,6 +408,35 @@ class ColonNameTest(unittest.TestCase):
         done = subprocess.run([sys.executable, "scripts/run_tests.py", "-s", str(fixture), "-j", "1"],
                               cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(os.listdir(state), [])
+
+
+class CopiedEnvironmentTest(unittest.TestCase):
+    def test_a_copied_environment_that_drops_the_record_keeps_the_original_root_protected(self):
+        scratch = Path(tempfile.mkdtemp(prefix="copied-"))
+        self.addCleanup(shutil.rmtree, scratch, True)
+        state = scratch / "original-state"
+        home = scratch / "home"
+        tmp = scratch / "tmp"
+        harmless = scratch / "harmless"
+        fixture = scratch / "fixture"
+        for path in (state, home, tmp, harmless, fixture):
+            path.mkdir()
+        report = scratch / "report.json"
+        body = (COPIED_FIXTURE.replace("@REPO@", repr(str(ROOT)))
+                .replace("@TARGET@", repr(str(state)))
+                .replace("@HARMLESS@", repr(str(harmless)))
+                .replace("@REPORT@", repr(str(report))))
+        (fixture / "test_copied_env.py").write_text(body)
+        env = {key: value for key, value in os.environ.items()
+               if key not in (isolation.POINTER, isolation.TOKEN, ORIGINALS)}
+        env.update({"XDG_STATE_HOME": str(state), "HOME": str(home), "TMPDIR": str(tmp)})
+        done = subprocess.run([sys.executable, "scripts/run_tests.py", "-s", str(fixture), "-j", "1"],
+                              cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        found = json.loads(report.read_text())
+        self.assertEqual(found.pop("direct"), "refused", found)
+        self.assertEqual({name: verdict for name, verdict in found.items() if verdict != "refused"}, {}, found)
         self.assertEqual(os.listdir(state), [])
 
 

@@ -201,6 +201,20 @@ class DescriptorAndModeTest(Fixture):
                          (target_before.st_ctime_ns, target_before.st_uid, target_before.st_gid))
 
 
+class OwnershipTest(unittest.TestCase):
+    def test_lchown_on_an_unprotected_symlink_in_the_run_root_succeeds(self):
+        if getattr(os, "lchown", None) is None:
+            self.skipTest("os.lchown is not available on this platform")
+        scratch = Path(tempfile.mkdtemp(prefix="lchown-"))
+        self.addCleanup(shutil.rmtree, scratch, True)
+        target = scratch / "target"
+        target.write_text("x")
+        link = scratch / "link"
+        link.symlink_to(target)
+        os.lchown(link, os.getuid(), os.getgid())
+        self.assertEqual(os.readlink(link), str(target))
+
+
 class RenameTest(unittest.TestCase):
     def test_a_rename_that_removes_a_path_outside_the_run_root_is_refused_and_both_paths_stay(self):
         cache = ROOT / "tests" / "isolation_tests" / "__pycache__"
