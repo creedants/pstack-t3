@@ -8,13 +8,21 @@ variable resolves inside it. Every install, the first and each repeat, rereads t
 raises SystemExit on the first value that escapes, so an install that finds a variable outside the
 run root stops the process instead of letting it use a real path.
 
-The guard is one audit hook, wrappers around os.open, os.mkfifo, and os.mknod, and a replacement
-os.environ.clear. Its filesystem path checks resolve symlinks in the directory part first. A checked
-delete or rename acts on a final symlink name itself. Checked deletes, rename sources, and replaced
-rename destinations must sit inside the run root. The write handlers check protected real roots
-outside the checkout. SQLite ATTACH remains unguarded. Removing a guarded variable is refused, and
-so is setting one of them except the token to a relative or protected value. Setting any of them, the
-token included, to an empty value is refused. os.environ.clear() keeps the guarded variables.
+The guard is one audit hook, wrappers around os.open, os.mkfifo, os.mknod, os.chown, and os.lchown,
+and a replacement os.environ.clear. Its filesystem path checks resolve symlinks in the directory
+part first. A checked delete or rename acts on a final symlink name itself. Checked deletes, rename
+sources, and replaced rename destinations must sit inside the run root. The write handlers check
+protected real roots outside the checkout. SQLite ATTACH remains unguarded. Removing a guarded
+variable is refused, and so is setting one of them except the token to a relative or protected
+value. Setting any of them, the token included, to an empty value is refused. os.environ.clear()
+keeps the guarded variables.
+
+PSTACK_TEST_PROTECTED_ROOTS carries the trusted record, a JSON array of protected real roots. The
+record is guarded and can only grow, so removing it, rewriting it, or clearing the environment
+cannot lower the roots a process and its children protect. A malformed record stops the process,
+and an assignment that drops a recorded root is refused. os.chown with follow_symlinks False and
+os.lchown are wrapped, because the os.chown audit event carries no follow_symlinks field, so a
+protected link name whose target is outside protection stays refused.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
 XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state directory.
@@ -50,22 +58,25 @@ _sibling("pstack_test_isolation_paths", "isolation_paths.py")
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
     _entry, _fail, _fd_target, _probe, _real, _real_roots, _refuse, _within,
-    _write_intent, layout, remember_originals,
+    _write_intent, encode_roots, layout, parse_roots,
 )
 
 
-_GUARDED = frozenset(_LAYOUT) | {POINTER, TOKEN}
+_GUARDED = frozenset(_LAYOUT) | {POINTER, TOKEN, ORIGINALS}
 
 _CHECKOUT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 _root: str | None = None
 _protected: tuple[str, ...] = ()
+_originals: tuple[str, ...] = ()
 _armed = False
 _created: set[str] = set()
 _local = threading.local()
 _os_open = os.open
 _os_mkfifo = getattr(os, "mkfifo", None)
 _os_mknod = getattr(os, "mknod", None)
+_os_chown = getattr(os, "chown", None)
+_os_lchown = getattr(os, "lchown", None)
 
 
 def _protected_write(real: str) -> bool:
@@ -80,6 +91,19 @@ def _owned(entry: str) -> bool:
     return _root is not None and _within(entry, _root) and not any(_within(entry, base) for base in _protected)
 
 
+def _record(roots) -> None:
+    """Merge roots into the trusted record, publish it in ORIGINALS, and protect it from now on.
+
+    The environment write happens before the in-memory state changes, so a refused write changes
+    nothing. A repeat call with a subset changes nothing.
+    """
+    global _originals, _protected
+    merged = tuple(dict.fromkeys(_originals + tuple(_real(root) for root in roots)))
+    os.environ[ORIGINALS] = encode_roots(merged)
+    _originals = merged
+    _protected = tuple(dict.fromkeys(_protected + merged))
+
+
 @contextlib.contextmanager
 def protecting(*paths):
     """Treat each path as one more protected real root until the block ends. It only adds protection."""
@@ -89,7 +113,7 @@ def protecting(*paths):
     try:
         yield
     finally:
-        _protected = before
+        _protected = tuple(dict.fromkeys(before + _originals))
 
 
 def allocate(base=None) -> Path:
@@ -131,8 +155,10 @@ def mark(root) -> str:
 
 
 def worker_env(env: dict[str, str], home) -> dict[str, str]:
-    """Return env with the seven variables, the pointer, and the token set to the shard home, creating its directories and marker."""
+    """Return env with the seven variables, the pointer, the token, and the record set to the shard home, creating its directories and marker."""
     active = _handout(home)
+    # Merge the record held in memory with the roots env names, so neither an empty env nor a rewritten one drops one.
+    record = encode_roots(tuple(dict.fromkeys(_originals + _real_roots(active, env))))
     values = layout(active)
     for name, path in values.items():
         os.makedirs(path, mode=0o700 if name == "XDG_RUNTIME_DIR" else 0o777, exist_ok=True)
@@ -140,8 +166,7 @@ def worker_env(env: dict[str, str], home) -> dict[str, str]:
     environ.update(values)
     environ[POINTER] = active
     environ[TOKEN] = mark(active)
-    # Carry roots present in env. An empty or altered env can drop the caller's original external XDG roots.
-    environ[ORIGINALS] = os.pathsep.join(_real_roots(active, env))
+    environ[ORIGINALS] = record
     return environ
 
 
@@ -177,13 +202,19 @@ def install() -> Path:
         # refuses a rename in the checkout, so bytecode for this process goes under the run root instead.
         sys.pycache_prefix = os.path.join(active, "pycache")
     _root = active
-    _protected = tuple(dict.fromkeys(_protected + protected))
-    # Serialize roots for children. Propagation depends on preserving this variable and colon-free paths.
-    os.environ[ORIGINALS] = os.pathsep.join(_protected)
+    # Publish the trusted record. The first install runs before _arm(); a repeat install writes a superset.
+    _record(protected)
     _arm()
     _check(active)
     _probe(active)
     return Path(active)
+
+
+def remember_originals() -> tuple[str, ...]:
+    """Record the protected roots this process starts with, before a runner rewrites a child environment."""
+    pointer = os.environ.get(POINTER, "")
+    _record(_real_roots(_real(pointer) if os.path.isabs(pointer) else None, os.environ))
+    return _originals
 
 
 def _create(protected: tuple[str, ...]) -> str:
@@ -215,6 +246,13 @@ def _arm() -> None:
     if _os_mknod is not None:
         os.mknod = _mknod
         os.supports_dir_fd.add(_mknod)
+    for original, replacement, name in ((_os_chown, _chown, "chown"), (_os_lchown, _lchown, "lchown")):
+        if original is None:
+            continue
+        setattr(os, name, replacement)
+        for supported in (os.supports_dir_fd, os.supports_fd, os.supports_follow_symlinks):
+            if original in supported:
+                supported.add(replacement)
     os.environ.clear = _clear_environ
     _armed = True
 
@@ -247,6 +285,19 @@ def _mknod(path, mode=0o600, device=0, *, dir_fd=None):
     """os.mknod, refusing an entry inside a protected real root outside the checkout."""
     _deny_write("os.mknod", path, dir_fd, _entry)
     return _os_mknod(path, mode, device, dir_fd=dir_fd)
+
+
+def _chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
+    """os.chown, refusing a change to the link name itself inside a protected real root outside the checkout."""
+    if not follow_symlinks:
+        _deny_write("os.chown", path, dir_fd, _entry)
+    return _os_chown(path, uid, gid, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+
+def _lchown(path, uid, gid, *, dir_fd=None):
+    """os.lchown, refusing a change to the link name itself inside a protected real root outside the checkout."""
+    _deny_write("os.lchown", path, dir_fd, _entry)
+    return _os_lchown(path, uid, gid, dir_fd=dir_fd)
 
 
 def _clear_environ() -> None:
@@ -339,6 +390,15 @@ def _assignment_problem(key: str, value: str) -> str | None:
     if not value:
         return "because it is empty"
     if key == TOKEN:
+        return None
+    if key == ORIGINALS:
+        try:
+            roots = parse_roots(value)
+        except ValueError as problem:
+            return f"because it is not a record of absolute paths: {problem}"
+        for real in _originals:
+            if real not in roots:
+                return f"because it drops the recorded root {real!r}"
         return None
     if not os.path.isabs(value):
         return "because it is not an absolute path"

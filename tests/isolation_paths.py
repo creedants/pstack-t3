@@ -86,28 +86,45 @@ def _real_roots(root: str | None, environ) -> tuple[str, ...]:
     return tuple(found)
 
 
-def _original_roots(environ) -> tuple[str, ...]:
-    """Return the protected real roots a caller recorded in environ, without an empty or relative entry."""
+def encode_roots(roots) -> str:
+    """Return the unambiguous record ORIGINALS carries: a JSON array of the roots, in order."""
+    return json.dumps([os.fspath(root) for root in roots])
+
+
+def parse_roots(value: str) -> tuple[str, ...]:
+    """Return the real paths value records, or raise ValueError when the record is malformed.
+
+    A record is a JSON array of absolute path strings. An empty string, text that is not JSON,
+    anything that is not an array, and any item that is not an absolute path are malformed.
+    "[]" is a valid empty record.
+    """
+    try:
+        items = json.loads(value)
+    except ValueError as problem:
+        raise ValueError(f"it is not JSON: {problem}") from None
+    if not isinstance(items, list):
+        raise ValueError("it is not a JSON array")
     found: list[str] = []
-    for entry in environ.get(ORIGINALS, "").split(os.pathsep):
-        if not entry or not os.path.isabs(entry):
-            continue
-        text = _real(entry)
+    for item in items:
+        if not isinstance(item, str):
+            raise ValueError(f"it holds {item!r}, which is not a path string")
+        if not os.path.isabs(item):
+            raise ValueError(f"it holds {item!r}, which is not an absolute path")
+        text = _real(item)
         if text not in found:
             found.append(text)
     return tuple(found)
 
 
-def remember_originals() -> tuple[str, ...]:
-    """Record the protected real roots this process starts with in ORIGINALS, and return them.
-
-    A runner calls this before rewriting child environments. Propagation requires unchanged
-    ORIGINALS and paths without colons. An empty worker_env input can also drop original roots.
-    """
-    pointer = os.environ.get(POINTER, "")
-    roots = _real_roots(_real(pointer) if os.path.isabs(pointer) else None, os.environ)
-    os.environ[ORIGINALS] = os.pathsep.join(roots)
-    return roots
+def _original_roots(environ) -> tuple[str, ...]:
+    """Return the protected real roots a caller recorded in environ. A malformed record stops the process."""
+    value = environ.get(ORIGINALS)
+    if value is None:
+        return ()
+    try:
+        return parse_roots(value)
+    except ValueError as problem:
+        raise _fail(f"{ORIGINALS} is not a record of absolute paths: {problem}") from None
 
 
 def layout(root) -> dict[str, str]:
