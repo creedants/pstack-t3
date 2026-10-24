@@ -20,19 +20,24 @@
   The final resolved path is judged, so a relative name that climbs out is refused. A path-named write
   keeps the existing protected-root rule and its checkout exemption. A rename whose destination cannot
   be resolved refuses, even when it would replace an existing entry.
+- Each wrapper converts its path argument once with `os.fspath` at the boundary and hands that same
+  value to the guard and the syscall. `os.mkfifo` and `os.mknod` raise no audit event, so the
+  conversion has to happen at the wrapper. Without it a stateful path object reads a permitted name
+  in the guard and a protected name in the syscall, and a fifo or node lands in a protected root.
 - Linux through `/proc` is tightened the same way, because a descriptor tells `_deny_write` nothing
   about which resolver answered. The base allowed a descriptor write outside the run root there, and no
   suite caller makes one. The 3 `os.truncate` refusals in that run reach `_fd_target`, which now asks
   `_fd_path`, so macOS resolves them through `F_GETPATH`, and those writes are inside the run root.
-- `tests/isolation_tests/test_descriptor_paths.py` runs each case but the last in a child that hides
-  `/proc/self/fd` with a patched `os.readlink`, records the real path of every descriptor `os.open`
-  returns, and answers `F_GETPATH` from that record in a 1024-byte buffer, so the guard's stat and
-  fstat identity check still runs. The last case keeps `/proc` visible. It covers a delete inside the
-  run root through a resolved directory descriptor, a
+- `tests/isolation_tests/test_descriptor_paths.py` runs each case but the `/proc` case in a child that
+  hides `/proc/self/fd` with a patched `os.readlink`, records the real path of every descriptor
+  `os.open` returns, and answers `F_GETPATH` from that record in a 1024-byte buffer, so the guard's
+  stat and fstat identity check still runs. The `/proc` case keeps `/proc` visible. It covers a
+  delete inside the run root through a resolved directory descriptor, a
   delete inside a protected root inside the run root that is refused with its canary intact, a delete
   through a descriptor with no readable path that is refused, and a truncate and a mkdir placed outside
   the run root that are refused with their canaries intact, plus the same outsides through the `/proc`
-  branch and a truncate inside the run root that still passes.
+  branch, a truncate inside the run root that still passes, and a fifo and a node whose path object
+  changes after its first read and creates only the permitted entry.
 - macOS itself was not run locally. The Linux reproduction with `/proc` hidden and a simulated kernel
   answer covers the resolved descriptor and the one that resolves through neither, and the `F_GETPATH`
   call itself runs only on macOS. The four macOS workflow jobs run only on push to main, not on a pull
