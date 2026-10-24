@@ -12,13 +12,11 @@ from tests import isolation
 
 isolation.install()
 
-import json
 import os
 import pwd
 import py_compile
 import shutil
 import sqlite3
-import subprocess
 import sys
 import tempfile
 import unittest

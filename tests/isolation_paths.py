@@ -1,6 +1,6 @@
 """Path rules, protected real roots, and run-root admission for the test isolation guard.
 
-`tests/isolation.py` imports every name here and holds the guard state, the audit hook, the wrappers, and `install()`.
+`tests/isolation.py` imports from here and holds the guard state, the audit hook, the wrappers, and `install()`.
 """
 
 from __future__ import annotations
