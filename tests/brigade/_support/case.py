@@ -129,7 +129,9 @@ class CaseBase:
 
 
     def record(self, sha, verdict, *extra, author=CLAUDE, verifier=CODEX):
-        self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", verdict, "--author", author, "--verifier", verifier, *extra)
+        reason = ("--reason", "other") if verdict == "send-back" and "--reason" not in extra else ()
+        self.brigade("pass", "record", "D1", "--sha", sha, "--verdict", verdict, "--author", author, "--verifier", verifier,
+                     *reason, *extra)
 
 
     def pass_rows(self):

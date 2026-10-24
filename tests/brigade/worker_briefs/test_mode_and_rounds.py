@@ -129,6 +129,7 @@ class ModeRoundsMixin:
         self.record("a2", "send-back")
         self.brigade("dish", "D1", "--state", "in-progress")
         self.assertEqual(self.brigade("pass", "record", "D1", "--pr", "u/1", "--sha", "a1", "--verdict", "send-back",
+                                      "--reason", "other",
                                       "--author", CLAUDE, "--verifier", CODEX, "--note", "round 1", "--late"),
                          "D1: late send-back on record; D1 stays in-progress")
         self.assertEqual(self.dish_fields("state", "pr", "sha", "thread"), ("in-progress", "", "a2", ""))
