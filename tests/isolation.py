@@ -12,13 +12,12 @@ The guard is one audit hook, wrappers around os.open, os.mkfifo, os.mknod, os.ch
 and a replacement os.environ.clear. Its filesystem path checks resolve symlinks in the directory
 part first. A checked delete or rename acts on a final symlink name itself. Checked deletes, rename
 sources, and replaced rename destinations must sit inside the run root. A descriptor's path comes from
-/proc/self/fd, then from macOS F_GETPATH checked by device and inode. A delete through a directory
-descriptor whose path cannot be read needs a bounded identity walk that proves the directory is the run
-root or below it. The write handlers check
-protected real roots outside the checkout. SQLite ATTACH remains unguarded. Removing a guarded
-variable or setting one to an empty value is refused. Guarded path variables reject relative or
-protected paths. The token and root record have their own assignment rules. os.environ.clear()
-keeps the guarded variables.
+/proc/self/fd, then from macOS F_GETPATH checked by device and inode. A call on a descriptor that
+resolves through neither is refused, and a write placed through a descriptor must also sit inside the
+run root. The write handlers check protected real roots outside the checkout. SQLite ATTACH remains
+unguarded. Removing a guarded variable or setting one to an empty value is refused. Guarded path
+variables reject relative or protected paths. The token and root record have their own assignment
+rules. os.environ.clear() keeps the guarded variables.
 
 PSTACK_TEST_PROTECTED_ROOTS carries a JSON array of absolute paths. This process keeps its trusted
 roots in memory, and a run root's marker carries the roots of the process that marked it, so a child
@@ -61,7 +60,7 @@ _sibling("pstack_test_isolation_paths", "isolation_paths.py")
 # MARKER stays exported because the adoption tests read isolation.MARKER to reach a run root's marker file.
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
-    _entry, _fail, _fd_target, _owned_leaf, _probe, _real, _real_roots, _refuse, _within,
+    _entry, _fail, _fd_target, _placed, _probe, _real, _real_roots, _refuse, _within,
     _write_intent, encode_roots, layout, parse_roots, write_marker,
 )
 
@@ -90,9 +89,9 @@ def _protected_write(real: str) -> bool:
     return any(_within(real, base) for base in _protected)
 
 
-def _owned(entry: str) -> bool:
-    """Return whether a delete of the real entry stays inside the run root and outside every protected root."""
-    return _root is not None and _within(entry, _root) and not any(_within(entry, base) for base in _protected)
+def _owned(real: str) -> bool:
+    """Return whether the real path stays inside the run root and outside every protected root."""
+    return _root is not None and _within(real, _root) and not any(_within(real, base) for base in _protected)
 
 
 def _record(roots) -> None:
@@ -267,7 +266,7 @@ def _open(path, flags, mode=0o777, *, dir_fd=None):
         if target is None:
             raise _refuse("os.open", "write", path, "because its directory descriptor cannot be resolved")
         target = _real(target)
-        if not inside(target) or any(_within(target, base) for base in _protected):
+        if not _owned(target):
             raise _refuse("os.open", "write", target, f"outside the run root {_root!r} or inside a protected root")
     return _os_open(path, flags, mode, dir_fd=dir_fd)
 
@@ -309,16 +308,10 @@ def _clear_environ() -> None:
 def _deny_delete(event: str, path, dir_fd) -> None:
     target = _at(path, dir_fd)
     if target is None:
-        if _owned_leaf(path, dir_fd, _root, _protected, _dir_open):
-            return
         raise _refuse(event, "delete", path, "because its directory descriptor cannot be resolved")
     entry = _entry(target)
     if not _owned(entry):
         raise _refuse(event, "delete", entry, f"outside the run root {_root!r} or inside a protected root")
-
-
-def _dir_open(name: str, dir_fd: int) -> int:
-    return _os_open(name, os.O_RDONLY, dir_fd=dir_fd)
 
 
 def _deny_write(event: str, path, dir_fd, resolve) -> None:
@@ -333,6 +326,8 @@ def _deny_write(event: str, path, dir_fd, resolve) -> None:
     real = resolve(target)
     if _protected_write(real):
         raise _refuse(event, "write", real, "inside a protected real home")
+    if _placed(path, dir_fd) and not _owned(real):
+        raise _refuse(event, "write", real, f"outside the run root {_root!r} or inside a protected root")
 
 
 def _guard_delete(event: str, args: tuple) -> None:
