@@ -1,0 +1,2 @@
+- kind fix
+- `t3/added/pstack-author-skill/SKILL.md` routes every pstack-t3 skill edit to its source, `t3/runtime.md` for `pstack-runtime/SKILL.md`, `t3/setup.md` for `setup-pstack/SKILL.md`, `t3/scripts/` and `t3/agents/` for runtime scripts and personas, and `t3/overrides/<skill>/` or `t3/added/<skill>/` for other skill files, then `python3 scripts/build.py`.
