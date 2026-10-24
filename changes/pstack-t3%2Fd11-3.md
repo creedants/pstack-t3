@@ -20,8 +20,10 @@
   The final resolved path is judged, so a relative name that climbs out is refused. A path-named write
   keeps the existing protected-root rule and its checkout exemption. A rename whose destination cannot
   be resolved refuses, even when it would replace an existing entry.
-- Each wrapper converts its path argument once with `os.fspath` at the boundary and hands that same
-  value to the guard and the syscall. `os.mkfifo` and `os.mknod` raise no audit event, so the
+- Each wrapper reads its path argument once through `_frozen` at the boundary and hands that same
+  value to the guard and the syscall. `_frozen` passes a descriptor through and applies `os.fspath` to
+  anything else, so `os.chown` still accepts a descriptor as its path, a form a bare `os.fspath`
+  turned into a `TypeError`. `os.mkfifo` and `os.mknod` raise no audit event, so the
   conversion has to happen at the wrapper. Without it a stateful path object reads a permitted name
   in the guard and a protected name in the syscall, and a fifo or node lands in a protected root.
 - Linux through `/proc` is tightened the same way, because a descriptor tells `_deny_write` nothing
