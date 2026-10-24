@@ -49,7 +49,7 @@ def _sibling(name: str, filename: str):
 _sibling("pstack_test_isolation_paths", "isolation_paths.py")
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
-    _entry, _fail, _fd_target, _probe, _real, _real_roots, _refuse, _verify_marker, _within,
+    _entry, _fail, _fd_target, _probe, _real, _real_roots, _refuse, _within,
     _write_intent, layout, remember_originals,
 )
 
