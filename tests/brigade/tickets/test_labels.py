@@ -69,6 +69,7 @@ class LabelsMixin:
         self.assertEqual(out["ticket list"], "T1 waiting normal [user] a")
         self.assertEqual(out["startable"].splitlines()[2], "T1 normal, 0m: unknown, no paths recorded")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## New tickets, not started", "", "- T1: a",
+                                                                  "", "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.",
                                                                   "", "## Spend", "", "none",
                                                                   "", "## Follow-up share", "",
                                                                   "- 0 of 1 tickets created in the last 14 days came from a report (0%)."])

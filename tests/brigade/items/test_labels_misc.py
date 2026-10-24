@@ -33,6 +33,7 @@ class LabelsMiscMixin:
         self.assertEqual(out["startable"].splitlines()[2], "T2 normal fix, 0m: unknown, no paths recorded")
         self.assertEqual(out["close --dry-run"].splitlines()[4:],
                          ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b",
+                          "", "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.",
                           "", "## Spend", "", "G7  wall open  rounds 0  send-backs 0  threads not recorded",
                           "", "## Follow-up share", "",
                           "- 0 of 2 tickets created in the last 14 days came from a report (0%)."])
@@ -102,6 +103,7 @@ class LabelsMiscMixin:
         self.assertEqual(out["ticket list"], "T1 assigned normal fix [user] a\nT2 waiting normal fix [user] b")
         self.assertEqual(out["close --dry-run"].splitlines()[4:],
                          ["## In progress", "", "- fix D1 (T1): Fix a", "", "## New tickets, not started", "", "- fix T2: b",
+                          "", "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.",
                           "", "## Spend", "", "G1  wall open  rounds 0  send-backs 0  threads not recorded",
                           "", "## Follow-up share", "",
                           "- 0 of 2 tickets created in the last 14 days came from a report (0%)."])

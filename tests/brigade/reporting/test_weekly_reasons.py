@@ -53,7 +53,9 @@ class WeeklyReasonsTest(BrigadeTest):
         self.append_pass(self.days_ago(1), reason="missing-test")
         dry = self.brigade("close", "--dry-run")
         written = self.brigade("close", "--to-file")
-        self.assertEqual(Path(written).read_text().strip(), dry)
+        text = Path(written).read_text()
+        self.assertIn(f"{TITLE}\n\nmissing-test 1\n\n", text)
+        self.assertEqual(text.strip(), dry)
 
     def test_the_section_and_pass_stats_count_reasons_the_same_way(self):
         self.fired_bug_fix()

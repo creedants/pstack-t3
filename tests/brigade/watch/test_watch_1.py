@@ -111,7 +111,7 @@ class WatchTest(BrigadeTest, _WakeRace, _Helpers):
         sha = self.worker_commit("perf/d1", {"README.md": "changed\n"})
         verdict = ("pass", "record", "D1", "--sha", "abc1234", "--author", CODEX, "--verifier", CLAUDE, "--verdict")
         steps = [(("dish", "D1", "--state", "in-review", "--sha", sha), "workers: 1 of 2 running, 1 idle, auto-start: normal\nD1: in review"),
-                 ((*verdict, "send-back"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back"),
+                 ((*verdict, "send-back", "--reason", "other"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: sent back"),
                  ((*verdict, "blocked"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: parked"),
                  ((*verdict, "pass"), "workers: 0 of 2 running, 2 idle, auto-start: normal\nD1: passed, not submitted")]
         for command, line in steps:

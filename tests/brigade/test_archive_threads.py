@@ -128,8 +128,8 @@ class ArchiveThreadsTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_A)
         outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
                                       *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc",
-                                      "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
-                                      "--reviewer-thread", THREAD_A])
+                                      "--verdict", "send-back", "--reason", "other",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_A])
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
         self.assertEqual(outcome.stderr_text().splitlines(), [])
         self.assertEqual(outcome.stdout_text().strip(), "D1 sent-back")
@@ -140,8 +140,8 @@ class ArchiveThreadsTest(BrigadeTest):
         self.brigade("dish", "D1", "--thread", THREAD_A)
         outcome = call(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
                                       *_owner_words(self.at), "pass", "record", "D1", "--sha", "abc",
-                                      "--verdict", "send-back", "--author", CLAUDE, "--verifier", CODEX,
-                                      "--reviewer-thread", THREAD_A, "--late"])
+                                      "--verdict", "send-back", "--reason", "other",
+                                      "--author", CLAUDE, "--verifier", CODEX, "--reviewer-thread", THREAD_A, "--late"])
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
         self.assertEqual(outcome.stderr_text().splitlines(), [])
         self.assertEqual(outcome.stdout_text().strip(), "D1: late send-back on record; D1 stays in-progress")
