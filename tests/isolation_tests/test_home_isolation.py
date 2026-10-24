@@ -53,7 +53,7 @@ def snapshot(path):
         for name in dirs + files:
             entry = os.path.join(top, name)
             info = os.lstat(entry)
-            data = Path(entry).read_bytes() if name in files else None
+            data = Path(entry).read_bytes() if name in files and os.path.isfile(entry) else None
             found[os.path.relpath(entry, path)] = (info.st_mode, info.st_mtime_ns, data)
     return found
 
@@ -154,7 +154,7 @@ class FakeStateTest(unittest.TestCase):
 
 
 class DescriptorAndModeTest(Fixture):
-    def test_each_write_through_a_directory_descriptor_a_mode_or_time_change_or_a_database_is_refused(self):
+    def test_each_write_through_a_directory_descriptor_a_mode_time_or_owner_change_a_new_entry_or_a_database_is_refused(self):
         fd = os.open(self.protected, os.O_RDONLY)
         self.addCleanup(os.close, fd)
         uri = "file:" + urllib.parse.quote(str(self.protected / "uri.sqlite")) + "?mode=rwc"
@@ -168,6 +168,10 @@ class DescriptorAndModeTest(Fixture):
             "os.chmod": lambda: os.chmod(self.protected / "file", 0o600),
             "os.chmod through the link": lambda: os.chmod(self.link / "file", 0o600),
             "os.utime": lambda: os.utime(self.protected / "file", (1, 1)),
+            "os.mkfifo": lambda: os.mkfifo(self.protected / "fifo"),
+            "os.mknod": lambda: os.mknod(self.protected / "node"),
+            "os.chown": lambda: os.chown(self.protected / "file", os.getuid(), os.getgid()),
+            "os.chown with dir_fd": lambda: os.chown("file", os.getuid(), os.getgid(), dir_fd=fd),
             "sqlite3.connect": lambda: sqlite3.connect(self.protected / "db.sqlite"),
             "sqlite3.connect uri": lambda: sqlite3.connect(uri, uri=True),
         }
@@ -346,6 +350,38 @@ class AdoptionTest(unittest.TestCase):
         done = self.run_child(self.handed(root))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.split(), ["BODY", "RAN", os.path.realpath(root)])
+
+    def test_a_guarded_process_refuses_to_mark_or_hand_out_a_directory_that_predates_the_run(self):
+        target = outside()
+        kept = target / "old-data" / "kept"
+        kept.parent.mkdir(exist_ok=True)
+        kept.write_text("kept")
+        self.assertIs(isolation.inside(target), False)
+        with self.assertRaises(PermissionError):
+            isolation.mark(target)
+        self.assertFalse(os.path.lexists(target / isolation.MARKER))
+        with self.assertRaises(PermissionError):
+            isolation.worker_env(dict(os.environ), target)
+        self.assertEqual(kept.read_text(), "kept")
+        self.assertEqual(sorted(os.listdir(target)), ["directory", "file", "old-data", "tree"])
+
+    def test_a_marker_copied_to_another_directory_is_refused_at_adoption(self):
+        marked = self.scratch / "marked"
+        marked.mkdir()
+        token = isolation.mark(marked)
+        copied = self.scratch / "copied"
+        copied.mkdir()
+        shutil.copyfile(marked / isolation.MARKER, copied / isolation.MARKER)
+        values = isolation.layout(copied)
+        for path in values.values():
+            os.makedirs(path)
+        env = dict(os.environ, **values)
+        env[isolation.POINTER] = str(copied)
+        env[isolation.TOKEN] = token
+        done = self.run_child(env)
+        self.assertNotEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn("BODY RAN", done.stdout)
+        self.assertIn("pstack-t3 test isolation:", done.stderr)
 
     def test_the_module_loaded_by_path_and_then_imported_as_tests_isolation_is_one_guard_with_one_root(self):
         code = "\n".join([
