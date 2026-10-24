@@ -68,5 +68,13 @@ class LaunchTest(unittest.TestCase):
                     self.assertTrue(within(value, record["root"]), f"{key}={value}")
 
 
+class PackageListTest(unittest.TestCase):
+    def test_the_package_names_every_test_module_so_a_named_run_matches_discovery(self):
+        from tests import isolation_tests
+
+        self.assertEqual(isolation_tests.MODULES,
+                         tuple(sorted(path.stem for path in AREA.glob("test*.py"))))
+
+
 if __name__ == "__main__":
     unittest.main()

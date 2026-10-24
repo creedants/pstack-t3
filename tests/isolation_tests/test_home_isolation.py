@@ -56,6 +56,12 @@ class Fixture(unittest.TestCase):
         (self.protected / "file").write_text("x")
         self.link = scratch / "link"
         self.link.symlink_to(self.protected)
+        self.target = scratch / "target"
+        self.target.write_text("x")
+        self.chown_links = {name: self.protected / f"{name.split('.')[1]}-link"
+                            for name in ("os.chown", "os.lchown")}
+        for link in self.chown_links.values():
+            link.symlink_to(self.target)
         self.before = snapshot(self.protected)
         guard = isolation.protecting(self.protected)
         guard.__enter__()
@@ -173,6 +179,40 @@ class DescriptorAndModeTest(Fixture):
             os.link(self.protected / "file", alias)
         self.assertFalse(os.path.lexists(alias))
         self.assertUnchanged()
+
+    def test_chown_without_following_a_link_is_refused_on_a_protected_symlink_and_leaves_its_ctime(self):
+        target_before = self.target.lstat()
+        cases = {"os.chown": lambda link: os.chown(link, os.getuid(), os.getgid(),
+                                                   follow_symlinks=False)}
+        if getattr(os, "lchown", None) is not None:
+            cases["os.lchown"] = lambda link: os.lchown(link, os.getuid(), os.getgid())
+        for name, change in cases.items():
+            with self.subTest(name):
+                link = self.chown_links[name]
+                before = link.lstat()
+                with self.assertRaises(PermissionError):
+                    change(link)
+                after = link.lstat()
+                self.assertEqual((after.st_ctime_ns, after.st_uid, after.st_gid),
+                                 (before.st_ctime_ns, before.st_uid, before.st_gid))
+                self.assertEqual(os.readlink(link), str(self.target))
+        self.assertEqual((self.target.lstat().st_ctime_ns, self.target.lstat().st_uid,
+                          self.target.lstat().st_gid),
+                         (target_before.st_ctime_ns, target_before.st_uid, target_before.st_gid))
+
+
+class OwnershipTest(unittest.TestCase):
+    def test_lchown_on_an_unprotected_symlink_in_the_run_root_succeeds(self):
+        if getattr(os, "lchown", None) is None:
+            self.skipTest("os.lchown is not available on this platform")
+        scratch = Path(tempfile.mkdtemp(prefix="lchown-"))
+        self.addCleanup(shutil.rmtree, scratch, True)
+        target = scratch / "target"
+        target.write_text("x")
+        link = scratch / "link"
+        link.symlink_to(target)
+        os.lchown(link, os.getuid(), os.getgid())
+        self.assertEqual(os.readlink(link), str(target))
 
 
 class RenameTest(unittest.TestCase):
