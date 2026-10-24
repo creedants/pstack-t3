@@ -7,7 +7,8 @@ A descriptor's path comes from `/proc/self/fd` where that exists, and otherwise 
 delete through a directory descriptor whose path cannot be read is judged by a bounded identity walk
 instead: the directory is duplicated, `..` is followed up to a cap, and the delete passes only when a
 level is the run root's device and inode, the entry is one ordinary name, and no protected root touches
-the run root. Nothing here guesses a path or trusts a string for that proof.
+the run root. Nothing here guesses a path for that proof; the directory is compared by device and
+inode, and the rest are string checks.
 """
 
 from __future__ import annotations
@@ -302,9 +303,9 @@ def _fd_path(fd: int) -> str | None:
     socket or pipe answers with text that is not a path and callers already tell those apart. macOS has
     no /proc, so the path there comes from `fcntl` `F_GETPATH`, which fills a NUL-padded buffer. That
     buffer is trusted only when the path in it is absolute and `os.stat` of the path names the same
-    device and inode as `os.fstat(fd)`, so an alias or a stale answer is not adopted. None means no
-    path could be read; a caller may still judge the call another way, and none of them treats an
-    unknown descriptor as safe.
+    device and inode as `os.fstat(fd)`, so a stale answer is not adopted and a path through an alias is
+    judged as its target. None means no path could be read; a caller may still judge the call another
+    way, and no caller allows a call on a descriptor it could not place.
     """
     try:
         return os.readlink(_FD_DIR % fd)
@@ -331,14 +332,14 @@ def _fd_path(fd: int) -> str | None:
 def _owned_leaf(path, dir_fd, root, protected, parent_of) -> bool:
     """Return whether path is one ordinary entry of the directory dir_fd names, inside root and outside every protected root.
 
-    The proof is identity, never a path string. Duplicate dir_fd, walk up with `..` through parent_of at
-    most _WALK_LIMIT levels, and accept only when a level's device and inode are the run root's. True
-    therefore means one ordinary entry that cannot escape either boundary, because the name it deletes
-    resolves inside a directory the walk proved is the run root or below it, and no protected root
-    overlaps that root. Everything else is False, including a name that is empty, absolute, `.`, `..`,
-    or compound, a
-    descriptor that is not a directory, a protected root that touches the run root either way, a walk
-    that reaches the filesystem root, and every OSError. A descriptor the caller holds is never closed.
+    The directory is proven by identity, never by a path string. Duplicate dir_fd, walk up with `..`
+    through parent_of at most _WALK_LIMIT levels, and accept only when a level's device and inode are
+    the run root's. True therefore means one ordinary entry that cannot escape either boundary, because
+    the name it deletes resolves inside a directory the walk proved is the run root or below it, and no
+    protected root overlaps that root. Everything else is False, including a name that is empty,
+    absolute, `.`, `..`, or compound, a descriptor that is not a directory, a protected root that
+    touches the run root either way, a walk that reaches the filesystem root, and every OSError. A
+    descriptor the caller holds is never closed.
     """
     if root is None or not isinstance(dir_fd, int) or dir_fd < 0:
         return False
