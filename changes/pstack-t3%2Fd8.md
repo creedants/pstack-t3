@@ -1,0 +1,1 @@
+- edits verify follows a change note renamed to the new branch's name during a fix round
