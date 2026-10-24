@@ -1,0 +1,2 @@
+- kind fix
+- `t3/added/brigade/scripts/brigade_lib/compact.py` says each of `sync_meta`'s two callers runs only when the effective provider reads as claude, and `t3/added/brigade/opening.md` states the `fire` refusal for a shared document in `--paths`.
