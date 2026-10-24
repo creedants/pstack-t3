@@ -1,0 +1,7 @@
+- kind fix
+- `scripts/run_tests.py` records the protected real roots it starts with in `PSTACK_TEST_PROTECTED_ROOTS`, and `install()` and `worker_env` carry them into every child, so a runner child keeps protecting the caller's original home directories even though the runner rewrites HOME and the XDG values, and a nested runner keeps protecting them too
+- A guarded process writes a marker or hands out a run root only for a directory inside its run root or one it allocated with `allocate`, so it cannot hand a child a directory that predates the run and let the child delete its contents
+- A marker records the device and inode of the directory it was written for, and adoption refuses a marker that names another directory, so a copied marker no longer adopts the copy
+- The guard refuses `os.mkfifo`, `os.mknod`, `os.chown`, and `os.fchown` inside a protected real root. CPython raises no audit event for `os.mkfifo` or `os.mknod`, so those two are refused by a wrapper beside `os.open`
+- `tests/install_tests/test_in_process.py` runs the module-restoration case in this process again, and `tests/in_process.py` reports how many runs it executed here
+- The module docstring names the wrappers and the calls that stay unguarded, and the foreign-token and guarded-removal messages state the reason they apply

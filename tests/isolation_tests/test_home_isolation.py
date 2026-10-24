@@ -383,6 +383,23 @@ class AdoptionTest(unittest.TestCase):
         self.assertNotIn("BODY RAN", done.stdout)
         self.assertIn("pstack-t3 test isolation:", done.stderr)
 
+    def test_an_allocated_directory_outside_the_run_root_is_handed_out(self):
+        home = isolation.allocate(isolation.root().parent)
+        env = isolation.worker_env(dict(os.environ), home)
+        code = "\n".join([
+            "import sys",
+            f"sys.path.insert(0, {str(ROOT)!r})",
+            "from tests import isolation",
+            "isolation.install()",
+            "print('BODY RAN')",
+            "import shutil",
+            "shutil.rmtree(isolation.root())",
+        ])
+        done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, cwd=self.scratch)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("BODY RAN", done.stdout)
+        self.assertFalse(os.path.lexists(home))
+
     def test_the_module_loaded_by_path_and_then_imported_as_tests_isolation_is_one_guard_with_one_root(self):
         code = "\n".join([
             "import sys",
