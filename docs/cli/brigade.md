@@ -40,7 +40,7 @@ create a restaurant, or print an existing one
 | `--mode MODE` |  | `full`, `light` |  | this restaurant's light or full mode; missing leaves it to the roles files |
 | `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | on creation, choose claude or other; missing uses claude; an existing store uses its saved provider |
-| `--pr-credit on|off` |  |  |  | on makes credit print the line a pull request body carries; off or no flag records no credit |
+| `--pr-credit on|off` |  |  |  | on creation, on records true and off records false; no flag leaves prCredit unset; an existing store keeps its setting |
 
 ## brigade.py set
 

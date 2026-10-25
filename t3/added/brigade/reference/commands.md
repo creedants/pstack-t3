@@ -15,6 +15,7 @@ $B set --workers <n>                         # dishes in progress or in review a
 $B set --autofire off|urgent|normal|low      # the lowest ticket priority startable lists as startable
 $B set --reports-to <thread>                 # the executive admin this restaurant reports through
 $B set --mode light|full                     # this restaurant's mode from the next brief
+$B set --pr-credit on|off                    # whether pull requests credit the models that did the work
 $B set --build-command "<command>" --check-command "<command>"   # the two commands edits verify runs
 $B set --cap KIND=N[,KIND=N]                 # the cap on items of that kind holding a worker slot
 $B set --review KIND=full|light[,KIND=MODE]   # the default mode for a new item of that kind
@@ -52,6 +53,7 @@ $B dish D1 --usage-limit <provider/model> --role <roles.py role> --error <file>|
 $B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits [--reason <reason>] --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. A send-back needs --reason, one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other, and no other verdict takes it. Once the dish owes its round decision, each send-back it counts ends its line with <n> send-backs, decision pending
 $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. --json prints verdict, author, verifier, note, and crossFamily
 $B pass stats [--last N]   # first-pass rate overall and per author model over the last N items; default 20
+$B credit D2 [--coordinator <provider/model>]   # credit line for the PR body when prCredit is on; otherwise prints the off line
 $B edits verify D2 --from <reviewed sha> --to <head>   # exits 1 when a compared path differs or the build or check command fails
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
 $B 86 add --dish D2 --round-budget           # the decision D2 owes at its stored roundBudget send-backs. prints Q<n>

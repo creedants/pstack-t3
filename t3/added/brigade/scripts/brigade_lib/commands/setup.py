@@ -89,7 +89,7 @@ def register_open(sub):
     p.add_argument("--coordinator-provider", default=None,
                    help="on creation, choose claude or other; missing uses claude; an existing store uses its saved provider")
     p.add_argument("--pr-credit", metavar="on|off",
-                   help="on makes credit print the line a pull request body carries; off or no flag records no credit")
+                   help="on creation, on records true and off records false; no flag leaves prCredit unset; an existing store keeps its setting")
 
 
 def register_set(sub):
