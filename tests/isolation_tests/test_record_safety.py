@@ -8,8 +8,8 @@ guard lists it, and the replacement target must keep its file. The third makes t
 itself a protected root, so the guard must skip that candidate and keep the file it holds. Four more
 cases cover the descriptor allowance. A child forked while an anchor is open must refuse a
 delete in a protected root, an anchored descriptor must not authorize an absolute or multi-component
-name, a rename must be refused when only one of its descriptors is anchored, and an anchored open must
-refuse to follow a link or reuse an entry.
+name, a rename must be refused when only one of its descriptors is anchored, and an anchored open to
+a protected link or entry is refused.
 """
 
 if __package__ in (None, ""):
@@ -342,7 +342,7 @@ class RecordSafetyTest(unittest.TestCase):
         self.assertNotIn("RENAMED", done.stdout, done.stdout + done.stderr)
         self.assertEqual((self.external / "canary.txt").read_text(), "kept")
 
-    def test_an_anchored_open_that_may_follow_a_link_or_reuse_an_entry_is_refused(self):
+    def test_an_anchored_open_that_reaches_a_protected_link_or_entry_is_refused(self):
         done = self.run_child(self.child(ANCHORED_OPEN_CHILD), state=self.external)
         output = done.stdout + done.stderr
         self.assertEqual(done.returncode, 0, output)
@@ -356,7 +356,8 @@ class RecordSafetyTest(unittest.TestCase):
         self.assertEqual((self.external / "canary.txt").read_bytes(), b"original", damaged)
         self.assertEqual((self.external / "keep").read_bytes(), b"original", damaged)
         self.assertTrue((self.external / "fresh").is_file(),
-                        "publish's create flags no longer open through an anchored descriptor\n" + output)
+                        "a fresh name with O_CREAT and O_EXCL was not created through the anchored "
+                        "descriptor\n" + output)
 
 
 if __name__ == "__main__":
