@@ -73,7 +73,7 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
 
 `changeNoteDir` sets the fragment directory `fire` leases. Set it with `set --change-note-dir`. Rules and an example are in [store-config.md](../store-config.md).
 
-`--usage-limit` reads the reset time out of the error text. It takes three shapes and nothing else: an ISO 8601 date-time anywhere in the text, a clock time followed by `UTC`, `GMT`, or `Z`, and a relative span such as `try again in 30 minutes` or `retry after 20s`. A clock time is the next time it falls after now, today when it is still ahead and tomorrow otherwise. A text with no such shape, and a parsed time that is not after now, end the cooldown at now plus `cooldownMinutes`. Every provider with a live cooldown is passed to `roles.py backup` as `--out`, and a cooldown whose end has passed is not passed.
+`--usage-limit` reads the reset time out of the error text. It takes three shapes and nothing else: an ISO 8601 date-time anywhere in the text, a clock time followed by `UTC`, `GMT`, or `Z`, and a relative span such as `try again in 30 minutes` or `retry after 20s`. A clock time counts only when it is still ahead of now. A timestamp with no zone is not read. A text with no such shape, a parsed time that is not after now, and a relative span too large to represent end the cooldown at now plus `cooldownMinutes`. Every provider with a live cooldown is passed to `roles.py backup` as `--out`, and a cooldown whose end has passed is not passed.
 
 
 `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment.

@@ -54,19 +54,21 @@ SPAN_UNITS = {"h": "hours", "m": "minutes", "s": "seconds"}
 
 
 def _iso_end(text):
-    """The first ISO 8601 date-time in the text that parses, or None."""
+    """The first ISO 8601 date-time in the text that names a zone and parses, or None."""
     for match in ISO_STAMP.finditer(text):
-        found = moment_of(match.group(0))
+        stamp = match.group(0)
+        if not (stamp.endswith("Z") or re.search(r"[+-]\d{2}:?\d{2}$", stamp)):
+            continue
+        found = moment_of(stamp)
         if found is not None:
             return found
     return None
 
 
 def _clock_end(text, moment):
-    """The next time one clock time in the text falls after `moment`, or None.
+    """The first clock time in the text that is still ahead of `moment`, or None.
 
-    A clock time counts only when `UTC`, `GMT`, or `Z` follows it. It is today when it is still
-    ahead and tomorrow otherwise.
+    A clock time counts only when `UTC`, `GMT`, or `Z` follows it. One that has passed is not read.
     """
     for match in CLOCK_UTC.finditer(text):
         hour, minute = int(match.group(1)), int(match.group(2))
@@ -74,29 +76,33 @@ def _clock_end(text, moment):
         if hour > 23 or minute > 59 or second > 59:
             continue
         found = moment.replace(hour=hour, minute=minute, second=second, microsecond=0)
-        return found if found > moment else found + timedelta(days=1)
+        return found if found > moment else None
     return None
 
 
 def _span_end(text, moment):
-    """`moment` plus the first relative span in the text, or None."""
+    """`moment` plus the first relative span in the text, or None when the sum cannot be represented."""
     for match in CLOCK_SPAN.finditer(text):
         unit = SPAN_UNITS[match.group(2)[0].lower()]
         count = int(match.group(1))
-        return moment + timedelta(**{unit: count})
+        try:
+            return moment + timedelta(**{unit: count})
+        except OverflowError:
+            return None
     return None
 
 
 def cooldown_end(text, now, minutes):
     """The ISO end time a cooled seat is out until.
 
-    Three shapes are read, and nothing else. An ISO 8601 date-time anywhere in the text, such as
-    `2026-10-25T12:30:00Z` or `2026-10-25 12:30:00+00:00`. A clock time followed by `UTC`, `GMT`, or
-    `Z`, such as `resets at 12:30 UTC`, which is the next time that clock time falls after `now`,
-    today when it is still ahead and tomorrow otherwise. A relative span, such as `try again in 30
-    minutes` or `retry after 20s`, with the units second, sec, s, minute, min, m, hour, hr, or h.
-    An empty text, a text with no such shape, a shape that does not parse, and a parsed time that is
-    not after `now` all end at `now` plus `minutes`. `now` is the ISO stamp the cooldown starts at.
+    Three shapes are read, and nothing else. An ISO 8601 date-time anywhere in the text that names a
+    zone, such as `2026-10-25T12:30:00Z` or `2026-10-25 12:30:00+00:00`. A clock time followed by
+    `UTC`, `GMT`, or `Z`, such as `resets at 12:30 UTC`, which counts only when it is still ahead of
+    `now`. A relative span, such as `try again in 30 minutes` or `retry after 20s`, with the units
+    second, sec, s, minute, min, m, hour, hr, or h. An ISO stamp with no zone, a clock time that has
+    passed, and a relative span too large to represent all end at `now` plus `minutes`, with no
+    exception, as do an empty text, a text with no such shape, a shape that does not parse, and a
+    parsed time that is not after `now`. `now` is the ISO stamp the cooldown starts at.
     """
     moment = moment_of(now)
     fallback = moment + timedelta(minutes=minutes)
