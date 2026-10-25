@@ -56,7 +56,7 @@ Each command's text below is the text that moved out of the command block in [th
 
 **`$B set --pr-credit`.** whether pull requests credit the models that did the work. `on` or `off`. Read back through the JSON that set prints.
 
-**`$B set --build-command --check-command`.** the contract's setup command, then the build and check commands edits verify runs. none for one the project lacks.
+**`$B set --build-command --check-command`.** the build and check commands edits verify runs, after the contract's setup command. none for one the project lacks.
 
 **`$B set --cap`.** at most that many items of the kind holding a worker slot. A pair with no number clears that kind's cap. An empty value clears every cap. Read back through the JSON that set prints.
 
@@ -162,7 +162,7 @@ Each command's text below is the text that moved out of the command block in [th
 
 ### edits
 
-**`$B edits verify`.** compares `<head>` with the reviewed commit that has that round's edits applied, the setup command run, and the build run. Exits 1 when a compared path differs, setup prints `FAIL setup`, or the build or check command fails.
+**`$B edits verify`.** compares `<head>` with the reviewed commit after that round's edits, the contract's setup command, and the build run. Exits 1 when a compared path differs, setup prints `FAIL setup`, or the build or check command fails.
 
 ### 86
 
