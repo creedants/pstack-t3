@@ -6,7 +6,7 @@ Read this file when a failed child's error names a usage limit, or after a T3 re
 
 Check a usage limit only for a failed child that did not return the brief's result. Read the error text from `task_status` `summary`, or from the last activity item of `t3_thread_read`.
 
-In a brigade restaurant, run `$B dish <id> --usage-limit <providerInstanceId/model> --role <role> --error - --catalog <file> --parent <providerInstanceId/model>` with that text on stdin. It runs the command below, records the cooldown in the store, and prints one next step. Outside brigade, run the command yourself.
+In a brigade restaurant, run `$B dish <id> --usage-limit <providerInstanceId/model> --role <role> --error - --catalog <file> --parent <providerInstanceId/model>` with that text on stdin. It runs `roles.py backup` with that text, records the cooldown in the store, and prints one next step. Outside brigade, run the command yourself.
 
 Pass `--cwd`, `--parent`, the catalog file, and the mode flag the same way as `show`. Pass `--role`, `--provider`, `--model`, and `--options` from the failed seat. For a reviewer role, repeat `--author` for every model that wrote the diff, per [Gate review](SKILL.md#gate-review): each code delegate's model, and the worker's model when the worker wrote code. A `review backups` member needs the same `--author` flags when it runs with `--resume`. Repeat `--out` for each provider already tried. A provider with a live cooldown is one of them. The command prints `relaunch`, `panel`, `park`, or `not-usage-limit`.
 
