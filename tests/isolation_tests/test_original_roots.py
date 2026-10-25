@@ -5,11 +5,12 @@ roots from that environment alone loses the originals. The fixture here has no i
 asks for one write into each original directory, records the verdict, and starts a nested runner on
 a second copy of itself so the nested report proves the roots survive a nested run.
 
-Three more cases sit beside it. One applies each environment route a child can take, whether it
+Three more cases sit beside it. One applies four environment routes a child can take, whether it
 removes the record, rewrites it, clears the environment, or builds a worker environment, and starts a
-probe under each so no route drops the originals. One copies the environment and drops the record, then
-starts a probe through each entry point a test uses. One names an original root with a colon in it. The
-record's own attacks live in `test_record_safety.py`.
+probe under each so none of the four drops the originals. One copies the environment and drops the
+record, then starts a probe through four entry points, a named unittest module, a direct run of the
+file, unittest discovery, and `scripts/run_tests.py`. One names an original root with a colon in it.
+The record's own attacks live in `test_record_safety.py`.
 """
 
 if __package__ in (None, ""):
