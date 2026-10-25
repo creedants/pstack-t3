@@ -9,7 +9,8 @@ Roots written to and returned from records are real absolute path strings.
 
 A child reads every candidate record rather than the first one it finds, so a stale or forged record
 cannot hide the genuine one. A child stops when a record it finds cannot be read or parsed. It also
-stops when a candidate directory is not a private directory this user owns. A record carries the process
+stops when a candidate directory is not a directory this user owns with no group or other write bit. A
+record carries the process
 start time, so a record left by a dead process that used the pid is ignored instead of trusted. Every
 write and delete acts through a descriptor of a verified directory, and the guard lets exactly those
 descriptors through, so the record machinery cannot damage a protected file.
@@ -214,8 +215,8 @@ def inherited() -> tuple[str, ...]:
 
     Every candidate directory is read, so a stale or forged first record cannot hide a later one. A
     record whose start is not the live start of its pid belongs to a dead process and is ignored. A
-    directory that is not a private directory this user owns, and a record that cannot be opened,
-    parsed, or validated, stop the process.
+    directory that is not one this user owns with no group or other write bit, and a record that
+    cannot be opened, parsed, or validated, stop the process.
     """
     found: list[str] = []
     for pid in (os.getpid(), os.getppid()):

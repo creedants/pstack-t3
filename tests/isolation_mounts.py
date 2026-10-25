@@ -6,9 +6,9 @@ time, and `_identities` gives a path a candidate storage identity for every moun
 including entries a later mount hides. `_reaches` compares every candidate the target has with every
 candidate every protected root has, so an alias that reaches either backing storage is refused.
 
-A host without that file, which includes macOS, has no table, and the spelling rules stand alone
-there. On Linux a table that cannot be read or parsed stops the process, because a check that cannot
-see the mounts must not allow.
+A non-Linux platform, which includes macOS, has no table, and the spelling rules stand alone there.
+On Linux a table that cannot be read, is empty, or holds a malformed entry stops the process, and so
+does a path or protected root that no mount covers.
 """
 
 from __future__ import annotations

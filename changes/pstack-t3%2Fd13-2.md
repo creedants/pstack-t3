@@ -12,7 +12,7 @@
   of `os.getppid()` and protects their roots too, because a guarded process that replaces itself with a
   stripped environment keeps its pid and its parent is then the grandparent.
 - A child stops when a record it finds cannot be read. A
-  record that is not JSON, is not an object, names another uid or pid, or holds a root that is not an
+  live record that is not JSON, is not an object, names another uid or pid, or holds a root that is not an
   absolute path raises SystemExit with the module's message prefix.
 - `install()` with no pointer adds the inherited roots to the roots its environment names, `_record()`
   publishes this process's active protection to its own record after it writes
@@ -31,8 +31,8 @@
 - A guarded process publishes its active protection again when it forks and when `protecting()` adds a
   root, so a minimal-environment child of a fork child, and a child started inside a `protecting()`
   block, protect the same roots. The fork publish runs in an `after_in_child` callback, and a child
-  that cannot publish exits instead of running with fewer roots. `protecting()` publishes on entry
-  only, so the record grows and never shrinks while another process may still read it.
+  that cannot publish exits instead of running with fewer roots. `protecting()` publishes the roots
+  it adds on entry and republishes the restored set on exit, so the record follows the active set.
 - `os.path.realpath` follows symlinks and not mounts. A bind mount of a protected directory at a name
   inside the run root therefore looked like the run root itself, and a real bind mount at `adee1f0a` let
   a write, a rename, and a delete through and destroyed the protected canaries.
@@ -43,8 +43,8 @@
   has with every candidate each protected root has. A bind mount of any part of a protected root then
   produces an identity under that root's identity, and a stacked pair that hides the protected mount
   from its own path is refused through the hidden entry and the visible entry alike. On Linux a table
-  that cannot be read, is empty, or holds a malformed entry stops the process. A host with no such
-  file, which includes macOS, has no table, and the spelling rules stand alone there.
+  that cannot be read, is empty, or holds a malformed entry stops the process. A non-Linux platform,
+  which includes macOS, has no table, and the spelling rules stand alone there.
 - `_protected_write` and `_owned` refuse a write, delete, truncate, or rename that reaches protected
   storage by an identity as well as by spelling. The checkout exemption stays first and unchanged. The
   mount functions moved from `tests/isolation_paths.py` to `tests/isolation_mounts.py`, and the SQLite
@@ -64,8 +64,8 @@
   mount-identity check. No assertion was weakened.
 - Not proven is native macOS, where `/proc/self/mountinfo` is absent by design, and the `F_GETPATH`
   branch is unchanged. Multiprocessing's fork start method takes the same `after_in_child` path as
-  `os.fork`, which a regression covers, and a spawn child inherits the whole environment, so it drops
-  no guarded variable.
+  `os.fork`, which the fork regression exercises through `os.fork`, and a spawn child inherits the
+  whole environment, so it drops no guarded variable.
 - On macOS `os.mkfifo` and `os.mknod` take no `dir_fd`, so the descriptor regressions for a fifo and a
   node whose path object changes after its first read raised `NotImplementedError` there, in this module
   and in the nested run `tests/isolation_tests/test_launch.py` starts. Each case now skips when the

@@ -1,7 +1,7 @@
 """Isolate a test process from the user's real home.
 
-Importing this module only registers it as `pstack_test_isolation` in `sys.modules`. `install()` is
-the one entry. Without the pointer it makes a run root, marks it, and points HOME, the five XDG
+Importing it registers `pstack_test_isolation`; `install()` is the one entry. Without the pointer it
+makes a run root, marks it, and points HOME, the five XDG
 variables, and TMPDIR into it. With the pointer it adopts a root after checking its marker against
 the environment token and checking that every variable resolves inside it. Every install rereads the
 environment and raises SystemExit on the first value that escapes.
@@ -12,15 +12,16 @@ must sit inside the run root, and so must a write placed through a descriptor. W
 protected real roots outside the checkout, by spelling and by the storage they reach. SQLite ATTACH
 remains unguarded. A guarded variable cannot be removed or emptied, a good path variable rejects a
 relative or protected value, the token and root record have their own rules, and clear() keeps all
-of them. Record files act through a verified directory descriptor the guard lets through.
+of them. Record files act through a verified directory descriptor.
 
 PSTACK_TEST_PROTECTED_ROOTS carries a JSON array of absolute paths. The roots stay in memory, and a
 run root's marker carries those of the process that marked it, so a child that adopts the root
 protects them whatever record its environment holds. Assignments cannot drop a root. A malformed
 inherited record stops the process, and so does a marker with the inherited token and missing or
 malformed roots. `tests/isolation_roots.py` publishes the active protection to one record per pid
-under a per-user temporary directory, after every install, on entry to `protecting()`, and in each
-fork child, so an environment-free child protects the same roots. A record that cannot be read stops
+under a per-user temporary directory, after every install, on entry to and exit from
+`protecting()`, and in each fork child, so an environment-free child protects the same roots. A record
+that cannot be read stops
 that child. os.chown with follow_symlinks False and os.lchown are wrapped, because the os.chown audit
 event carries no follow_symlinks field, so a protected link name whose target is outside protection
 stays refused.
@@ -110,7 +111,9 @@ def protecting(*paths):
     try:
         yield
     finally:
-        _protected = before
+        _protected = tuple(dict.fromkeys(before + _originals))
+        if _armed:
+            publish(os.getpid(), _protected, _protected)
 
 
 def allocate(base=None) -> Path:
