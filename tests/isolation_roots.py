@@ -16,9 +16,8 @@ record, which covers a process that replaced itself with a stripped environment,
 which covers a fresh child of a guarded process. Every record file write, and every record entry
 delete or rename, acts through a descriptor of a verified directory with a single-component name. The
 allowance admits a call only when its descriptor number is open as an anchor and its names are single
-components, a rename only when both of its descriptors are, and an open only when its flags refuse to
-follow a link and, when they create, to reuse an entry, so the record machinery cannot damage a
-protected file.
+components, a rename only when both of its descriptors are, and an open only when its flags include
+O_CREAT, O_EXCL, and O_NOFOLLOW, so the record machinery cannot damage a protected file.
 """
 
 from __future__ import annotations
@@ -94,9 +93,9 @@ def anchored_fd(number, name=None) -> bool:
 
 
 def anchored_open(number, name, flags) -> bool:
-    """Return whether an anchored descriptor may open name with flags that cannot follow a link and, when they create, cannot reuse an entry."""
-    return (anchored_fd(number, name) and isinstance(flags, int) and bool(flags & os.O_NOFOLLOW)
-            and (not flags & os.O_CREAT or bool(flags & os.O_EXCL)))
+    """Return whether an anchored descriptor may open name with O_CREAT, O_EXCL, and O_NOFOLLOW."""
+    required = os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    return anchored_fd(number, name) and isinstance(flags, int) and flags & required == required
 
 
 def anchored_call(event: str, args: tuple) -> bool:

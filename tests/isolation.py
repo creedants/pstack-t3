@@ -258,7 +258,7 @@ def _arm() -> None:
 
 
 def _open(path, flags, mode=0o777, *, dir_fd=None):
-    """os.open, refusing a write through dir_fd outside the run root or inside a protected root.
+    """os.open with guarded dir_fd writes, except fresh record writes through an anchor.
 
     The open audit event leaves out dir_fd, so the hook alone would judge a relative name against the working directory.
     """

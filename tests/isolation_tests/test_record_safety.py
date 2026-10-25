@@ -224,12 +224,14 @@ print("STOLEN", os.path.exists(os.path.join(@OUTSIDE@, "stolen.txt")))
 ANCHORED_OPEN_CHILD = CONSTANTS + '''with open(os.path.join(@STATE@, "canary.txt"), "w") as handle:
     handle.write("original")
 os.symlink("canary.txt", os.path.join(@STATE@, "soft"))
+os.link(os.path.join(@STATE@, "canary.txt"), os.path.join(@STATE@, "hard"))
 with open(os.path.join(@STATE@, "keep"), "w") as handle:
     handle.write("original")
 exec(@LOADER@)
 roots = sys.modules["pstack_test_isolation_roots"]
 number = os.open(@STATE@, os.O_RDONLY)
 cases = (("SOFT", "soft", os.O_WRONLY | os.O_TRUNC),
+         ("HARD", "hard", os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW),
          ("KEEP", "keep", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW),
          ("FRESH", "fresh", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW))
 with roots.anchored(number):
@@ -346,7 +348,7 @@ class RecordSafetyTest(unittest.TestCase):
         done = self.run_child(self.child(ANCHORED_OPEN_CHILD), state=self.external)
         output = done.stdout + done.stderr
         self.assertEqual(done.returncode, 0, output)
-        for line in ("SOFT REFUSED", "KEEP REFUSED", "FRESH OPENED"):
+        for line in ("SOFT REFUSED", "HARD REFUSED", "KEEP REFUSED", "FRESH OPENED"):
             self.assertIn(line, done.stdout, output)
         self.assertNotIn("FAILED", done.stdout, output)
         self.assertIn("CANARY b'original'", done.stdout, output)
