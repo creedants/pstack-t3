@@ -6,6 +6,7 @@ from pathlib import Path
 from brigade_lib import seam
 from brigade_lib._store import rules
 from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
+from brigade_lib.brief_setup import setup_lines
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
@@ -155,6 +156,7 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
             meta = restaurant.meta
         mode = seam.roles_mode(inputs)
         picked_layout = affected_layout(meta)
+        setup = setup_lines(inputs.project_root)
         if not (verify or "").strip():
             picked = affected_verify_text(inputs.project_root, used_paths, seam.LAND, meta)
         else:
@@ -167,7 +169,7 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
             if inputs.escalated is None and mode.escalation:
                 record_escalation(restaurant, ident, mode.escalation)
             return write_brief(restaurant, dish, mode, goal, acceptance, contract, picked, used_paths, used_lease, base,
-                               context, thread, picked_layout)
+                               context, thread, picked_layout, setup)
     raise BrigadeError(f"{ident} changed while resolving its mode; run brief again")
 
 
@@ -251,7 +253,7 @@ def house_rules_cap_lines(restaurant):
 
 
 def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread,
-                picked_layout):
+                picked_layout, setup):
     ident = dish["id"]
     standing_orders = rules.house_rules(restaurant.dir / "house-rules.md")
     if not dish["branch"]:
@@ -275,7 +277,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         *([f"- A reviewer sent an earlier attempt back. Its findings: {findings}"] if findings.exists() else []),
         "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
         "", "CONTRACT:", contract,
-        "", "VERIFY:", f"- {verify}",
+        "", "VERIFY:", *setup, f"- {verify}",
         f"- {verify_rule(land, picked_layout)}",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
