@@ -1,25 +1,6 @@
-import argparse
-import fcntl
-import fnmatch
-import functools
-import hashlib
-import io
 import json
-import os
-import posixpath
-import re
-import runpy
-import shlex
-import stat
-import subprocess
 import sys
-import tarfile
-import tempfile
-import time
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from brigade_lib import seam
 from brigade_lib._store.opening import rename_restaurant
 from brigade_lib._store.settings import COOLDOWN_KEY, cooldown_minutes, parse_cooldown_minutes
@@ -259,6 +240,14 @@ def handle(restaurant, args):
     return None
 
 
+def _clear_or_parse(value, key, parse, changes, drop):
+    """One flag's setting change. Empty string drops the key, None leaves it, and any other value stores its parse."""
+    if value == "":
+        drop.append(key)
+    elif value is not None:
+        changes[key] = parse(value)
+
+
 def setting_changes(restaurant, args):
     """The restaurant.json changes and the drops every set flag but --thread, --expect, --replace, and --stopped makes.
 
@@ -317,31 +306,11 @@ def setting_changes(restaurant, args):
             changes[SCRATCH_KEY] = scratch
         else:
             drop.append(SCRATCH_KEY)
-    if args.low_reserve is not None:
-        if args.low_reserve == "":
-            drop.append(LOW_RESERVE_KEY)
-        else:
-            changes[LOW_RESERVE_KEY] = parse_low_reserve(args.low_reserve)
-    if args.round_budget is not None:
-        if args.round_budget == "":
-            drop.append(ROUND_BUDGET_KEY)
-        else:
-            changes[ROUND_BUDGET_KEY] = parse_round_budget(args.round_budget)
-    if args.liveness_ms is not None:
-        if args.liveness_ms == "":
-            drop.append(LIVENESS_KEY)
-        else:
-            changes[LIVENESS_KEY] = parse_liveness_ms(args.liveness_ms)
-    if args.change_note_dir is not None:
-        if args.change_note_dir == "":
-            drop.append(CHANGE_NOTE_KEY)
-        else:
-            changes[CHANGE_NOTE_KEY] = parse_change_note_dir(args.change_note_dir)
-    if args.cooldown_minutes is not None:
-        if args.cooldown_minutes == "":
-            drop.append(COOLDOWN_KEY)
-        else:
-            changes[COOLDOWN_KEY] = parse_cooldown_minutes(args.cooldown_minutes)
+    _clear_or_parse(args.low_reserve, LOW_RESERVE_KEY, parse_low_reserve, changes, drop)
+    _clear_or_parse(args.round_budget, ROUND_BUDGET_KEY, parse_round_budget, changes, drop)
+    _clear_or_parse(args.liveness_ms, LIVENESS_KEY, parse_liveness_ms, changes, drop)
+    _clear_or_parse(args.change_note_dir, CHANGE_NOTE_KEY, parse_change_note_dir, changes, drop)
+    _clear_or_parse(args.cooldown_minutes, COOLDOWN_KEY, parse_cooldown_minutes, changes, drop)
     if args.affected_tests is not None:
         if args.affected_tests == "":
             drop.append("affectedTests")
@@ -352,21 +321,9 @@ def setting_changes(restaurant, args):
             drop.append("sharedDocs")
         else:
             changes["sharedDocs"] = _json_setting(args, "shared_docs", "--shared-docs")
-    if args.doc_timebox is not None:
-        if args.doc_timebox == "":
-            drop.append("docTimebox")
-        else:
-            changes["docTimebox"] = parse_doc_timebox(args.doc_timebox)
-    if args.context_cap is not None:
-        if args.context_cap == "":
-            drop.append("contextCap")
-        else:
-            changes["contextCap"] = parse_context_cap(args.context_cap)
-    if args.coordinator_provider is not None:
-        if args.coordinator_provider == "":
-            drop.append("coordinatorProvider")
-        else:
-            changes["coordinatorProvider"] = parse_coordinator_provider(args.coordinator_provider)
+    _clear_or_parse(args.doc_timebox, "docTimebox", parse_doc_timebox, changes, drop)
+    _clear_or_parse(args.context_cap, "contextCap", parse_context_cap, changes, drop)
+    _clear_or_parse(args.coordinator_provider, "coordinatorProvider", parse_coordinator_provider, changes, drop)
     if args.schedule:
         schedules = dict(meta.get("schedules") or {})
         for pair in args.schedule:
