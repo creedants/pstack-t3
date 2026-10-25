@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import timedelta
 from brigade_lib import seam
-from brigade_lib._reviews.rounds import SEND_BACK_DAYS, _at_utc, item_verdicts
+from brigade_lib._reviews.rounds import SEND_BACK_DAYS, _at_utc, earliest_record, item_verdicts, window_phrases
 from brigade_lib.store import EDITS_VERDICT, ROUND_KIND
 
 # The round-budget answers that accept the remaining findings instead of another round.
@@ -135,18 +135,22 @@ def seat_line(verifier, seat):
 
 def pass_hits(restaurant, days):
     """The `pass hits` output: the table over the rows at or after the window's start."""
-    cutoff = window_cutoff(seam.now(), days)
+    now = seam.now()
+    cutoff = window_cutoff(now, days)
     with restaurant.read_lock(create=False):
-        hits = seat_hits(restaurant.rows("pass.tsv"), restaurant.rows("edits.tsv"),
+        pass_rows = restaurant.rows("pass.tsv")
+        hits = seat_hits(pass_rows, restaurant.rows("edits.tsv"),
                          restaurant.rows("86.tsv"), cutoff)
     if not hits:
         return empty_window(days)
-    return "\n".join([f"last {days} days by verifier seat", hits_table(hits)])
+    heading, _ = window_phrases(earliest_record(pass_rows), now, days)
+    return "\n".join([f"{heading} by verifier seat", hits_table(hits)])
 
 
 def hit_section(pass_rows, edits_rows, rows86, now):
     """The `## Reviewer hit rate (last 7 days)` lines for these rows."""
     hits = seat_hits(pass_rows, edits_rows, rows86, window_cutoff(now, SEND_BACK_DAYS))
+    heading, _ = window_phrases(earliest_record(pass_rows), now, SEND_BACK_DAYS)
     body = [seat_line(verifier, seat) for verifier, seat in sorted(hits.items())]
     body = body or [empty_window(SEND_BACK_DAYS).capitalize() + "."]
-    return [f"## Reviewer hit rate (last {SEND_BACK_DAYS} days)", "", *body, ""]
+    return [f"## Reviewer hit rate ({heading})", "", *body, ""]
