@@ -64,8 +64,8 @@ record a setting
 | `--build-command BUILD_COMMAND` |  |  |  | the build command edits verify runs; none means the project has no build; "" removes it |
 | `--check-command CHECK_COMMAND` |  |  |  | the check command edits verify runs; none means the project has no check; "" removes it |
 | `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority startable lists, or off; missing reads as normal |
-| `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of that kind in a worker slot; a bare kind clears that kind's cap; "" clears every cap |
-| `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind; a bare kind clears that kind's depth; "" clears every depth |
+| `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of that kind in a worker slot; kind= clears that kind's cap; "" clears every cap |
+| `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind; kind= clears that kind's depth; "" clears every depth |
 | `--scratch-dir DIR` |  |  |  | the parent directory briefs pass to mktemp -d -p; an absolute path outside /tmp; "" clears it |
 | `--low-reserve N` |  |  |  | the workers still idle while a low ticket waits behind an urgent or normal one; "" clears it to 1 |
 | `--round-budget N` |  |  |  | the send-backs that owe a round decision; "" clears it to 3 |
