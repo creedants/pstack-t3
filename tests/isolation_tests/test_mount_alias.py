@@ -149,7 +149,7 @@ with open(@VISIBLE@, "w") as handle:
     json.dump(found, handle)
 '''
 
-ANSWER = '''import pstack_test_isolation_paths as paths
+ANSWER = '''import pstack_test_isolation_mounts as mounts
 
 for name in ("keep-for-delete.txt", "keep-for-rename.txt"):
     with open(os.path.join(alias, name), "w") as handle:
@@ -194,7 +194,7 @@ def on_device(path, table):
 
 table = read_table()
 device, root = on_device(os.path.realpath(protected), table)
-paths._mount_table = lambda: table + ((alias, device, root),)
+mounts._mount_table = lambda: table + ((alias, device, root),)
 '''
 
 ENTRIES = ("write", "truncate", "rename", "delete")
