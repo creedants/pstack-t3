@@ -18,6 +18,7 @@ $B set --mode light|full                     # this restaurant's mode from the n
 $B set --build-command "<command>" --check-command "<command>"   # the two commands edits verify runs
 $B set --cap KIND=N[,KIND=N]                 # the cap on items of that kind holding a worker slot
 $B set --review KIND=full|light[,KIND=MODE]   # the default mode for a new item of that kind
+$B set --cooldown-minutes <N>                 # the minutes a cooled seat stays out of a launch; "" clears it to 60
 $B ticket list [--state waiting|assigned|moved|done|dropped]
 $B ticket set T3 [--state dropped] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision | --no-decision]   # at least one flag
 $B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket
@@ -47,6 +48,7 @@ $B dish D2 --state in-progress|in-review|queued|merged [--thread <id>] [--task <
 $B dish D2 --add-paths <paths>   # takes no other dish flag
 $B dish D2 --mode full --reason "<one line>"   # records the item's move to full once
 $B dish D1 --worker-ended "<reason>"   # records that this attempt's worker ended or failed and wrote no report
+$B dish D1 --usage-limit <provider/model> --role <roles.py role> --error <file>|- --catalog <file> --parent <provider/model> [--author <provider/model> ...] [--options <json>]   # records a cooldown row for that seat and one cooldown event, prints one next step, and takes no other dish flag
 $B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits [--reason <reason>] --author <provider/model> --verifier <provider/model> [--pr <url>] [--note "..."] [--same-family] [--report <file>] [--edits <file>] [--reviewer-thread <id>] [--member | --late]   # --reviewer-thread writes the reviewer row of threads.tsv for this attempt. A send-back needs --reason, one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other, and no other verdict takes it. Once the dish owes its round decision, each send-back it counts ends its line with <n> send-backs, decision pending
 $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. --json prints verdict, author, verifier, note, and crossFamily
 $B pass stats [--last N]   # first-pass rate overall and per author model over the last N items; default 20
@@ -70,6 +72,8 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
 
 
 `changeNoteDir` sets the fragment directory `fire` leases. Set it with `set --change-note-dir`. Rules and an example are in [store-config.md](../store-config.md).
+
+`--usage-limit` reads the reset time out of the error text. It takes three shapes and nothing else: an ISO 8601 date-time anywhere in the text, a clock time followed by `UTC`, `GMT`, or `Z`, and a relative span such as `try again in 30 minutes` or `retry after 20s`. A clock time is the next time it falls after now, today when it is still ahead and tomorrow otherwise. A text with no such shape, and a parsed time that is not after now, end the cooldown at now plus `cooldownMinutes`. Every provider with a live cooldown is passed to `roles.py backup` as `--out`, and a cooldown whose end has passed is not passed.
 
 
 `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment.
