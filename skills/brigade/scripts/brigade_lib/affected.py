@@ -488,12 +488,9 @@ def _select(root, paths, layout, change_dir=""):
                     if hit:
                         modules.update(hit)
                 continue
-        found = None
+        found = set()
         for canon in _canonicals(norm, gen_map):
-            hit = index.table.get(canon)
-            if hit:
-                found = hit
-                break
+            found.update(index.table.get(canon, ()))
         if found:
             modules.update(found)
         else:
