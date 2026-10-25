@@ -79,7 +79,7 @@ class SeatCooldownCommandTest(BrigadeTest, _CooldownHelpers):
                          'options {"reasoningEffort": "medium"}')
 
     def test_four_limit_reports_on_one_attempt_relaunch_once_and_park_the_rest(self):
-        """The defect: a parked event's empty replacement resets the guard, so a fourth report relaunches again."""
+        """The defect: a parked event's empty replacement resets the guard, so a third report relaunches again."""
         self.cooldown_store()
         first, *rest = [self.usage_limit(LIMIT_SPAN) for _ in range(4)]
         self.assertEqual(first, f'D1: {FAILED} cooling until 2026-02-01T00:30:00+00:00; relaunch on {BACKUP} '
