@@ -10,8 +10,9 @@ Roots written to and returned from records are real absolute path strings.
 A child reads every candidate record rather than the first one it finds, so a stale or forged record
 cannot hide the genuine one. A child stops when a record it finds cannot be read or parsed. It also
 stops when a candidate directory is not a directory this user owns with no group or other write bit. A
-record carries the process
-start time, so a record left by a dead process that used the pid is ignored instead of trusted. Every
+record carries the process start time, so a record a dead process left under a reused pid is ignored
+instead of trusted. A child reads its own pid's record, which covers a process that replaced itself
+with a stripped environment, and its parent's, which covers a fresh child of a guarded process. Every
 write and delete acts through a descriptor of a verified directory, and the guard lets exactly those
 descriptors through, so the record machinery cannot damage a protected file.
 """
