@@ -7,14 +7,16 @@
 - `tests/isolation_roots.py` publishes one record per guarded process at
   `<base>/pstack-t3-isolation-<uid>/<pid>.json` under the first of `/tmp`, `/var/tmp`, and `/usr/tmp`
   that is a directory and is outside every protected root, because a child with no environment cannot
-  be told where to look. The directory is mode 0700 and the record 0600. A child with no pointer reads
+  be told where to look. The directory is made with mode 0700 and must have no group or other write
+  bit, and the record is mode 0600. A child with no pointer reads
   the records of its own pid and of `os.getppid()` and protects their roots too, because a guarded
   process that replaces itself with a stripped environment keeps its pid and its parent is then the
   grandparent.
-- A record that exists is proof the parent was guarded, so a child that cannot read it stops. A record
-  that is not JSON, is not an object, names another uid or pid, or holds a root that is not an absolute
-  path raises SystemExit with the module's message prefix.
-- `install()` adds the inherited roots to the roots its environment names, `_record()` publishes this
+- A record that exists was published by a guarded process, so a child that cannot read it stops. A
+  record that is not JSON, is not an object, names another uid or pid, or holds a root that is not an
+  absolute path raises SystemExit with the module's message prefix.
+- `install()` with no pointer adds the inherited roots to the roots its environment names, `_record()`
+  publishes this
   process's merged roots to its own record after it writes `PSTACK_TEST_PROTECTED_ROOTS`, and `install()`
   removes the records of dead processes only before it arms the guard, since the guard refuses a delete
   outside the run root.
