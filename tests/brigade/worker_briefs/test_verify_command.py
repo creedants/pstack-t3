@@ -118,7 +118,7 @@ class VerifyCommandMixin:
         self.assertNotIn("tests.test_pstack_t3", verify)
         self.assertNotIn("run_tests.py", verify)
         self.assertNotIn("affected modules while working", verify)
-        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), self.brief_body(text))
 
     def test_no_layout_and_no_check_command_says_no_verify_command_is_set(self):
         self.started()

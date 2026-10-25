@@ -34,7 +34,7 @@ class StandingRulesMixin:
                      f"Write it to {report}", "1. Write in plain engineering prose.",
                      f'call t3_thread_send to thread thread-coord with mode "auto" and the one-line message "D1 done: report at {report}".'):
             self.assertIn(part, text)
-        orders = text.split("STANDING ORDERS:\n", 1)[1]
+        orders = self.brief_body(text).split("STANDING ORDERS:\n", 1)[1]
         numbered = orders.split("\n\n")[-1].splitlines()
         self.assertEqual(len(numbered), 2)
         self.assertEqual(numbered[0], "1. Write in plain engineering prose. brigade's kitchen terms name its files and commands only. Never use them in replies, reports, commits, or PRs.")
@@ -51,7 +51,7 @@ class StandingRulesMixin:
                      "tests.test_pstack_t3"):
             self.assertIn(part, verify)
         self.assertNotIn("Run builds and tests through", verify)
-        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), self.brief_body(text))
 
     def test_the_standing_rules_paste_the_failed_test_rule_between_verify_and_timebox(self):
         self.coordinator()
@@ -101,7 +101,7 @@ class StandingRulesMixin:
 
     def test_an_untagged_house_rules_file_is_pasted_into_the_brief_byte_for_byte(self):
         self.coordinator()
-        orders = self.brigade(*self.BRIEF).split("STANDING ORDERS:\n", 1)[1]
+        orders = self.brief_body(self.brigade(*self.BRIEF)).split("STANDING ORDERS:\n", 1)[1]
         self.assertEqual(orders.rstrip("\n"), (self.at / "house-rules.md").read_text().strip())
 
     def test_a_store_without_a_layout_gets_no_whole_suite_sentence_or_default_suite_command(self):

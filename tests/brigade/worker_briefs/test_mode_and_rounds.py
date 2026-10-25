@@ -57,7 +57,7 @@ class ModeRoundsMixin:
             self.assertIn(role, report[2])
         self.assertEqual(report[3:5], [self.REPEAT, self.CONTESTED])
         self.assertTrue(report[5].startswith("- After that file is written, call t3_thread_send"), report[5])
-        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), text)
+        self.assertEqual((self.at / "briefs/D1.md").read_text().strip(), self.brief_body(text))
         self.assertEqual(self.mode_rows(), [])
 
     def test_a_brief_without_a_mode_prints_the_default(self):
