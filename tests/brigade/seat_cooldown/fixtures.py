@@ -27,6 +27,13 @@ class _CooldownHelpers:
         run_globals(self, SCRIPT)["now"] = lambda: self.moment
         return moment
 
+    def command_in_process(self, *args, ok=True, stdin=None):
+        """Run one command in this process, so the clock `freeze` pinned is the one the command reads."""
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *args]
+        outcome = call_in_process(self, SCRIPT, [str(arg) for arg in argv], stdin=stdin)
+        self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
+        return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
+
     def cooldown_store(self, moment=NOW, workers=None):
         """A store whose D1 is in progress, with a roles file whose backups are BACKUP then SPARE."""
         self.freeze(moment)
@@ -66,12 +73,9 @@ class _CooldownHelpers:
 
         A separate process would read the real clock.
         """
-        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at),
-                "dish", dish, "--usage-limit", seat, "--role", role, "--error", "-",
-                "--catalog", str(self.catalog()), "--parent", PARENT, *extra]
-        outcome = call_in_process(self, SCRIPT, [str(arg) for arg in argv], stdin=text)
-        self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
-        return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
+        return self.command_in_process("dish", dish, "--usage-limit", seat, "--role", role, "--error", "-",
+                                       "--catalog", str(self.catalog()), "--parent", PARENT, *extra, ok=ok,
+                                       stdin=text)
 
     def fire_another(self, number, branch, thread):
         """Fire one more dish on the same station, so several dishes share the store's cooldown rows."""

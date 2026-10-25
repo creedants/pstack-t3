@@ -20,9 +20,9 @@ class SeatCooldownLinesTest(BrigadeTest, _CooldownHelpers):
         """The defect: a cooling seat is invisible in watch, so a coordinator launches a worker on it."""
         self.cooldown_store()
         self.write_cooldown_row(seat=BACKUP, end="2026-02-01T01:00:00+00:00")
-        self.assertIn(f"cooling {BACKUP} until 2026-02-01T01:00:00+00:00 (D1)", self.brigade("watch").splitlines())
+        self.assertIn(f"cooling {BACKUP} until 2026-02-01T01:00:00+00:00 (D1)", self.command_in_process("watch").splitlines())
         self.freeze("2026-02-01T02:00:00+00:00")
-        self.assertEqual([line for line in self.brigade("watch").splitlines() if line.startswith("cooling ")], [])
+        self.assertEqual([line for line in self.command_in_process("watch").splitlines() if line.startswith("cooling ")], [])
 
     def test_close_lists_the_cooldown_with_its_seat_and_suggested_replacement(self):
         """The defect: a closeout omits the cooldown, so the user cannot see which seat went out or what replacement was suggested."""
