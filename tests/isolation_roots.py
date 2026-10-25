@@ -5,20 +5,31 @@ The guard keeps its protected roots in memory and in the environment. A child st
 into the roots its parent protected. One record per guarded process, keyed by pid, closes that gap.
 It lives in a fixed per-user directory under the first temporary directory that is a directory and
 is not inside a protected root, because a child with no environment cannot be told where to look.
-Every function here takes and returns real absolute path strings.
+Roots written to and returned from records are real absolute path strings.
 
-A record that exists was published by a guarded process, so a child that cannot read it stops the
-process instead of running with fewer roots. That is the fail-closed rule.
+A child reads every candidate record rather than the first one it finds, so a stale or forged record
+cannot hide the genuine one. It stops when a record it finds cannot be read or parsed, and it stops
+when a candidate directory is not a private directory this user owns. A record carries the process
+start time, so a record left by a dead process that used the pid is ignored instead of trusted. Every
+write and delete acts through a descriptor of a verified directory, and the guard lets exactly those
+descriptors through, so the record machinery cannot damage a protected file.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 import stat
+import sys
 
 _TEMPORARIES = ("/tmp", "/var/tmp", "/usr/tmp")
 _PREFIX = "pstack-t3-isolation-"
+_RECORD = re.compile(r"\A(\d+)\.json\Z")
+_TEMPORARY = re.compile(r"\A\.(\d+)\.json\.[0-9a-f]+\Z")
+_ANCHORS: set[int] = set()
+_PROTECTION: tuple[str, ...] = ()
 
 
 def _fail(problem: str) -> SystemExit:
@@ -33,21 +44,108 @@ def _under(path: str, base: str) -> bool:
     return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
 
 
+def _arg(args: tuple, index: int):
+    return args[index] if index < len(args) else None
+
+
+def _start(pid: int) -> int | None:
+    """Return field 22 of /proc/<pid>/stat, the process start time, or None when /proc cannot answer."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            fields = handle.read().rsplit(b")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+    if len(fields) < 20 or not fields[19].isdigit():
+        return None
+    return int(fields[19])
+
+
+@contextlib.contextmanager
+def anchored(number: int):
+    """Act through a verified record descriptor, so the guard lets this module's own calls through."""
+    _ANCHORS.add(number)
+    try:
+        yield
+    finally:
+        _ANCHORS.discard(number)
+
+
+def anchored_fd(number) -> bool:
+    """Return whether number is a descriptor this module is acting through right now."""
+    return isinstance(number, int) and number in _ANCHORS
+
+
+def anchored_call(event: str, args: tuple) -> bool:
+    """Return whether an audit event acts through one of those descriptors."""
+    if event == "os.remove":
+        return anchored_fd(_arg(args, 1))
+    if event == "os.truncate":
+        return anchored_fd(_arg(args, 0))
+    if event == "os.rename":
+        return anchored_fd(_arg(args, 2)) or anchored_fd(_arg(args, 3))
+    return False
+
+
 def bases() -> tuple[str, ...]:
     """Return the real paths of the candidate temporary directories that exist."""
     return tuple(_real(path) for path in _TEMPORARIES if os.path.isdir(path))
 
 
+def records(pid: int) -> tuple[str, ...]:
+    """Return the candidate record path for pid in every base directory, in base order."""
+    return tuple(os.path.join(base, _PREFIX + str(os.getuid()), f"{pid}.json") for base in bases())
+
+
+def record(pid: int) -> str | None:
+    """Return the first candidate record for pid that exists, else None."""
+    for path in records(pid):
+        if os.path.lexists(path):
+            return path
+    return None
+
+
+def _reaches(path: str, protected) -> bool:
+    """Return whether the path reaches protected storage by mount, through the guard's mount module."""
+    module = sys.modules.get("pstack_test_isolation_mounts")
+    if module is None:
+        raise _fail(f"the mount table is not loaded, so the record directory {path!r} cannot be judged")
+    return module._reaches(path, protected)
+
+
+def _trusted_dir(path: str):
+    """Return (descriptor, stat) for the trusted directory at path, None when it is absent, or stop the process."""
+    try:
+        number = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+    except OSError as problem:
+        raise _fail(f"the record directory {path!r} cannot be opened: {problem}") from None
+    try:
+        info = os.fstat(number)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise _fail(f"the record directory {path!r} is not a directory this user owns with no "
+                        "group or other write bit")
+    except BaseException:
+        os.close(number)
+        raise
+    return number, info
+
+
 def directory(protected) -> str:
     """Return this user's record directory under the first candidate outside every protected root.
 
-    Create it with mode 0700 when it is absent. Stop the process when the entry is not a directory
-    this user owns with no group or other write bit, or when no candidate qualifies.
+    Create it with mode 0700 when it is absent. Skip a candidate whose record directory is a protected
+    root or inside one, by real path and by the storage it reaches. Stop the process when an existing
+    entry is not a directory this user owns with no group or other write bit, or when no candidate
+    qualifies.
     """
     for base in bases():
         if any(_under(base, root) for root in protected):
             continue
         path = os.path.join(base, _PREFIX + str(os.getuid()))
+        real = _real(path)
+        if any(_under(real, root) for root in protected) or _reaches(real, protected):
+            continue
         if not os.path.lexists(path):
             try:
                 os.mkdir(path, 0o700)
@@ -63,37 +161,29 @@ def directory(protected) -> str:
     raise _fail(f"no temporary directory outside {tuple(protected)!r} holds the record directory")
 
 
-def publish(pid: int, roots, protected) -> str:
-    """Write the record of pid's trusted roots with mode 0600 and return its path."""
-    path = os.path.join(directory(protected), f"{pid}.json")
-    body = json.dumps({"pid": pid, "uid": os.getuid(), "roots": [_real(root) for root in roots]})
+def _record_body(number: int, path: str) -> dict:
+    """Return the JSON object the verified record descriptor holds, or stop the process."""
+    info = os.fstat(number)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_mode & 0o077 or info.st_nlink != 1):
+        raise _fail(f"the record {path!r} is not a private single-link file this user owns")
+    chunks = []
+    while True:
+        chunk = os.read(number, 65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
     try:
-        number = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(number, "w", encoding="utf-8") as record:
-            record.write(body)
-    except OSError as problem:
-        raise _fail(f"cannot write the record {path!r}: {problem}") from None
-    return path
-
-
-def record(pid: int) -> str | None:
-    """Return the path of the record for pid when a candidate directory holds one, else None."""
-    for base in bases():
-        path = os.path.join(base, _PREFIX + str(os.getuid()), f"{pid}.json")
-        if os.path.lexists(path):
-            return path
-    return None
-
-
-def _roots_of(path: str, pid: int) -> tuple[str, ...]:
-    """Return the real roots the record at path holds for pid, or stop the process when it is unusable."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            body = json.load(handle)
-    except (OSError, ValueError) as problem:
-        raise _fail(f"the record {path!r} cannot be read: {problem}") from None
+        body = json.loads(b"".join(chunks).decode("utf-8"))
+    except ValueError as problem:
+        raise _fail(f"the record {path!r} is not JSON: {problem}") from None
     if not isinstance(body, dict):
         raise _fail(f"the record {path!r} is not a JSON object")
+    return body
+
+
+def _body_roots(body: dict, path: str, pid: int) -> tuple[str, ...]:
+    """Return the real roots the record body holds for pid, or stop the process."""
     if body.get("uid") != os.getuid():
         raise _fail(f"the record {path!r} names uid {body.get('uid')!r}, not this user")
     if body.get("pid") != pid:
@@ -111,43 +201,130 @@ def _roots_of(path: str, pid: int) -> tuple[str, ...]:
     return tuple(found)
 
 
-def inherited() -> tuple[str, ...]:
-    """Return the real trusted roots this process or its parent published, or () when neither did.
+def _live(body: dict, start: int | None) -> bool:
+    """Return whether the record describes the pid as it runs now, so a record a dead process left is ignored."""
+    if start is None:
+        return True
+    recorded = body.get("start")
+    return isinstance(recorded, int) and recorded == start
 
-    This process's own record counts, because a guarded process that replaces itself with a stripped
-    environment keeps its pid and its parent is then the grandparent. A record that cannot be read, is
-    not JSON, is not an object, names another uid or another pid, or holds a root that is not an
-    absolute path stops the process.
+
+def inherited() -> tuple[str, ...]:
+    """Return the real trusted roots every valid record names for this process or its parent.
+
+    Every candidate directory is read, so a stale or forged first record cannot hide a later one. A
+    record whose start is not the live start of its pid belongs to a dead process and is ignored. A
+    directory that is not a private directory this user owns, and a record that cannot be opened,
+    parsed, or validated, stop the process.
     """
     found: list[str] = []
     for pid in (os.getpid(), os.getppid()):
-        path = record(pid)
-        if path is None:
-            continue
-        for root in _roots_of(path, pid):
-            if root not in found:
-                found.append(root)
+        start = _start(pid)
+        for path in records(pid):
+            opened = _trusted_dir(os.path.dirname(path))
+            if opened is None:
+                continue
+            number, _info = opened
+            try:
+                try:
+                    handle = os.open(os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                     dir_fd=number)
+                except FileNotFoundError:
+                    continue
+                except OSError as problem:
+                    raise _fail(f"the record {path!r} cannot be opened: {problem}") from None
+                try:
+                    body = _record_body(handle, path)
+                finally:
+                    os.close(handle)
+            finally:
+                os.close(number)
+            if not _live(body, start):
+                continue
+            for root in _body_roots(body, path, pid):
+                if root not in found:
+                    found.append(root)
     return tuple(found)
+
+
+def publish(pid: int, roots, protected) -> str:
+    """Write pid's trusted roots and active protection to a fresh record file and return its path.
+
+    The record directory is opened with O_NOFOLLOW and must sit outside every protected root. A fresh
+    file under a temporary name is renamed over the record name through the directory descriptor, so
+    a symlink or a shared file at that name is replaced and never written through.
+    """
+    global _PROTECTION
+    folder = directory(protected)
+    opened = _trusted_dir(folder)
+    if opened is None:
+        raise _fail(f"the record directory {folder!r} does not exist")
+    number, _info = opened
+    name = f"{pid}.json"
+    path = os.path.join(folder, name)
+    temporary = f".{pid}.json.{os.urandom(8).hex()}"
+    body = json.dumps({"pid": pid, "uid": os.getuid(), "start": _start(pid),
+                       "roots": [_real(root) for root in roots]}).encode("utf-8")
+    try:
+        with anchored(number):
+            handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+                             dir_fd=number)
+            try:
+                os.write(handle, body)
+            finally:
+                os.close(handle)
+            os.rename(temporary, name, src_dir_fd=number, dst_dir_fd=number)
+    except OSError as problem:
+        raise _fail(f"the record {path!r} cannot be written: {problem}") from None
+    finally:
+        os.close(number)
+    _PROTECTION = tuple(protected)
+    return path
+
+
+def after_fork() -> None:
+    """Publish the inherited protection under the child's own pid, or stop the child rather than run with fewer roots."""
+    try:
+        publish(os.getpid(), _PROTECTION, _PROTECTION)
+    except BaseException as problem:
+        os.write(2, f"pstack-t3 test isolation: the forked child cannot publish its record: {problem}\n".encode())
+        os._exit(70)
 
 
 def prune(protected) -> None:
     """Remove the records in this user's directory whose pid names no live process.
 
-    Call it only before the guard is armed, because the guard refuses a delete outside the run root.
+    The verified directory descriptor is the only anchor, so a directory swapped for a symlink after
+    it was checked is not followed. An entry that cannot be verified is left in place.
     """
     folder = directory(protected)
-    for name in os.listdir(folder):
-        stem, dot, suffix = name.partition(".")
-        if not dot or suffix != "json" or not stem.isdigit() or int(stem) <= 0:
-            continue
-        try:
-            os.kill(int(stem), 0)
-            continue
-        except ProcessLookupError:
-            pass
-        except OSError:
-            continue
-        try:
-            os.unlink(os.path.join(folder, name))
-        except FileNotFoundError:
-            pass
+    opened = _trusted_dir(folder)
+    if opened is None:
+        return
+    number, _info = opened
+    try:
+        with anchored(number):
+            for name in os.listdir(number):
+                match = _RECORD.match(name) or _TEMPORARY.match(name)
+                if match is None or int(match.group(1)) <= 0:
+                    continue
+                try:
+                    info = os.stat(name, dir_fd=number, follow_symlinks=False)
+                except OSError:
+                    continue
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                        or info.st_mode & 0o077 or info.st_nlink != 1):
+                    continue
+                try:
+                    os.kill(int(match.group(1)), 0)
+                    continue
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    continue
+                try:
+                    os.unlink(name, dir_fd=number)
+                except FileNotFoundError:
+                    pass
+    finally:
+        os.close(number)
