@@ -85,7 +85,6 @@ class ApplyTest(BrigadeTest):
     def test_apply_refuses_a_doubled_old_text_fails_when_the_count_is_not_checked(self):
         # Processes: git builds the fixture project; edits apply refuses before creating anything.
         reviewed = self.edits_store()
-        self.review_file("D1-review-1.md", report(block("1", "src/greeting.txt", "second", "SECOND")))
         self.commit_files({"src/greeting.txt": "second and second\n"})
         doubled = self.head()
         self.review_file("D1-review-1.md", report(block("1", "src/greeting.txt", "second", "SECOND")))

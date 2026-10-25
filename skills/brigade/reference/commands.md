@@ -55,6 +55,7 @@ $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. -
 $B pass stats [--last N]   # first-pass rate overall and per author model over the last N items; default 20
 $B credit D2 [--coordinator <provider/model>]   # credit line for the PR body when prCredit is on; otherwise prints the off line
 $B edits verify D2 --from <reviewed sha> --to <head>   # exits 1 when a compared path differs or the build or check command fails
+$B edits apply D2 --report <D2-review-1.md> --from <reviewed sha> --branch <new branch> [--worktree <path>]   # applies the report's edits to a new branch from the reviewed commit in a new git worktree, runs the contract's setup and the build command there, commits once, and prints the head and the worktree path. Exits 1 with one line and leaves no branch or worktree when an old text does not occur exactly once, a path is generated or not a file at the reviewed commit, or the setup or build fails. It never pushes and records no verdict
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
 $B 86 add --dish D2 --round-budget           # the decision D2 owes at its stored roundBudget send-backs. prints Q<n>
 $B 86 answer Q1 --answer "..." ; $B 86 list

@@ -573,7 +573,7 @@ brigade.py [flags] edits <action>
 
 compare a head with a reviewed commit that has its pass-with-edits round's edits applied and the build run
 
-`<action>` is one of `verify`.
+`<action>` is one of `verify`, `apply`.
 
 ## brigade.py edits verify
 
@@ -588,6 +588,22 @@ apply the edits of the item's last pass-with-edits round at --from to a scratch 
 | `dish` | yes |  |  |  |
 | `--from SHA` | yes |  |  | the reviewed commit, as the pass-with-edits row records it |
 | `--to SHA` | yes |  |  | the head to compare |
+
+## brigade.py edits apply
+
+```text
+brigade.py [flags] edits apply --report REPORT --from SHA --branch BRANCH [--worktree WORKTREE] dish
+```
+
+apply the edits of a review report to a new branch from the reviewed commit, run the setup and build there, and commit the result; no worker runs
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `dish` | yes |  |  |  |
+| `--report REPORT` | yes |  |  | the review report under reports/, such as D2-review-1.md |
+| `--from SHA` | yes |  |  | the reviewed commit the report reviews |
+| `--branch BRANCH` | yes |  |  | the new branch to create for the applied edits |
+| `--worktree WORKTREE` |  |  |  | the directory for the new worktree; a new temporary directory when omitted |
 
 ## brigade.py 86
 

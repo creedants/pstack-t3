@@ -93,7 +93,6 @@ def apply_review(root, dish, name, edits, from_sha, branch, worktree, build, set
         else:
             prepared = edited
         if skip_build:
-            print("no build command recorded; the build was skipped")
             built = prepared
         else:
             code = exit_code(absolute, build_text)
@@ -123,7 +122,8 @@ def apply_review(root, dish, name, edits, from_sha, branch, worktree, build, set
         if head.returncode:
             raise BrigadeError(f"{dish}: cannot read the new head")
         failed = False
-        return f"{dish}: review edits applied on {branch}\nhead {head.stdout.decode().strip()}\nworktree {absolute}"
+        lines = [f"{dish}: review edits applied on {branch}", f"head {head.stdout.decode().strip()}", f"worktree {absolute}"]
+        return "\n".join((["no build command recorded; the build was skipped"] if skip_build else []) + lines)
     finally:
         if failed:
             _cleanup(root, absolute, branch, created)
