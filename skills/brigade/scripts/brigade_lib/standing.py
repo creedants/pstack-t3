@@ -35,8 +35,8 @@ _PATH_CHAR = r"(?![A-Za-z0-9_.\-~])"
 class Sections:
     """The worker brief's rule sections.
 
-    rules is the STANDING RULES bullets. An empty rules means the brief omits the heading. orders is the worker's
-    STANDING ORDERS text.
+    rules is the STANDING RULES bullets, built-ins in _RULES order then the store's recorded lines in file order.
+    An empty rules means the brief omits the heading. orders is the worker's STANDING ORDERS text.
     """
     rules: tuple
     orders: str
@@ -45,6 +45,7 @@ class Sections:
 def sections(restaurant, context, verify):
     """Read house-rules.md once, then resolve the two sections the brief prints."""
     house = rules.house_rules(restaurant.dir / "house-rules.md")
+    parsed = rules.parse(house)
     try:
         scratch = scratch_parent_text(restaurant.meta.get(SCRATCH_KEY))
     except BrigadeError:
@@ -53,7 +54,13 @@ def sections(restaurant, context, verify):
     values = {"reports": str(restaurant.dir / "reports"), "scratch": scratch}
     seen = same_text(" ".join(context) + " " + verify)
     printed = [line for line, anchors, scoped in _built_ins(values) if not _stated(anchors, seen, scoped)]
-    return Sections(tuple(f"- {line}" for line in printed), rules.for_role("worker", house))
+    for line in parsed.recorded:
+        if _stated((line,), seen, False):
+            continue
+        if any(_stated((line,), same_text(text), False) for text in printed):
+            continue
+        printed.append(line)
+    return Sections(tuple(rules.bullet(line) for line in printed), parsed.orders["worker"])
 
 
 def _built_ins(values):
@@ -72,7 +79,10 @@ def _built_ins(values):
 
 
 def _stated(anchors, seen, scoped):
-    """True when every anchor, normalized by same_text, is in seen. A scoped anchor must not be followed by a path character."""
+    """True when every anchor, normalized by same_text, is in seen.
+
+    A scoped anchor must not be followed by a path character.
+    """
     for anchor in anchors:
         needle = same_text(anchor)
         if scoped:

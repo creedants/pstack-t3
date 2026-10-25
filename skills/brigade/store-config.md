@@ -39,6 +39,8 @@ It is an optional repository-relative directory path. It defaults to unset. When
 
 The three roles are `worker`, `reviewer`, and `coordinator`. A rule is a line that starts at column 0 and the indented or blank lines under it. Its first role tag anywhere on its first line selects a role. A rule tagged for one role is left out of every other role's text. A rule tagged for the role loses the tag and at most one space after it. An untagged rule is in every role's text as it is. A role's size is the byte count of that text.
 
+`[standing rule]` is a fourth tag, and a rule that carries it is not a house rule. `brief` prints it once under STANDING RULES, after the built-in lines, and no role's STANDING ORDERS text carries it. It prints as written, with no placeholder filled in and at most one space after the tag removed. A line that CONTEXT or VERIFY already states is not printed again, and neither is a line that an earlier printed line already states, by the same collapsed-whitespace, case-folded test the built-in lines use. The worker's size counts every recorded line once, whether or not a given brief prints it, as its bullet, `- ` plus the line, with no newline. The reviewer and coordinator sizes do not count it. A rule block's indented lines stay one bullet, and a file with no such tag reads as it did before.
+
 When a role's size is over the cap, `brief` exits 1 and writes no brief and no contract, and prints one line for each over-cap role that names the role, its size, and the cap. `next` prints the same line for each over-cap role on standard error and exits 0.
 
 ## prCredit
