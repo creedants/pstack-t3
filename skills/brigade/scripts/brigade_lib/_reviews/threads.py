@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from brigade_lib import seam
 from brigade_lib.edits import HEADING
 from brigade_lib.shared import clean, fence_close, one_of, stored, threads_fence_open
-from brigade_lib.store import CHILD_ROLES, THREADS_WRITERS, WORKER_ROLES
+from brigade_lib.store import CHILD_ROLES, COUNTED_STATES, THREADS_WRITERS, WORKER_ROLES
 
 THREADS_SECTION = (2, "Threads")
 
@@ -232,6 +232,17 @@ def record_cooldown(restaurant, dish_id, attempt, seat, start, end):
     rows.append({"at": start, "dish": dish_id, "attempt": str(attempt), "role": COOLDOWN_ROLE, "thread": "",
                  "seat": seat, "start": start, "end": end})
     restaurant.save_rows("threads.tsv", rows)
+
+
+def retry_chain(restaurant, dish_id):
+    """The dish's retry chain: the number of its log rows that ended an attempt.
+
+    A dish in progress or in review is still in its attempt, so a replacement worker and a fresh
+    verifier both leave the chain alone, and a send-back, a park, a pass, a bounce, or a drop starts
+    a new one.
+    """
+    return str(sum(1 for row in restaurant.rows("log.tsv")
+                   if row["kind"] == "dish" and row["id"] == dish_id and row["state"] not in COUNTED_STATES))
 
 
 def cooldown_seats(restaurant, moment):

@@ -35,18 +35,24 @@ class _CooldownHelpers:
         self.fire_one()
         self.write_roles(BACKUP, SPARE)
 
-    def named(self, seat):
+    def named(self, seat, options=None):
         provider, _, model = seat.partition("/")
-        return {"providerInstanceId": provider, "model": model}
+        target = {"providerInstanceId": provider, "model": model}
+        if options is not None:
+            target["options"] = options
+        return target
 
     def write_roles(self, *seats, role="perf-issue"):
         """The user roles file, with each seat as one of the role's backups in order."""
+        return self.write_roles_file({role: [self.named(FAILED)]},
+                                     {role: [self.named(seat) for seat in seats]})
+
+    def write_roles_file(self, roles, backups):
+        """The user roles file, with these roles and these backups."""
         directory = Path(os.environ["XDG_CONFIG_HOME"]) / "pstack-t3"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "roles.json"
-        path.write_text(json.dumps({"version": 1, "budget": "default",
-                                    "roles": {role: [self.named(FAILED)]},
-                                    "backups": {role: [self.named(seat) for seat in seats]}}))
+        path.write_text(json.dumps({"version": 1, "budget": "default", "roles": roles, "backups": backups}))
         return path
 
     def catalog(self):

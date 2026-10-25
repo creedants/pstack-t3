@@ -14,7 +14,7 @@ from brigade_lib.shared import BrigadeError, clean, stored
 from brigade_lib.commands.once import Once
 from brigade_lib.store import COUNTED_STATES, DISH_STATES, WORKER_ROLES, roles_script
 from brigade_lib.wake import record_worker_end
-from brigade_lib._reviews.threads import cooldown_seats, moment_of, record_cooldown
+from brigade_lib._reviews.threads import cooldown_seats, moment_of, record_cooldown, retry_chain
 from brigade_lib._store.settings import cooldown_minutes
 from brigade_lib._watch.progress import attempt_count
 from brigade_lib._watch.seats import cooldown_end, require_seat
@@ -106,13 +106,16 @@ def seat_word(seat):
     return f"{seat['providerInstanceId']}/{seat['model']}"
 
 
-def second_limit(restaurant, ident, role, attempt):
-    """True when a cooldown event for this dish and role already sent a replacement out for this attempt.
+def target_word(seat):
+    """The complete target `roles.py backup` printed: provider/model, and its options JSON when it names options."""
+    words = seat_word(seat)
+    options = seat.get("options") or {}
+    return f"{words} options {json.dumps(options, sort_keys=True)}" if options else words
 
-    Recording the replacement worker raises the attempt number, so the row to compare is the latest
-    one whose replacement is not empty, and it counts at this attempt or the one before it.
-    """
-    latest = None
+
+def retry_spent(restaurant, ident, role, chain):
+    """True when a cooldown event for this dish, role, and retry chain already sent its one retry out."""
+    spent = False
     for row in restaurant.rows("log.tsv"):
         if row["kind"] != "cooldown" or row["id"] != ident:
             continue
@@ -120,11 +123,9 @@ def second_limit(restaurant, ident, role, attempt):
             note = json.loads(row["note"])
         except ValueError:
             continue
-        if isinstance(note, dict) and note.get("role") == role:
-            latest = (note, row["state"])
-    if latest is None or not latest[0].get("replacement"):
-        return False
-    return latest[1] in (attempt, str(int(attempt) - 1))
+        if isinstance(note, dict) and note.get("role") == role and note.get("chain") == chain:
+            spent = bool(note.get("spent"))
+    return spent
 
 
 def record_usage_limit(restaurant, args):
@@ -163,29 +164,37 @@ def record_usage_limit(restaurant, args):
         return f"{args.id}: {seat} failed without a usage limit; respawn per Failure handling"
     start = seam.now()
     end = cooldown_end(text, start, minutes)
-    replacement, seats = "", []
+    replacement, seats, rule = "", [], {}
     if decision == "relaunch":
-        replacement = seat_word(payload.get("seat"))
+        replacement = target_word(payload.get("seat"))
     elif decision == "panel":
-        seats = [seat_word(item) for item in payload.get("seats") or ()]
+        seats = [target_word(item) for item in payload.get("seats") or ()]
         replacement = ", ".join(seats)
+        rule = payload.get("rule") or {}
     with restaurant.checked():
-        parked = decision == "park" or second_limit(restaurant, args.id, args.role, attempt)
+        _, dish = restaurant.find("dishes.tsv", args.id)
+        chain = retry_chain(restaurant, args.id)
+        spent = retry_spent(restaurant, args.id, args.role, chain)
+        # A parked dish waits out the reset through --resume, so a report on it launches nothing either.
+        parked = decision == "park" or spent or dish["state"] == "blocked"
         record_cooldown(restaurant, args.id, attempt, seat, start, end)
         restaurant.log("cooldown", args.id, attempt, json.dumps({
             "seat": seat, "role": args.role, "start": start, "end": end,
-            "replacement": "" if parked else replacement, "seats": [] if parked else seats}))
-        if parked:
-            _, dish = restaurant.find("dishes.tsv", args.id)
-            if dish["state"] == "in-progress":
-                restaurant.update("dishes.tsv", args.id, "dish", state="blocked")
+            "chain": chain, "spent": spent or decision in ("relaunch", "panel"),
+            "replacement": "" if parked else replacement, "seats": [] if parked else seats,
+            "rule": {} if parked else rule}))
+        if parked and dish["state"] == "in-progress":
+            restaurant.update("dishes.tsv", args.id, "dish", state="blocked")
     if parked:
         # The earliest live end is the first moment any seat may be used again, and a resume names one.
         ends = [moment_of(end)] + [moment_of(entry[1]) for entry in live]
         earliest = min(found for found in ends if found is not None)
         return f"{args.id}: parked until {earliest.isoformat()}; launch nothing before then"
     if decision == "panel":
-        return f"{args.id}: {seat} cooling until {end}; panel on {', '.join(seats)}"
+        step = f"panel on {', '.join(seats)}"
+        if rule:
+            step += f"; rule {json.dumps(rule, sort_keys=True)}"
+        return f"{args.id}: {seat} cooling until {end}; {step}"
     return f"{args.id}: {seat} cooling until {end}; relaunch on {replacement}"
 
 def _rebound_for_restart(restaurant, ident, thread):
