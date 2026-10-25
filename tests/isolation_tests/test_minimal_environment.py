@@ -7,6 +7,13 @@ It then starts one child per entry point a test uses to start a Python child, an
 reports what the guard did about one write into the original root. A last child runs after the driver's
 record is replaced with text that is not a record, so an unreadable record must stop a child rather than
 let it run with fewer roots.
+
+A second driver covers the record state a child must not trust. One case plants a stale record in the
+first candidate directory and lets the driver publish its genuine record in the second, so the child
+must merge the later record rather than stop at the first. Another plants a forged record in a
+world-writable first candidate, so the child must stop or refuse. The last two start the child from a
+fork child of the driver, and from inside an active `protecting()` context, so both must carry the
+protection the parent holds at that moment.
 """
 
 if __package__ in (None, ""):
