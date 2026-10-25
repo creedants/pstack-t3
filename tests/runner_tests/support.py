@@ -431,7 +431,7 @@ class RunnerCase:
         while True:
             try:
                 state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
-            except (FileNotFoundError, IndexError):
+            except (FileNotFoundError, IndexError, ProcessLookupError):
                 return
             if state == "Z":
                 return
