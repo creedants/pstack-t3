@@ -1,0 +1,6 @@
+- kind fix
+- `$B launch` reads the live cooldowns from `threads.tsv` and, when the role's resolved seat is on a cooling provider, asks `roles.py backup` for a replacement seat with the same argument shape and the same `--out` provider exclusions the usage-limit path uses. It prints that seat's `modelSelection` object and one stderr line naming the cooling seat and its end. `brigade_lib/commands/tools.py` reuses `cooldown_seats` and `moment_of` from `_reviews/threads.py` and `backup_payload` and `seat_word` from `_items/dish.py`, so there is no second cooldown reader and no second seat chooser
+- a cooldown covers every model on its provider, because the usage-limit path excludes by provider. The line names the resolved seat's own cooling row when it has one, and otherwise the first cooling seat on that provider
+- `roles.py backup` runs with `--resume`, because launch has no error text and backup reads an empty text as a failure that names no usage limit
+- when no seat is runnable, the command exits 1 with a message naming the earliest cooldown end, taken over the latest live end of each cooling seat
+- an expired cooldown changes nothing, so a launch with no live cooldown on the resolved seat's provider prints the same bytes as before and writes nothing on stderr
