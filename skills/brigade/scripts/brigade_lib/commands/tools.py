@@ -22,8 +22,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib._reviews.threads import cooldown_seats, moment_of
-# dish.py imports brief_mode from this module while it loads, so this binds the module object that
-# import already made, and reads its backup runner and seat check once it is complete.
+from brigade_lib.briefs import brief_attempt, brief_file
+# dish.py imports current_brief_mode from this module while it loads, so this binds the module object
+# that import already made, and reads its backup runner and seat check once it is complete.
 from brigade_lib.commands._items import dish as _dish
 from brigade_lib.shared import BrigadeError
 from brigade_lib.spend import add_arguments, spend_text
@@ -47,16 +48,38 @@ def launch_role(station):
         raise BrigadeError(f"{station} has no code-delegate role") from None
 
 
-def brief_mode(ident, text):
-    """The one Mode line in a brief, or None when the brief names none."""
+def brief_mode(name, text):
+    """The one Mode line in a brief file, or None when the brief names none."""
     if text is None:
         return None
     found = [line.removeprefix("Mode: ") for line in text.splitlines() if line.startswith("Mode: ")]
     if not found:
         return None
     if len(found) != 1 or found[0] not in ("full", "light"):
-        raise BrigadeError(f"briefs/{ident}.md needs one Mode line of full or light")
+        raise BrigadeError(f"{name.as_posix()} needs one Mode line of full or light")
     return found[0]
+
+
+def current_brief(restaurant, dish):
+    """The brief the dish's next launch reads: the newest attempt file at or below that launch's number."""
+    for attempt in range(brief_attempt(restaurant, dish), 0, -1):
+        name = brief_file(dish["id"], attempt)
+        if (restaurant.dir / name).is_file():
+            return name
+    return brief_file(dish["id"], 1)
+
+
+def current_brief_mode(restaurant, dish):
+    """The Mode value of the dish's current brief, or None when the store holds none."""
+    name = current_brief(restaurant, dish)
+    path = restaurant.dir / name
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise BrigadeError(f"{name.as_posix()} is not UTF-8 text") from None
+    return brief_mode(name, text)
 
 
 def selection_from_show(payload, role):
@@ -181,18 +204,9 @@ def launch_text(restaurant, args):
         _, dish = restaurant.find("dishes.tsv", ident)
         station = dish["station"]
         project_root = restaurant.meta["projectRoot"]
-        brief_path = restaurant.dir / "briefs" / f"{ident}.md"
-        brief_bytes = brief_path.read_bytes() if brief_path.is_file() else None
         live = cooldown_seats(restaurant, moment_of(seam.now()))
-    if brief_bytes is None:
-        text = None
-    else:
-        try:
-            text = brief_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            raise BrigadeError(f"briefs/{ident}.md is not UTF-8 text") from None
-    role = launch_role(station)
-    mode = brief_mode(ident, text)
+        role = launch_role(station)
+        mode = current_brief_mode(restaurant, dish)
     argv = [sys.executable, str(roles_script()), "show", "--cwd", project_root, "--catalog", args.catalog,
             "--parent", args.parent, "--role", role]
     if mode is not None:

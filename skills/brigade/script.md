@@ -110,7 +110,7 @@ Each command's text below is the text that moved out of the command block in [th
 
 ### brief
 
-**`$B brief --fields`.** JSON file, or `--fields -` for stdin. Writes briefs/D2.md.
+**`$B brief --fields`.** JSON file, or `--fields -` for stdin. Writes briefs/D2.md for the item's first launch and briefs/D2-<k>.md for a later one, where k is the attempt number the launch's worker row in threads.tsv gets. Its last two printed lines are the file's absolute path and the launch message to send. The reader is `current_brief` in `commands/tools.py`, which takes the newest attempt file at or below the next launch's number, so a file is never rewritten once a worker row is recorded after it.
 
 **`$B brief --goal ...`.** same brief. Single-quote every field.
 

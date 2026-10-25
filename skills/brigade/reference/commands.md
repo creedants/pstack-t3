@@ -35,7 +35,7 @@ $B goal set G1 --state open|paused|done|dropped [--evidence "<one line>"]   # a 
 $B goal set G<n> --state paused   # no ticket of that goal starts, not even as a ride-along
 $B goal set G<n> --share N   # a ceiling of N worker slots holding that goal's items
 $B goal list [--all]   # each open or paused goal, and each done or dropped goal that still has a waiting ticket, an item in flight, or a ticket riding along, with its state, name, counts, purpose, and done test, then the counts of unassigned work
-$B brief D2 --fields <path>                 # JSON file, or --fields - for stdin. Writes briefs/D2.md
+$B brief D2 --fields <path>                 # JSON file, or --fields - for stdin. Writes briefs/D2.md, then briefs/D2-<k>.md after a worker row, and prints the path and the launch message
 $B brief D2 --goal '...' --acceptance '...' [--acceptance ...] --contract '...' --verify '...' --base main [--context ...]   # same brief. Single-quote every field
 $B contract D2                               # prints the contract the last brief of D2 stored
 $B watch                                     # a line for every open dish; renews each live lease. A dish that owes its round decision gets <n> send-backs, decision pending. It prints one trunk line while it sees a red or unseen remote mode trunk. It stays silent with no contract or in local mode.

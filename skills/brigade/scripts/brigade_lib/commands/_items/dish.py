@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from brigade_lib import seam
 from brigade_lib.commands._items.fire import add_paths_alone
-from brigade_lib.commands.tools import brief_mode
+from brigade_lib.commands.tools import current_brief_mode
 from brigade_lib.items import ATTEMPT_AFTER, announce_archive, drop, item_escalation, record_escalation, retired_worker_threads, workers_full
 from brigade_lib.leases import fragment_lines
 from brigade_lib.reviews import fix_round_refusal, pass_check, write_threads
@@ -53,18 +53,6 @@ def error_text(path):
         return Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         raise BrigadeError(f"--error {error}") from None
-
-
-def brief_seat_mode(restaurant, ident):
-    """The one Mode value the dish's brief names, or None when the brief names none."""
-    path = restaurant.dir / "briefs" / f"{ident}.md"
-    if not path.is_file():
-        return None
-    try:
-        text = path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
-        raise BrigadeError(f"briefs/{ident}.md is not UTF-8 text") from None
-    return brief_mode(ident, text)
 
 
 def backup_payload(argv, catalog, text):
@@ -144,7 +132,7 @@ def record_usage_limit(restaurant, args):
         attempt = str(attempt_count(restaurant, dish))
         minutes = cooldown_minutes(restaurant.meta)
         live = cooldown_seats(restaurant, moment_of(seam.now()))
-        mode = brief_seat_mode(restaurant, args.id)
+        mode = current_brief_mode(restaurant, dish)
         project_root = restaurant.meta["projectRoot"]
     provider, _, model = seat.partition("/")
     argv = [sys.executable, str(roles_script()), "backup", "--cwd", project_root, "--catalog", args.catalog,
