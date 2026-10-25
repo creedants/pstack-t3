@@ -180,7 +180,7 @@ class LandingTest(SlotBase, LandingTestBase):
         """A read through an entry opened while its process ran raises ProcessLookupError once the kernel reaps that process, so the zombie helper reports that it is not a zombie instead of raising out of the test."""
 
         def held(reap):
-            """Start a real child and open its stat entry, killing and reaping it first when reap is true. Return its pid and the open entry."""
+            """Start a real child and open its stat entry. If reap is true, kill and reap the child after opening the entry. Return its pid and the open entry."""
             child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
             self.addCleanup(child.wait)
             self.addCleanup(child.kill)
