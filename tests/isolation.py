@@ -11,8 +11,8 @@ and a replacement os.environ.clear. Checked deletes, rename sources, and replace
 must sit inside the run root, and so must a write placed through a descriptor. Write handlers check
 protected real roots outside the checkout, by spelling and by the storage they reach. SQLite ATTACH
 remains unguarded. A guarded variable cannot be removed or emptied, a good path variable rejects a
-relative or protected value, the token and root record have their own rules, and clear() keeps all
-of them. Record files act through a verified directory descriptor.
+relative or protected value, the token and root record have their own rules, and clear() keeps them.
+Record files act through a verified directory descriptor.
 
 PSTACK_TEST_PROTECTED_ROOTS carries a JSON array of absolute paths. The roots stay in memory, and a
 run root's marker carries those of the process that marked it, so a child that adopts the root
@@ -263,7 +263,7 @@ def _open(path, flags, mode=0o777, *, dir_fd=None):
     The open audit event leaves out dir_fd, so the hook alone would judge a relative name against the working directory.
     """
     path = _frozen(path)
-    if anchored_fd(dir_fd):
+    if anchored_fd(dir_fd, path):
         _local.busy = True
         try:
             return _os_open(path, flags, mode, dir_fd=dir_fd)
