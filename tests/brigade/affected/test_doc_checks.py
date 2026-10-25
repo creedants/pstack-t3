@@ -20,7 +20,7 @@ from tests.brigade.test_affected import AffectedBase
 
 class AffectedDocChecksTest(AffectedBase):
     def brigade_module(self, name):
-        """The module name from this repository's script directory, loaded fresh so another module's copy cannot answer."""
+        """The module from this repository's script directory, loaded fresh so another module's copy cannot answer."""
         scripts = str(ROOT / "t3/added/brigade/scripts")
         if scripts not in sys.path:
             sys.path.insert(0, scripts)
@@ -136,6 +136,23 @@ class AffectedDocChecksTest(AffectedBase):
         self.track()
         out = self.affected("--paths", "skills/pstack-runtime/scripts/roles.py")
         self.assertIn("tests.readers.test_roles", out)
+
+    def test_a_synthetic_candidate_does_not_hide_a_pinned_source_document(self):
+        self.git_project()
+        self.vendor_layout()
+        sentence = "The pinned sentence is longer than forty characters and unique."
+        self.write("t3/overrides/demo/notes.md", f"# Demo\n{sentence}\n")
+        self.write("t3/added/demo/other.md", "# Other\n")
+        self.write("tests/readers/test_pin.py",
+                   f"SENTENCE = {sentence!r}\n\n\n"
+                   "def test_pin():\n"
+                   "    assert SENTENCE in open(\"t3/overrides/demo/notes.md\").read()\n")
+        self.write_reader("test_added", "ROOT / \"t3/added/demo\" / name", ("other.md",))
+        self.track()
+        out = self.affected("--paths", "t3/overrides/demo/notes.md")
+        self.assertIn("tests.readers.test_pin", out)
+        self.assertIn("tests.readers.test_added", out)
+        self.assertNotIn("No affected mapping", out)
 
     def test_a_single_directory_prefix_is_kept_and_a_later_unsafe_operand_is_rejected(self):
         prefix = self.brigade_module("brigade_lib._affected.scan")._read_prefix
