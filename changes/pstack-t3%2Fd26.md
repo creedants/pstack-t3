@@ -1,0 +1,2 @@
+- kind upkeep
+- `reference/store-rules.md` says `fire` records in the dish the paths it was given, the generated copies and doc pages the contract map makes from them, and the change-note fragment, so the worker brief lists every copy
