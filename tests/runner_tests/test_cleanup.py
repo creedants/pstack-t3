@@ -210,7 +210,7 @@ class CleanupTest(RunnerCase, unittest.TestCase):
 
 
     def held_entry(self, reap):
-        """Start a real child and open its stat entry, killing and reaping it first when reap is true. Return the pid and the open entry."""
+        """Start a real child and open its stat entry, then kill and reap the child when reap is true. Return the pid and the open entry."""
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         self.addCleanup(child.wait)
         self.addCleanup(child.kill)
