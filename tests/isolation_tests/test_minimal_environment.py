@@ -131,6 +131,127 @@ with open(REPORT, "w") as handle:
 TIME_LIMIT = 600
 ENTRIES = ("run", "popen", "spawn", "exec")
 
+RECORD_DRIVER = '''"""A guarded driver whose planted records and active protection decide what a child inherits."""
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, @REPO@)
+spec = importlib.util.spec_from_file_location("pstack_test_isolation_roots", @ROOTS@)
+roots = importlib.util.module_from_spec(spec)
+sys.modules["pstack_test_isolation_roots"] = roots
+spec.loader.exec_module(roots)
+roots._TEMPORARIES = (@BASE1@, @BASE2@)
+@PLANT@
+from tests import isolation
+
+isolation.install()
+@LAUNCH@
+'''
+
+RECORD_CHILD = '''import importlib.util
+import json
+import os
+import sys
+
+sys.path.insert(0, @REPO@)
+spec = importlib.util.spec_from_file_location("pstack_test_isolation_roots", @ROOTS@)
+module = importlib.util.module_from_spec(spec)
+sys.modules["pstack_test_isolation_roots"] = module
+spec.loader.exec_module(module)
+module._TEMPORARIES = (@BASE1@, @BASE2@)
+from tests import isolation
+
+found = {"verdict": "stopped", "protected": []}
+try:
+    isolation.install()
+except SystemExit as problem:
+    found["message"] = str(problem)
+else:
+    found["protected"] = list(isolation._protected)
+    try:
+        with open(os.path.join(@TARGET@, "canary.txt"), "a") as handle:
+            handle.write("damaged")
+    except PermissionError:
+        found["verdict"] = "refused"
+    else:
+        found["verdict"] = "wrote"
+with open(@REPORT@, "w") as handle:
+    json.dump(found, handle)
+'''
+
+LAUNCH = '''ENV = {"PATH": os.environ["PATH"], "HOME": @CHILD_HOME@, "TMPDIR": @CHILD_TMP@}
+SOURCE = @CHILD@
+done = subprocess.run([sys.executable, "-c", SOURCE], env=ENV, capture_output=True, text=True)
+if not os.path.exists(@REPORT@):
+    with open(@REPORT@, "w") as handle:
+        json.dump({"verdict": "stopped", "message": done.stdout + done.stderr,
+                   "code": done.returncode}, handle)
+'''
+
+FORK_LAUNCH = '''ENV = {"PATH": os.environ["PATH"], "HOME": @CHILD_HOME@, "TMPDIR": @CHILD_TMP@}
+SOURCE = @CHILD@
+pid = os.fork()
+if pid == 0:
+    done = subprocess.run([sys.executable, "-c", SOURCE], env=ENV, capture_output=True, text=True)
+    with open(@REPORT@ + ".launch", "w") as handle:
+        handle.write("code %d\\n%s%s" % (done.returncode, done.stdout, done.stderr))
+    os._exit(0)
+os.waitpid(pid, 0)
+'''
+
+PROTECTING_LAUNCH = '''ENV = {"PATH": os.environ["PATH"], "HOME": @CHILD_HOME@, "TMPDIR": @CHILD_TMP@}
+SOURCE = @CHILD@
+with isolation.protecting(@TARGET@):
+    done = subprocess.run([sys.executable, "-c", SOURCE], env=ENV, capture_output=True, text=True)
+if not os.path.exists(@REPORT@):
+    with open(@REPORT@, "w") as handle:
+        json.dump({"verdict": "stopped", "message": done.stdout + done.stderr,
+                   "code": done.returncode}, handle)
+'''
+
+STALE_PLANT = '''old = os.path.join(@SCRATCH_DIR@, "old")
+os.makedirs(old, exist_ok=True)
+folder = os.path.join(@BASE1@, "pstack-t3-isolation-%d" % os.getuid())
+os.makedirs(folder, mode=0o700, exist_ok=True)
+os.chmod(folder, 0o700)
+stale = os.path.join(folder, "%d.json" % os.getpid())
+with open(stale, "w") as handle:
+    json.dump({"pid": os.getpid(), "uid": os.getuid(), "roots": [old]}, handle)
+os.chmod(stale, 0o600)
+'''
+
+FORGED_PLANT = '''import json
+import os
+import sys
+
+pid = int(sys.argv[1])
+folder = os.path.join(@BASE1@, "pstack-t3-isolation-%d" % os.getuid())
+os.makedirs(folder, mode=0o777, exist_ok=True)
+os.chmod(folder, 0o777)
+forged = os.path.join(folder, "%d.json" % pid)
+with open(forged, "w") as handle:
+    json.dump({"pid": pid, "uid": os.getuid(), "roots": [@BASE1@]}, handle)
+os.chmod(forged, 0o600)
+'''
+
+FORGED_LAUNCH = '''planted = @FORGED@
+done = subprocess.run([sys.executable, "-c", planted, str(os.getpid())],
+                      env={"PATH": os.environ["PATH"]}, capture_output=True, text=True)
+if done.returncode != 0:
+    raise SystemExit("the forged record could not be planted: " + done.stdout + done.stderr)
+ENV = {"PATH": os.environ["PATH"], "HOME": @CHILD_HOME@, "TMPDIR": @CHILD_TMP@}
+SOURCE = @CHILD@
+done = subprocess.run([sys.executable, "-c", SOURCE], env=ENV, capture_output=True, text=True)
+if not os.path.exists(@REPORT@):
+    with open(@REPORT@, "w") as handle:
+        json.dump({"verdict": "stopped", "message": done.stdout + done.stderr,
+                   "code": done.returncode}, handle)
+'''
+
 
 class MinimalEnvironmentTest(unittest.TestCase):
     def setUp(self):
@@ -180,6 +301,85 @@ class MinimalEnvironmentTest(unittest.TestCase):
         self.assertNotEqual(found["corrupt"]["returncode"], 0, found["corrupt"])
         self.assertFalse((self.reports / "corrupt.json").exists(), found["corrupt"])
         self.assertEqual(self.canary.read_text(), "original")
+
+
+class RecordTrustTest(unittest.TestCase):
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp(prefix="records-"))
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+        self.base1 = self.scratch / "base1"
+        self.base2 = self.scratch / "base2"
+        self.external = self.scratch / "external"
+        self.home = self.scratch / "home"
+        self.tmp = self.scratch / "tmp"
+        self.child_home = self.scratch / "child-home"
+        self.child_tmp = self.scratch / "child-tmp"
+        for path in (self.base1, self.base2, self.external, self.home, self.tmp,
+                     self.child_home, self.child_tmp):
+            path.mkdir()
+        self.canary = self.external / "canary.txt"
+        self.canary.write_text("original")
+        self.report = self.scratch / "child.json"
+
+    def paths(self, template):
+        """Return template with this case's paths and repository location filled in."""
+        repo = Path(__file__).resolve().parents[2]
+        return (template.replace("@REPO@", repr(str(repo)))
+                .replace("@ROOTS@", repr(str(repo / "tests" / "isolation_roots.py")))
+                .replace("@BASE1@", repr(str(self.base1)))
+                .replace("@BASE2@", repr(str(self.base2)))
+                .replace("@TARGET@", repr(str(self.external)))
+                .replace("@CHILD_HOME@", repr(str(self.child_home)))
+                .replace("@CHILD_TMP@", repr(str(self.child_tmp)))
+                .replace("@REPORT@", repr(str(self.report)))
+                .replace("@SCRATCH_DIR@", repr(str(self.scratch))))
+
+    def fill(self, template):
+        """Return template with the child source filled in as well."""
+        return self.paths(template).replace("@CHILD@", repr(self.paths(RECORD_CHILD)))
+
+    def drive(self, plant, launch, state=None, config=None):
+        """Run a driver that installs the guard, then start its one child with a minimal environment."""
+        body = self.fill(RECORD_DRIVER.replace("@PLANT@", self.paths(plant))
+                         .replace("@LAUNCH@", self.fill(launch)))
+        driver = self.scratch / "driver.py"
+        driver.write_text(body)
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "TMPDIR": str(self.tmp)}
+        if state is not None:
+            env["XDG_STATE_HOME"] = str(state)
+        if config is not None:
+            env["XDG_CONFIG_HOME"] = str(config)
+        done = subprocess.run([sys.executable, str(driver)], env=env, capture_output=True,
+                              text=True, cwd=str(self.scratch), timeout=TIME_LIMIT)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertTrue(self.report.exists(), done.stdout + done.stderr)
+        return json.loads(self.report.read_text())
+
+    def assert_kept(self):
+        self.assertEqual(self.canary.read_text(), "original")
+        self.assertEqual(sorted(os.listdir(self.external)), ["canary.txt"])
+
+    def test_a_stale_first_record_does_not_hide_the_genuine_record_in_a_later_candidate(self):
+        found = self.drive(STALE_PLANT, LAUNCH, state=self.base1, config=self.external)
+        self.assertEqual(found["verdict"], "refused", found)
+        self.assertIn(str(self.external), found["protected"], found)
+        self.assert_kept()
+
+    def test_a_forged_record_in_a_writable_directory_stops_or_refuses_the_child(self):
+        launch = FORGED_LAUNCH.replace("@FORGED@", repr(self.paths(FORGED_PLANT)))
+        found = self.drive("", launch, state=self.base1, config=self.external)
+        self.assertIn(found["verdict"], ("stopped", "refused"), found)
+        self.assert_kept()
+
+    def test_a_forked_guard_publishes_its_protection_for_the_child_it_starts(self):
+        found = self.drive("", FORK_LAUNCH, state=self.external)
+        self.assertEqual(found["verdict"], "refused", found)
+        self.assert_kept()
+
+    def test_an_active_protecting_context_is_published_for_the_child_it_starts(self):
+        found = self.drive("", PROTECTING_LAUNCH)
+        self.assertEqual(found["verdict"], "refused", found)
+        self.assert_kept()
 
 
 if __name__ == "__main__":

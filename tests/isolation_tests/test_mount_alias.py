@@ -30,11 +30,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-BODY = '''import json
+BODY = '''import importlib.util
+import json
 import os
 import sys
 
 sys.path.insert(0, @REPO@)
+spec = importlib.util.spec_from_file_location("pstack_test_isolation_roots", @ROOTS@)
+roots = importlib.util.module_from_spec(spec)
+sys.modules["pstack_test_isolation_roots"] = roots
+spec.loader.exec_module(roots)
+roots._TEMPORARIES = (@RECORDS@,)
 from tests import isolation
 
 root = isolation.install()
@@ -87,6 +93,7 @@ with isolation.protecting(protected):
     attempt("delete", delete)
 with open(@REPORT@, "w") as handle:
     json.dump(verdicts, handle)
+@VERIFY@
 '''
 
 MOUNT = '''import ctypes
@@ -95,6 +102,51 @@ libc = ctypes.CDLL(None, use_errno=True)
 if libc.mount(protected.encode(), alias.encode(), None, 4096, None) != 0:
     print("MOUNT UNAVAILABLE", ctypes.get_errno())
     raise SystemExit(0)
+'''
+
+STACKED = '''import ctypes
+
+libc = ctypes.CDLL(None, use_errno=True)
+
+
+def mount(source, target, fstype, flags):
+    if libc.mount(source.encode(), target.encode(), fstype, flags, None) != 0:
+        print("MOUNT UNAVAILABLE", ctypes.get_errno())
+        raise SystemExit(0)
+
+
+backing = os.path.join(@SCRATCH_DIR@, "backing")
+os.mkdir(backing)
+mount("tmpfs", backing, b"tmpfs", 0)
+for name in ("keep-for-delete.txt", "keep-for-rename.txt"):
+    with open(os.path.join(backing, name), "w") as handle:
+        handle.write("kept")
+mount("tmpfs", protected, b"tmpfs", 0)
+mount(backing, protected, None, 4096)
+mount(protected, alias, None, 4096)
+'''
+
+BROKEN = '''import ctypes
+import pstack_test_isolation_paths as paths
+
+try:
+    import pstack_test_isolation_mounts as mounts
+except ImportError:
+    mounts = paths
+
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.mount(protected.encode(), alias.encode(), None, 4096, None) != 0:
+    print("MOUNT UNAVAILABLE", ctypes.get_errno())
+    raise SystemExit(0)
+mounts._MOUNTINFO = @TABLE@
+'''
+
+VISIBLE = '''found = {}
+for name in sorted(os.listdir(protected)):
+    with open(os.path.join(protected, name)) as handle:
+        found[name] = handle.read()
+with open(@VISIBLE@, "w") as handle:
+    json.dump(found, handle)
 '''
 
 ANSWER = '''import pstack_test_isolation_paths as paths
@@ -161,13 +213,19 @@ class MountAliasTest(unittest.TestCase):
         self.home.mkdir()
         self.tmp = self.scratch / "tmp"
         self.tmp.mkdir()
+        self.records = self.scratch / "records"
+        self.records.mkdir()
         self.report = self.scratch / "report.json"
+        self.visible = self.scratch / "visible.json"
 
-    def child(self, setup):
+    def child(self, setup, verify=""):
         """Return the body of a child that installs the guard, makes the alias reach protected storage, and mutates through it."""
         return (BODY.replace("@REPO@", repr(str(Path(__file__).resolve().parents[2])))
+                .replace("@ROOTS@", repr(str(Path(__file__).resolve().parents[2] / "tests" / "isolation_roots.py")))
+                .replace("@RECORDS@", repr(str(self.records)))
                 .replace("@PROTECTED@", repr(str(self.protected)))
                 .replace("@SETUP@", setup)
+                .replace("@VERIFY@", verify)
                 .replace("@REPORT@", repr(str(self.report))))
 
     def start(self, setup):
@@ -178,6 +236,22 @@ class MountAliasTest(unittest.TestCase):
         return subprocess.run([sys.executable, str(source)], env=env, capture_output=True, text=True,
                               cwd=str(self.scratch), timeout=600)
 
+    def namespaced(self, setup, name="child"):
+        """Run one child in its own user and mount namespace so it can make a real mount, and skip when it cannot."""
+        source = self.scratch / f"{name}.py"
+        source.write_text(self.child(setup))
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "TMPDIR": str(self.tmp)}
+        done = subprocess.run(["unshare", "-Ur", "-m", sys.executable, str(source)], env=env,
+                              capture_output=True, text=True, cwd=str(self.scratch), timeout=600)
+        if "MOUNT UNAVAILABLE" in done.stdout:
+            raise unittest.SkipTest("this kernel refuses this mount in a private user namespace")
+        return done
+
+    def assert_untouched(self):
+        self.assertEqual(sorted(os.listdir(self.protected)), sorted(PROTECTED_FILES))
+        for name in PROTECTED_FILES:
+            self.assertEqual((self.protected / name).read_text(), "kept", name)
+
     def assert_nothing_moved(self, done):
         self.assertNotIn("MOUNT UNAVAILABLE", done.stdout)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -185,21 +259,47 @@ class MountAliasTest(unittest.TestCase):
         self.assertEqual(sorted(verdicts), sorted(ENTRIES))
         self.assertEqual({name: verdict for name, verdict in verdicts.items() if verdict != "refused"}, {},
                          done.stdout + done.stderr)
-        self.assertEqual(sorted(os.listdir(self.protected)), sorted(PROTECTED_FILES))
-        for name in PROTECTED_FILES:
-            self.assertEqual((self.protected / name).read_text(), "kept", name)
+        self.assert_untouched()
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "a private user and mount namespace is a Linux feature")
     @unittest.skipUnless(shutil.which("unshare"), "unshare is not installed")
     def test_a_real_bind_mount_at_a_name_inside_the_run_root_cannot_reach_protected_storage(self):
-        source = self.scratch / "child.py"
-        source.write_text(self.child(MOUNT))
+        self.assert_nothing_moved(self.namespaced(MOUNT))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "a private user and mount namespace is a Linux feature")
+    @unittest.skipUnless(shutil.which("unshare"), "unshare is not installed")
+    def test_a_protected_root_hidden_by_a_stacked_mount_cannot_be_reached_through_an_alias(self):
+        setup = STACKED.replace("@SCRATCH_DIR@", repr(str(self.scratch)))
+        verify = VISIBLE.replace("@VISIBLE@", repr(str(self.visible)))
+        source = self.scratch / "stacked.py"
+        source.write_text(self.child(setup, verify))
         env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "TMPDIR": str(self.tmp)}
         done = subprocess.run(["unshare", "-Ur", "-m", sys.executable, str(source)], env=env,
                               capture_output=True, text=True, cwd=str(self.scratch), timeout=600)
         if "MOUNT UNAVAILABLE" in done.stdout:
-            raise unittest.SkipTest("this kernel refuses a bind mount in a private user namespace")
+            raise unittest.SkipTest("this kernel refuses a tmpfs or bind mount in a private user namespace")
         self.assert_nothing_moved(done)
+        self.assertEqual(json.loads(self.visible.read_text()),
+                         {name: "kept" for name in PROTECTED_FILES}, done.stdout + done.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "a private user and mount namespace is a Linux feature")
+    @unittest.skipUnless(shutil.which("unshare"), "unshare is not installed")
+    def test_a_mount_table_that_cannot_be_read_or_parsed_stops_or_refuses_the_real_bind_alias(self):
+        broken = self.scratch / "broken-mountinfo"
+        broken.write_text("this is not a mountinfo entry\n")
+        cases = {"missing": self.scratch / "no-such-mountinfo", "malformed": broken}
+        for name, table in cases.items():
+            with self.subTest(name):
+                self.report.unlink(missing_ok=True)
+                done = self.namespaced(BROKEN.replace("@TABLE@", repr(str(table))), name)
+                if self.report.exists():
+                    verdicts = json.loads(self.report.read_text())
+                    self.assertEqual(sorted(verdicts), sorted(ENTRIES), done.stdout + done.stderr)
+                    self.assertEqual({entry: verdict for entry, verdict in verdicts.items()
+                                      if verdict != "refused"}, {}, done.stdout + done.stderr)
+                else:
+                    self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assert_untouched()
 
     @unittest.skipUnless(os.path.exists("/proc/self/mountinfo"), "this host has no mount table to answer")
     def test_a_mount_table_that_names_the_alias_as_protected_storage_refuses_every_mutation_through_it(self):

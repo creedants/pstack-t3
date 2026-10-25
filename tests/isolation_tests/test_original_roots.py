@@ -440,5 +440,153 @@ class CopiedEnvironmentTest(unittest.TestCase):
         self.assertEqual(os.listdir(state), [])
 
 
+LOADER = '''
+import importlib.util
+
+sys.path.insert(0, REPO)
+spec = importlib.util.spec_from_file_location("pstack_test_isolation_roots", ROOTS)
+module = importlib.util.module_from_spec(spec)
+sys.modules["pstack_test_isolation_roots"] = module
+spec.loader.exec_module(module)
+module._TEMPORARIES = (BASE1, BASE2)
+try:
+    from tests import isolation
+except SystemExit as problem:
+    print("STOPPED", problem)
+else:
+    try:
+        isolation.install()
+    except SystemExit as problem:
+        print("STOPPED", problem)
+    else:
+        print("INSTALLED")
+'''
+
+CONSTANTS = '''import json
+import os
+import sys
+
+REPO = @REPO@
+ROOTS = @ROOTS@
+BASE1 = @BASE1@
+BASE2 = @BASE2@
+FOLDER = os.path.join(BASE1, "pstack-t3-isolation-%d" % os.getuid())
+'''
+
+SYMLINK_CHILD = CONSTANTS + '''CANARY = @CANARY@
+
+if os.environ.get("PSTACK_D13_PHASE") != "two":
+    exec(@LOADER@)
+    os.environ["PSTACK_D13_PHASE"] = "two"
+    os.execve(sys.executable, [sys.executable, __file__], dict(os.environ))
+
+os.makedirs(FOLDER, mode=0o700, exist_ok=True)
+name = os.path.join(FOLDER, "%d.json" % os.getpid())
+if os.path.lexists(name):
+    os.unlink(name)
+os.symlink(CANARY, name)
+exec(@LOADER@)
+print("RECORD", os.path.islink(name), os.path.isfile(name))
+'''
+
+SWAP_CHILD = CONSTANTS + '''CANARY_DIR = @CANARY_DIR@
+os.makedirs(FOLDER, mode=0o700, exist_ok=True)
+with open(os.path.join(FOLDER, "999999.json"), "w") as handle:
+    handle.write("{}")
+os.chmod(os.path.join(FOLDER, "999999.json"), 0o600)
+os.makedirs(CANARY_DIR, exist_ok=True)
+with open(os.path.join(CANARY_DIR, "999999.json"), "w") as handle:
+    handle.write("kept")
+os.chmod(os.path.join(CANARY_DIR, "999999.json"), 0o600)
+real_listdir = os.listdir
+
+
+def swapping(target):
+    if os.path.lexists(FOLDER) and not os.path.islink(FOLDER):
+        os.rename(FOLDER, FOLDER + ".moved")
+        os.symlink(CANARY_DIR, FOLDER)
+    return real_listdir(target)
+
+
+os.listdir = swapping
+exec(@LOADER@)
+'''
+
+PROTECTED_CHILD = CONSTANTS + '''os.makedirs(FOLDER, mode=0o700, exist_ok=True)
+CANARY = os.path.join(FOLDER, "999999.json")
+with open(CANARY, "w") as handle:
+    handle.write("kept")
+os.chmod(CANARY, 0o600)
+exec(@LOADER@)
+print("CANARY", open(CANARY).read() if os.path.exists(CANARY) else "gone")
+print("SECOND", os.path.exists(os.path.join(BASE2, "pstack-t3-isolation-%d" % os.getuid(),
+                                            "%d.json" % os.getpid())))
+'''
+
+
+class RecordSafetyTest(unittest.TestCase):
+    def setUp(self):
+        self.scratch = Path(tempfile.mkdtemp(prefix="record-safety-"))
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+        self.base1 = self.scratch / "base1"
+        self.base2 = self.scratch / "base2"
+        self.external = self.scratch / "external"
+        self.home = self.scratch / "home"
+        self.tmp = self.scratch / "tmp"
+        for path in (self.base1, self.base2, self.external, self.home, self.tmp):
+            path.mkdir()
+        self.canary = self.external / "canary.json"
+        self.canary.write_text("kept")
+        self.folder = self.base1 / f"pstack-t3-isolation-{os.getuid()}"
+
+    def child(self, template):
+        """Return one child body with this case's paths and the loader filled in."""
+        loader = LOADER
+
+        def fill(text):
+            return (text.replace("@REPO@", repr(str(ROOT)))
+                    .replace("@ROOTS@", repr(str(ROOT / "tests" / "isolation_roots.py")))
+                    .replace("@BASE1@", repr(str(self.base1)))
+                    .replace("@BASE2@", repr(str(self.base2)))
+                    .replace("@CANARY@", repr(str(self.canary)))
+                    .replace("@CANARY_DIR@", repr(str(self.scratch / "canary-dir")))
+                    .replace("@LOADER@", repr(loader)))
+        return fill(template)
+
+    def run_child(self, body, state=None):
+        source = self.scratch / "child.py"
+        source.write_text(body)
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "TMPDIR": str(self.tmp)}
+        if state is not None:
+            env["XDG_STATE_HOME"] = str(state)
+        return subprocess.run([sys.executable, str(source)], env=env, capture_output=True,
+                              text=True, cwd=str(self.scratch), timeout=600)
+
+    def test_a_symlinked_record_name_is_replaced_instead_of_followed(self):
+        done = self.run_child(self.child(SYMLINK_CHILD), state=self.external)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.canary.read_text(), "kept")
+        self.assertIn("RECORD False True", done.stdout, done.stdout + done.stderr)
+        records = list(self.folder.glob("*.json"))
+        self.assertEqual(len(records), 1, done.stdout + done.stderr)
+        self.assertFalse(records[0].is_symlink())
+
+    def test_a_record_directory_swapped_for_a_symlink_leaves_the_replacement_canary(self):
+        done = self.run_child(self.child(SWAP_CHILD))
+        self.assertIn("STOPPED", done.stdout + done.stderr)
+        canary = self.scratch / "canary-dir" / "999999.json"
+        self.assertTrue(canary.is_file(), done.stdout + done.stderr)
+        self.assertEqual(canary.read_text(), "kept")
+        moved = self.folder.with_name(self.folder.name + ".moved")
+        self.assertFalse((moved / "999999.json").exists(), done.stdout + done.stderr)
+
+    def test_a_protected_record_directory_is_skipped_and_its_canary_is_kept(self):
+        done = self.run_child(self.child(PROTECTED_CHILD), state=self.folder)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("CANARY kept", done.stdout, done.stdout + done.stderr)
+        self.assertIn("SECOND True", done.stdout, done.stdout + done.stderr)
+        self.assertEqual((self.folder / "999999.json").read_text(), "kept")
+
+
 if __name__ == "__main__":
     unittest.main()
