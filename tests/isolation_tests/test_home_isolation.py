@@ -214,6 +214,17 @@ class OwnershipTest(unittest.TestCase):
         os.lchown(link, os.getuid(), os.getgid())
         self.assertEqual(os.readlink(link), str(target))
 
+    def test_chown_on_a_descriptor_inside_the_run_root_is_not_refused(self):
+        if os.chown not in os.supports_fd:
+            self.skipTest("os.chown does not accept a descriptor on this platform")
+        scratch = Path(tempfile.mkdtemp(prefix="chown-fd-"))
+        self.addCleanup(shutil.rmtree, scratch, True)
+        target = scratch / "file"
+        target.write_text("x")
+        fd = os.open(target, os.O_RDONLY)
+        self.addCleanup(os.close, fd)
+        os.chown(fd, os.getuid(), os.getgid())
+
 
 class RenameTest(unittest.TestCase):
     def test_a_rename_that_removes_a_path_outside_the_run_root_is_refused_and_both_paths_stay(self):

@@ -1,10 +1,17 @@
 """Path rules, protected real roots, and run-root admission for the test isolation guard.
 
 `tests/isolation.py` imports from here and holds the guard state, the audit hook, the wrappers, and `install()`.
+
+A descriptor's path comes from `/proc/self/fd` where that exists, and otherwise from the macOS `fcntl`
+`F_GETPATH`, accepted only when a stat of the path names the same device and inode as the descriptor. A
+descriptor that resolves through neither has no path, and every caller refuses it. `_placed` names the
+operations whose target arrives through a descriptor: the descriptor itself, or a relative name and the
+directory descriptor it is relative to.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import pwd
@@ -282,23 +289,64 @@ def _probe(active: str) -> None:
     raise _fail(f"the guard let os.rmdir({target!r}) remove a directory outside the run root")
 
 
+_FD_DIR = "/proc/self/fd/%d"
+_PATH_LIMIT = 1024
+
+
+def _fd_path(fd: int) -> str | None:
+    """Return the path fd names, or None when neither /proc nor macOS F_GETPATH proves one.
+
+    /proc/self/fd answers first and its answer is returned as it stands, because a descriptor for a
+    socket or pipe answers with text that is not a path and callers already tell those apart. macOS has
+    no /proc, so the path there comes from `fcntl` `F_GETPATH`, which fills a NUL-padded buffer. That
+    buffer is trusted only when the path in it is absolute and `os.stat` of the path names the same
+    device and inode as `os.fstat(fd)`, so a stale answer is not adopted and a path through an alias is
+    judged as its target. None means no path could be read, and every caller refuses the call.
+    """
+    try:
+        return os.readlink(_FD_DIR % fd)
+    except OSError:
+        pass
+    getpath = getattr(fcntl, "F_GETPATH", None)
+    if getpath is None:
+        return None
+    try:
+        raw = fcntl.fcntl(fd, getpath, b"\0" * _PATH_LIMIT)
+    except (OSError, ValueError):
+        return None
+    path = os.fsdecode(raw.split(b"\0", 1)[0]) if isinstance(raw, bytes) else ""
+    if not path or not os.path.isabs(path):
+        return None
+    try:
+        info = os.stat(path)
+        same = (info.st_dev, info.st_ino) == (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+    except OSError:
+        return None
+    return path if same else None
+
+
+def _placed(path, dir_fd) -> bool:
+    """Return whether a call names its target through a descriptor: path is one, or path is relative to dir_fd."""
+    if isinstance(path, int):
+        return True
+    return isinstance(dir_fd, int) and dir_fd >= 0 and not os.path.isabs(os.fsdecode(os.fspath(path)))
+
+
 def _at(path, dir_fd) -> str | None:
     """Return the path a call acts on, joined to the directory dir_fd names when it is relative, or None when dir_fd cannot be read."""
     text = os.fsdecode(os.fspath(path))
-    if isinstance(dir_fd, int) and dir_fd >= 0 and not os.path.isabs(text):
-        try:
-            anchor = os.readlink(f"/proc/self/fd/{dir_fd}")
-        except OSError:
-            return None
-        text = os.path.join(anchor, text)
-    return text
+    if not _placed(text, dir_fd):
+        return text
+    anchor = _fd_path(dir_fd)
+    if anchor is None:
+        return None
+    return os.path.join(anchor, text)
 
 
 def _fd_target(fd: int) -> str | None:
     """Return the path an open descriptor names, "" when it names no filesystem path, or None when it cannot be read."""
-    try:
-        target = os.readlink(f"/proc/self/fd/{fd}")
-    except OSError:
+    target = _fd_path(fd)
+    if target is None:
         return None
     return target if os.path.isabs(target) else ""
 
@@ -315,3 +363,8 @@ def _write_intent(mode, flags) -> bool:
     if isinstance(mode, str) and any(mark in mode for mark in "wax+"):
         return True
     return isinstance(flags, int) and bool(flags & _WRITE_FLAGS)
+
+
+def _frozen(path):
+    """Return the one value a call acts on: the descriptor itself, or the path the syscall will read, as str or bytes."""
+    return path if isinstance(path, int) else os.fspath(path)
