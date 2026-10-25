@@ -344,18 +344,19 @@ class RecordSafetyTest(unittest.TestCase):
 
     def test_an_anchored_open_that_may_follow_a_link_or_reuse_an_entry_is_refused(self):
         done = self.run_child(self.child(ANCHORED_OPEN_CHILD), state=self.external)
-        because = ("an anchored descriptor let os.open write through a link or reuse an entry "
-                   "in a protected root")
-        output = because + "\n" + done.stdout + done.stderr
+        output = done.stdout + done.stderr
         self.assertEqual(done.returncode, 0, output)
         for line in ("SOFT REFUSED", "KEEP REFUSED", "FRESH OPENED"):
             self.assertIn(line, done.stdout, output)
         self.assertNotIn("FAILED", done.stdout, output)
         self.assertIn("CANARY b'original'", done.stdout, output)
         self.assertIn("KEEP b'original'", done.stdout, output)
-        self.assertEqual((self.external / "canary.txt").read_bytes(), b"original", because)
-        self.assertEqual((self.external / "keep").read_bytes(), b"original", because)
-        self.assertTrue((self.external / "fresh").is_file(), because)
+        damaged = ("an anchored descriptor let os.open write through a link or reuse an entry "
+                   "in a protected root\n" + output)
+        self.assertEqual((self.external / "canary.txt").read_bytes(), b"original", damaged)
+        self.assertEqual((self.external / "keep").read_bytes(), b"original", damaged)
+        self.assertTrue((self.external / "fresh").is_file(),
+                        "publish's create flags no longer open through an anchored descriptor\n" + output)
 
 
 if __name__ == "__main__":
