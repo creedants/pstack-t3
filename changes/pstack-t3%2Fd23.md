@@ -1,3 +1,3 @@
 - kind feature
-- a worker brief names the landing contract setup command as its first VERIFY bullet, telling the worker to run it through `land.py slot --` before the first build or test unless the worktree already ran it, and a contract with no setup command adds no bullet
+- a worker brief names the landing contract setup command in a VERIFY bullet, telling the worker to run it through `land.py slot --` before the first build or test unless the worktree already ran it, and a contract with no setup command adds no bullet
 - brigade opening offers the contract setup command as a worktree-create script with `t3_project_update` after the user says yes, and never replaces or edits an existing script

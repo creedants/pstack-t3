@@ -277,7 +277,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         *([f"- A reviewer sent an earlier attempt back. Its findings: {findings}"] if findings.exists() else []),
         "", "ACCEPTANCE:", *[f"- {item}" for item in acceptance],
         "", "CONTRACT:", contract,
-        "", "VERIFY:", *setup, f"- {verify}",
+        "", "VERIFY:", f"- {verify}", *setup,
         f"- {verify_rule(land, picked_layout)}",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
