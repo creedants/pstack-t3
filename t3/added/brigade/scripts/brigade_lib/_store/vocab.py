@@ -56,6 +56,9 @@ MODES = ("full", "light")
 ROUND_BUDGET = 3
 
 
+COOLDOWN_MINUTES = 60
+
+
 OWING_STATES = ("in-progress", "in-review", "sent-back", "blocked")
 
 

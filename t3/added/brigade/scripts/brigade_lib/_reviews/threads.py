@@ -1,10 +1,14 @@
 import re
+from datetime import datetime, timezone
 from brigade_lib import seam
 from brigade_lib.edits import HEADING
 from brigade_lib.shared import clean, fence_close, one_of, stored, threads_fence_open
 from brigade_lib.store import CHILD_ROLES, THREADS_WRITERS, WORKER_ROLES
 
 THREADS_SECTION = (2, "Threads")
+
+
+COOLDOWN_ROLE = "cooldown"
 
 
 THREADS_ITEM = re.compile(r"^- ([a-z]+(?: [a-z]+)*) `([^`]+)` (\S+)$")
@@ -204,3 +208,46 @@ def write_threads(restaurant, dish_id, threads, closing=False, keep_thread=""):
         return False
     restaurant.save_rows("threads.tsv", rows + written)
     return True
+
+
+def moment_of(text):
+    """The datetime an ISO stamp names, or None when it does not parse.
+
+    A stamp with no offset reads as UTC.
+    """
+    try:
+        found = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return found if found.tzinfo is not None else found.replace(tzinfo=timezone.utc)
+
+
+def record_cooldown(restaurant, dish_id, attempt, seat, start, end):
+    """Write one closed cooldown row for `seat` at `attempt`.
+
+    The row holds the failed seat, and its `thread` cell stays empty because every reader of that
+    cell takes a non-empty value for a thread id.
+    """
+    rows = restaurant.rows("threads.tsv")
+    rows.append({"at": start, "dish": dish_id, "attempt": str(attempt), "role": COOLDOWN_ROLE, "thread": "",
+                 "seat": seat, "start": start, "end": end})
+    restaurant.save_rows("threads.tsv", rows)
+
+
+def cooldown_seats(restaurant, moment):
+    """The live cooldown of each seat as `(seat, end, dish)`, sorted by seat.
+
+    A row is live when its `end` is after `moment`. A seat that cooled twice keeps its latest end.
+    A row whose `end` does not parse is not live.
+    """
+    latest = {}
+    for row in restaurant.rows("threads.tsv"):
+        if row["role"] != COOLDOWN_ROLE:
+            continue
+        end = moment_of(row["end"])
+        if end is None or end <= moment:
+            continue
+        held = latest.get(row["seat"])
+        if held is None or end > held[0]:
+            latest[row["seat"]] = (end, row["end"], row["dish"])
+    return [(seat, *latest[seat][1:]) for seat in sorted(latest)]
