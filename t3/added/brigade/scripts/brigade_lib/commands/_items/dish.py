@@ -1,13 +1,192 @@
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
 from brigade_lib import seam
 from brigade_lib.commands._items.fire import add_paths_alone
+from brigade_lib.commands.tools import brief_mode
 from brigade_lib.items import ATTEMPT_AFTER, announce_archive, drop, item_escalation, record_escalation, retired_worker_threads, workers_full
 from brigade_lib.leases import fragment_lines
 from brigade_lib.reviews import fix_round_refusal, pass_check, write_threads
 from brigade_lib.scope import gate_outside, gate_recheck, widen
-from brigade_lib.shared import BrigadeError, stored
+from brigade_lib.shared import BrigadeError, clean, stored
 from brigade_lib.commands.once import Once
-from brigade_lib.store import COUNTED_STATES, DISH_STATES, WORKER_ROLES
+from brigade_lib.store import COUNTED_STATES, DISH_STATES, WORKER_ROLES, roles_script
 from brigade_lib.wake import record_worker_end
+from brigade_lib._reviews.threads import cooldown_seats, moment_of, record_cooldown
+from brigade_lib._store.settings import cooldown_minutes
+from brigade_lib._watch.progress import attempt_count
+from brigade_lib._watch.seats import cooldown_end, require_seat
+
+COOLDOWN_FLAGS = ("error", "role", "author", "catalog", "parent", "options")
+
+
+DISH_FLAGS = ("state", "task", "thread", "branch", "pr", "sha", "timebox", "reported", "worker_ended",
+              "lease", "paths", "add_paths", "stopped", "mode", "reason")
+
+
+def _given(args, name):
+    value = getattr(args, name, None)
+    return value is not None and value is not False
+
+
+def usage_limit_refusal(args):
+    """The sentence that refuses the usage-limit flag family, or None when the flags are in order.
+
+    --usage-limit takes the six flags the backup run needs and no other dish flag, and each of those
+    six is refused without it.
+    """
+    if args.usage_limit is not None:
+        return "--usage-limit takes no other dish flag" if any(_given(args, name) for name in DISH_FLAGS) else None
+    for name in COOLDOWN_FLAGS:
+        if _given(args, name):
+            return f"--{name} takes --usage-limit"
+    return None
+
+
+def error_text(path):
+    """The error text --error names. `-` reads standard input, and any other value reads that file."""
+    if path in (None, "-"):
+        return sys.stdin.read()
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise BrigadeError(f"--error {error}") from None
+
+
+def brief_seat_mode(restaurant, ident):
+    """The one Mode value the dish's brief names, or None when the brief names none."""
+    path = restaurant.dir / "briefs" / f"{ident}.md"
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise BrigadeError(f"briefs/{ident}.md is not UTF-8 text") from None
+    return brief_mode(ident, text)
+
+
+def backup_payload(argv, catalog, text):
+    """The JSON object roles.py backup prints, run with the error text on its standard input.
+
+    A nonzero exit names the last non-empty stderr line, and a traceback frame counts as no message.
+    """
+    try:
+        result = subprocess.run(argv, input=text.encode(), capture_output=True)
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        raise BrigadeError(f"roles.py backup failed on {catalog}: {type(error).__name__}: {error}") from None
+    try:
+        out_text = result.stdout.decode("utf-8")
+        err_text = result.stderr.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise BrigadeError(f"roles.py backup failed on {catalog}: {type(error).__name__}: {error}") from None
+    if result.returncode == 0:
+        try:
+            payload = json.loads(out_text)
+        except ValueError as error:
+            raise BrigadeError(f"roles.py backup printed no JSON object: {error}") from None
+        if not isinstance(payload, dict):
+            raise BrigadeError("roles.py backup printed no JSON object")
+        return payload
+    reason = ""
+    for line in err_text.splitlines():
+        if line.strip():
+            reason = line.strip()
+    rest = reason.removeprefix("error: ")
+    if not rest or "Traceback" in rest or re.search(r'File ".+", line \d+, in ', rest):
+        raise BrigadeError(f"roles.py backup failed on {catalog}: exit {result.returncode} with no message")
+    raise BrigadeError(f"roles.py backup failed on {catalog}: {rest}")
+
+
+def seat_word(seat):
+    """The `provider/model` words for one seat object roles.py printed."""
+    if not isinstance(seat, dict) or not seat.get("providerInstanceId") or not seat.get("model"):
+        raise BrigadeError("roles.py backup printed no seat for its decision")
+    return f"{seat['providerInstanceId']}/{seat['model']}"
+
+
+def second_limit(restaurant, ident, role, attempt):
+    """True when a cooldown event for this dish and role already sent a replacement out for this attempt.
+
+    Recording the replacement worker raises the attempt number, so the row to compare is the latest
+    one whose replacement is not empty, and it counts at this attempt or the one before it.
+    """
+    latest = None
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] != "cooldown" or row["id"] != ident:
+            continue
+        try:
+            note = json.loads(row["note"])
+        except ValueError:
+            continue
+        if isinstance(note, dict) and note.get("role") == role:
+            latest = (note, row["state"])
+    if latest is None or not latest[0].get("replacement"):
+        return False
+    return latest[1] in (attempt, str(int(attempt) - 1))
+
+
+def record_usage_limit(restaurant, args):
+    """Record a usage limit for the dish, ask roles.py backup for a seat, and print one next step.
+
+    The cooldown row and the log event are the only writes, and a park also blocks a dish in progress.
+    """
+    seat = require_seat(args.usage_limit)
+    if not clean(args.role):
+        raise BrigadeError("--usage-limit takes --role")
+    if not (clean(args.catalog) and clean(args.parent)):
+        raise BrigadeError("--usage-limit takes --catalog and --parent")
+    text = error_text(args.error)
+    with restaurant.read_lock(create=False):
+        _, dish = restaurant.find("dishes.tsv", args.id)
+        attempt = str(attempt_count(restaurant, dish))
+        minutes = cooldown_minutes(restaurant.meta)
+        live = cooldown_seats(restaurant, moment_of(seam.now()))
+        mode = brief_seat_mode(restaurant, args.id)
+        project_root = restaurant.meta["projectRoot"]
+    provider, _, model = seat.partition("/")
+    argv = [sys.executable, str(roles_script()), "backup", "--cwd", project_root, "--catalog", args.catalog,
+            "--parent", args.parent, "--role", args.role, "--provider", provider, "--model", model]
+    if args.options:
+        argv += ["--options", args.options]
+    for author in args.author or ():
+        argv += ["--author", author]
+    # roles.py reads --out as a provider, so one provider with two cooling seats is passed once.
+    for name in dict.fromkeys(entry[0].partition("/")[0] for entry in live):
+        argv += ["--out", name]
+    if mode is not None:
+        argv += ["--brief-mode", mode]
+    payload = backup_payload(argv, args.catalog, text)
+    decision = payload.get("decision")
+    if decision == "not-usage-limit":
+        return f"{args.id}: {seat} failed without a usage limit; respawn per Failure handling"
+    start = seam.now()
+    end = cooldown_end(text, start, minutes)
+    replacement, seats = "", []
+    if decision == "relaunch":
+        replacement = seat_word(payload.get("seat"))
+    elif decision == "panel":
+        seats = [seat_word(item) for item in payload.get("seats") or ()]
+        replacement = ", ".join(seats)
+    with restaurant.checked():
+        parked = decision == "park" or second_limit(restaurant, args.id, args.role, attempt)
+        record_cooldown(restaurant, args.id, attempt, seat, start, end)
+        restaurant.log("cooldown", args.id, attempt, json.dumps({
+            "seat": seat, "role": args.role, "start": start, "end": end,
+            "replacement": "" if parked else replacement, "seats": [] if parked else seats}))
+        if parked:
+            _, dish = restaurant.find("dishes.tsv", args.id)
+            if dish["state"] == "in-progress":
+                restaurant.update("dishes.tsv", args.id, "dish", state="blocked")
+    if parked:
+        # The earliest live end is the first moment any seat may be used again, and a resume names one.
+        ends = [moment_of(end)] + [moment_of(entry[1]) for entry in live]
+        earliest = min(found for found in ends if found is not None)
+        return f"{args.id}: parked until {earliest.isoformat()}; launch nothing before then"
+    if decision == "panel":
+        return f"{args.id}: {seat} cooling until {end}; panel on {', '.join(seats)}"
+    return f"{args.id}: {seat} cooling until {end}; relaunch on {replacement}"
 
 def _rebound_for_restart(restaurant, ident, thread):
     """True when `thread` is the one open worker row started after the latest sent-back dish row, no queued or in-progress dish row follows that row, and that id is not retired."""
@@ -60,9 +239,22 @@ def register_dish(sub):
     p.add_argument("--stopped", help="with --state dropped: the run id t3_thread_wait reported terminal, or idle")
     p.add_argument("--mode", help="full, to move open work to full mode once; needs --reason")
     p.add_argument("--reason", help="one line: why the dish moves to full mode")
+    p.add_argument("--usage-limit", metavar="PROVIDER/MODEL",
+                   help="the seat that hit its usage limit; records a cooldown and prints one next step, and takes no other dish flag")
+    p.add_argument("--error", help="with --usage-limit: the error text; missing or - reads stdin")
+    p.add_argument("--role", help="with --usage-limit: the roles.py role of the failed seat")
+    p.add_argument("--author", action="append", help="with --usage-limit: a model that wrote the diff; repeat for each")
+    p.add_argument("--catalog", help="with --usage-limit: orchestrator_capabilities JSON, as on launch")
+    p.add_argument("--parent", help="with --usage-limit: this thread's provider/model, as on launch")
+    p.add_argument("--options", help="with --usage-limit: the failed seat's options JSON")
 
 
 def handle_dish(restaurant, args):
+    refusal = usage_limit_refusal(args)
+    if refusal:
+        raise BrigadeError(refusal)
+    if args.usage_limit is not None:
+        return record_usage_limit(restaurant, args)
     args.reason = item_escalation(args.mode, args.reason)
     if args.reason and args.state in ("queued", "merged", "dropped"):
         raise BrigadeError(f"--mode full needs open work; run --state {args.state} without it")
