@@ -120,6 +120,20 @@ def _identity(path: str, table) -> tuple[str, str] | None:
     return device, os.path.normpath(os.path.join(root, path[len(mount):].lstrip(os.sep)))
 
 
+def _identities(path: str, table) -> tuple[tuple[str, str], ...]:
+    """Return the device and on-device path of every mount point that covers the path.
+
+    A mount that a later mount hides stays in the table, so a hidden entry must not answer for a path a
+    visible entry also covers. One path therefore carries one identity per mount above it, and the
+    storage it reaches is protected when any of them is.
+    """
+    found = []
+    for mount, device, root in table:
+        if path == mount or path.startswith(mount.rstrip(os.sep) + os.sep):
+            found.append((device, os.path.normpath(os.path.join(root, path[len(mount):].lstrip(os.sep)))))
+    return tuple(found)
+
+
 def _covers(identity, base) -> bool:
     """Return whether the identity is the base identity or below it."""
     return base is not None and identity[0] == base[0] and _within(identity[1], base[1])
@@ -128,10 +142,10 @@ def _covers(identity, base) -> bool:
 def _reaches(path: str, bases) -> bool:
     """Return whether the path sits on the storage a base names or below it, whatever its spelling."""
     table = _mount_table()
-    here = _identity(path, table)
-    if here is None:
+    here = _identities(path, table)
+    if not here:
         return False
-    return any(_covers(here, _identity(base, table)) for base in bases)
+    return any(_covers(identity, _identity(base, table)) for identity in here for base in bases)
 
 
 def _protected_write(real: str, checkout: str, protected) -> bool:

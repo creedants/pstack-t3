@@ -373,6 +373,8 @@ class DescriptorPathTest(unittest.TestCase):
         self.assertEqual((self.real / "outside.txt").stat().st_size, 17)
         self.assertFalse(os.path.lexists(self.real / "made"))
 
+    @unittest.skipUnless(isolation._os_mkfifo in os.supports_dir_fd,
+                         "this platform's os.mkfifo takes no dir_fd")
     def test_a_mkfifo_path_that_changes_after_its_first_read_creates_only_the_permitted_entry(self):
         done = self.run_child(changing("os.mkfifo(ChangingPath(), 0o600, dir_fd=fd)"))
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -384,6 +386,8 @@ class DescriptorPathTest(unittest.TestCase):
         self.assertTrue(os.path.lexists(root / "safe-entry"))
         self.assertEqual(os.listdir(root / "protected"), [])
 
+    @unittest.skipUnless(isolation._os_mknod is not None and isolation._os_mknod in os.supports_dir_fd,
+                         "this platform's os.mknod takes no dir_fd")
     def test_a_mknod_path_that_changes_after_its_first_read_creates_only_the_permitted_entry(self):
         done = self.run_child(MKNOD_PROBE + changing("os.mknod(ChangingPath(), stat.S_IFREG | 0o600, dir_fd=fd)"))
         self.assertEqual(done.returncode, 0, done.stderr)

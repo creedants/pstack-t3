@@ -85,15 +85,8 @@ def record(pid: int) -> str | None:
     return None
 
 
-def inherited() -> tuple[str, ...]:
-    """Return the real trusted roots this process's parent published, or () when it published none.
-
-    A record that cannot be read, is not JSON, is not an object, names another uid or another pid, or
-    holds a root that is not an absolute path stops the process.
-    """
-    path = record(os.getppid())
-    if path is None:
-        return ()
+def _roots_of(path: str, pid: int) -> tuple[str, ...]:
+    """Return the real roots the record at path holds for pid, or stop the process when it is unusable."""
     try:
         with open(path, encoding="utf-8") as handle:
             body = json.load(handle)
@@ -103,8 +96,8 @@ def inherited() -> tuple[str, ...]:
         raise _fail(f"the record {path!r} is not a JSON object")
     if body.get("uid") != os.getuid():
         raise _fail(f"the record {path!r} names uid {body.get('uid')!r}, not this user")
-    if body.get("pid") != os.getppid():
-        raise _fail(f"the record {path!r} names pid {body.get('pid')!r}, not its parent {os.getppid()}")
+    if body.get("pid") != pid:
+        raise _fail(f"the record {path!r} names pid {body.get('pid')!r}, not {pid}")
     roots = body.get("roots")
     if not isinstance(roots, list):
         raise _fail(f"the record {path!r} holds no root array")
@@ -115,6 +108,25 @@ def inherited() -> tuple[str, ...]:
         real = _real(root)
         if real not in found:
             found.append(real)
+    return tuple(found)
+
+
+def inherited() -> tuple[str, ...]:
+    """Return the real trusted roots this process or its parent published, or () when neither did.
+
+    This process's own record counts, because a guarded process that replaces itself with a stripped
+    environment keeps its pid and its parent is then the grandparent. A record that cannot be read, is
+    not JSON, is not an object, names another uid or another pid, or holds a root that is not an
+    absolute path stops the process.
+    """
+    found: list[str] = []
+    for pid in (os.getpid(), os.getppid()):
+        path = record(pid)
+        if path is None:
+            continue
+        for root in _roots_of(path, pid):
+            if root not in found:
+                found.append(root)
     return tuple(found)
 
 
