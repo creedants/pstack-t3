@@ -1,11 +1,24 @@
 import re
 from datetime import datetime, timedelta, timezone
+from brigade_lib._reviews.rounds import earliest_record, window_phrases
 from brigade_lib._tickets.paths import quoted_paths
 from brigade_lib.shared import BrigadeError, clean, same_text
+from brigade_lib.store import TABLES
 
 MARKERS = ("safety", "privacy", "correctness")
 LEDGER = "notes.tsv"
 HEADER = ("path", "item", "at", "text")
+SHARE_DAYS = 14
+
+
+def store_earliest(restaurant):
+    """The earliest at cell across every table of this store, or None when they hold none."""
+    moments = []
+    for table in TABLES:
+        moment = earliest_record(restaurant.rows(table))
+        if moment is not None:
+            moments.append(moment)
+    return min(moments) if moments else None
 
 
 def marker(text):
@@ -100,7 +113,7 @@ def note_lines(restaurant, wanted, everything):
 def share_lines(restaurant):
     """The close section lines for the follow-up share."""
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=14)
+    cutoff = now - timedelta(days=SHARE_DAYS)
     total, reports = 0, 0
     for row in restaurant.rows("rail.tsv"):
         try:
@@ -115,7 +128,8 @@ def share_lines(restaurant):
         source = (row.get("source") or "").split(" (", 1)[0]
         if source == "report":
             reports += 1
+    _, sentence = window_phrases(store_earliest(restaurant), now, SHARE_DAYS)
     if not total:
-        return ["## Follow-up share", "", "- no ticket was created in the last 14 days.", ""]
+        return ["## Follow-up share", "", f"- no ticket was created {sentence}.", ""]
     percent = round(100 * reports / total)
-    return ["## Follow-up share", "", f"- {reports} of {total} tickets created in the last 14 days came from a report ({percent}%).", ""]
+    return ["## Follow-up share", "", f"- {reports} of {total} tickets created {sentence} came from a report ({percent}%).", ""]

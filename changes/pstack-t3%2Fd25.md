@@ -1,0 +1,5 @@
+- kind fix
+- `brigade.py pass hits` counts a send-back upheld only when the same dish's next recorded round is a pass at a different SHA. A later round at another SHA that is not a pass upholds nothing and counts in neither upheld nor overruled. The overruled rule and the upheld over upheld plus overruled rate are unchanged.
+- `brigade.py close` prints the span the store covers when its earliest record is newer than the window start. A 39 hour old store prints `## Send-back reasons (over the 39 hours this store has records for)` and `No send-backs over the 39 hours this store has records for.` when the window holds none.
+- The follow-up share uses the same span. A 39 hour old store prints `- 0 of 1 tickets created over the 39 hours this store has records for came from a report (0%).` and `- no ticket was created over the 39 hours this store has records for.` when the window holds none. A store older than the window prints today's wording byte for byte.
+- rows recorded before this change load unchanged and no stored row is rewritten

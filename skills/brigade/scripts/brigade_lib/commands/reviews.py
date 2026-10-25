@@ -129,7 +129,7 @@ def register_pass(sub):
         "Rows are judged in table order. A round is one pass.tsv row whose at cell is at or after the window's "
         "start, which is the given number of days back from now.\n"
         "\n"
-        "A send-back is upheld when the same dish's next recorded round is at a different SHA. It is overruled "
+        "A send-back is upheld when the same dish's next recorded round is a pass at a different SHA, which is the next review accepting the change. A later round at another SHA that is not a pass upholds nothing and counts in neither upheld nor overruled. It is overruled "
         "when the dish's next recorded verdict is a pass at the same SHA, or when the dish's round-budget decision "
         "was answered known limits or drop after the send-back row's at cell and no later non-member row of the "
         "dish is at another SHA. A send-back that neither rule settles counts in neither upheld nor overruled. "
