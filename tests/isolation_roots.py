@@ -8,8 +8,8 @@ is not inside a protected root, because a child with no environment cannot be to
 Roots written to and returned from records are real absolute path strings.
 
 A child reads every candidate record rather than the first one it finds, so a stale or forged record
-cannot hide the genuine one. It stops when a record it finds cannot be read or parsed, and it stops
-when a candidate directory is not a private directory this user owns. A record carries the process
+cannot hide the genuine one. A child stops when a record it finds cannot be read or parsed. It also
+stops when a candidate directory is not a private directory this user owns. A record carries the process
 start time, so a record left by a dead process that used the pid is ignored instead of trusted. Every
 write and delete acts through a descriptor of a verified directory, and the guard lets exactly those
 descriptors through, so the record machinery cannot damage a protected file.
@@ -248,7 +248,7 @@ def inherited() -> tuple[str, ...]:
 
 
 def publish(pid: int, roots, protected) -> str:
-    """Write pid's trusted roots and active protection to a fresh record file and return its path.
+    """Write pid's trusted roots and return the record path. New files request mode 0600.
 
     The record directory is opened with O_NOFOLLOW and must sit outside every protected root. A fresh
     file under a temporary name is renamed over the record name through the directory descriptor, so

@@ -3,9 +3,10 @@
 `os.path.realpath` follows symlinks and not mounts, so a bind mount at a name inside the run root used to
 make protected storage look like the run root. Each child registers the mounted directory as a protected
 root for the four attempts, so the mount-identity check has the protected root to compare. One case makes
-that bind mount for real in a private user and mount namespace, which needs no root on the host. The
-mounts stay in the private namespace, but the guard can leave process records in the temporary
-directory this module names. A second case stacks a tmpfs at the protected directory with another tmpfs
+that bind mount for real in a private user and mount namespace, which needs no
+root privileges on the host. The mounts stay in the private namespace, but the guard can leave
+process records in the host temporary directory. These cases point that directory into their own
+scratch tree. A second case stacks a tmpfs at the protected directory with another tmpfs
 bound over it, so the first mount is hidden. A third makes the same real bind alias with a mount table
 that cannot be read or parsed, and the child must stop or refuse. The last case answers the mount table
 from a line that names the alias as a mount of the protected directory, the way
