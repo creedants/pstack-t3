@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib._store.opening import rename_restaurant
+from brigade_lib._store.settings import COOLDOWN_KEY, cooldown_minutes, parse_cooldown_minutes
 from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
 from brigade_lib.items import doc_policy
@@ -97,9 +98,9 @@ def register_open(sub):
     p.add_argument("--rename", metavar="NAME", help="rename the --name restaurant and move its store; refused while landing work or an item is held")
     p.add_argument("--admin", action="store_true", help="open the repository's executive admin at <project>/.admin; takes no --name")
     p.add_argument("--reporting", choices=REPORTING, default="milestones",
-                   help="how often the coordinator replies (default: milestones)")
+                   help="how often the coordinator replies, default milestones")
     p.add_argument("--intake", default="", help="comma-separated intake sources this coordinator owns, such as github")
-    p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review; missing reads as 2")
+    p.add_argument("--workers", type=int, help="dishes in progress or in review at once; missing reads as 2")
     p.add_argument("--mode", choices=MODES, help="this restaurant's light or full mode; missing leaves it to the roles files")
     p.add_argument("--context-cap", default=None,
                    help="on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone")
@@ -108,51 +109,50 @@ def register_open(sub):
 
 
 def register_set(sub):
-    p = sub.add_parser("set", help="record the head chef thread, a schedule id, or the reporting level")
+    p = sub.add_parser("set", help="record a setting")
     p.add_argument("--thread")
     p.add_argument("--replace", action="store_true", help="replace a recorded coordinator thread")
-    p.add_argument("--expect", help="executive admin only: replace the thread only while it is still this value")
+    p.add_argument("--expect", help="executive admin only: replace the thread while it is still this value")
     p.add_argument("--stopped", help="with --expect recovering:<id>: the run id t3_thread_wait reported terminal, idle, or gone")
-    p.add_argument("--reports-to", help="the executive admin's thread this coordinator reports to; \"\" clears it")
+    p.add_argument("--reports-to", help="the executive admin's thread to report to; \"\" clears it")
     p.add_argument("--schedule", action="append", default=[], metavar="NAME=ID")
     p.add_argument("--reporting", choices=REPORTING, help="how often the coordinator replies")
-    p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list, and \"\" clears it")
-    p.add_argument("--workers", type=int, help="how many dishes may be in progress or in review")
+    p.add_argument("--intake", help="comma-separated intake sources this coordinator owns; replaces the list; \"\" clears it")
+    p.add_argument("--workers", type=int, help="dishes in progress or in review at once")
     p.add_argument("--mode", help="full or light from the next brief; \"\" leaves it to the roles files")
     p.add_argument("--build-command",
-                   help="the build command edits verify runs; none records that the project has no build, and \"\" removes "
-                        "the setting")
+                   help="the build command edits verify runs; none means the project has no build; \"\" removes it")
     p.add_argument("--check-command",
-                   help="the check command edits verify runs; none records that the project has no check, and \"\" removes "
-                        "the setting")
+                   help="the check command edits verify runs; none means the project has no check; \"\" removes it")
     p.add_argument("--autofire", choices=AUTOFIRE,
-                   help="the lowest ticket priority the startable command lists as startable, or off; missing reads as normal")
+                   help="the lowest ticket priority startable lists, or off; missing reads as normal")
     p.add_argument("--cap", metavar="KIND=N",
-                   help="comma-separated kind=number pairs, at most that many items of the kind holding a worker "
-                        "slot; a pair with no number clears that kind's cap; an empty value clears every cap")
+                   help="comma-separated kind=number pairs, at most that many items of that kind in a worker slot; "
+                        "a bare kind clears that kind's cap; \"\" clears every cap")
     p.add_argument("--review", metavar="KIND=MODE",
-                   help="comma-separated kind=mode pairs, the default mode for a new item of that kind, full or "
-                        "light; a pair with no mode clears that kind's depth; an empty value clears every depth")
+                   help="comma-separated kind=mode pairs, the default mode for a new item of that kind; "
+                        "a bare kind clears that kind's depth; \"\" clears every depth")
     p.add_argument("--scratch-dir", metavar="DIR",
-                   help="the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside "
-                        "/tmp; \"\" clears the setting")
+                   help="the parent directory briefs pass to mktemp -d -p; an absolute path outside /tmp; "
+                        "\"\" clears it")
     p.add_argument("--low-reserve", metavar="N",
-                   help="the most workers still idle when a low ticket is held back while an urgent or normal "
-                        "ticket can start; 0 holds no low ticket back; \"\" clears it to 1")
+                   help="the workers still idle while a low ticket waits behind an urgent or normal one; "
+                        "\"\" clears it to 1")
     p.add_argument("--round-budget", metavar="N",
-                   help="the send-backs that owe a round decision. Higher waits for more send-backs. "
-                        "\"\" clears it to 3")
+                   help="the send-backs that owe a round decision; \"\" clears it to 3")
     p.add_argument("--liveness-ms", metavar="N",
-                   help="the interval a new liveness schedule uses, a whole number of at least 60000; \"\" removes the setting")
+                   help="the interval a liveness schedule uses, a whole number of at least 60000; \"\" clears it")
     p.add_argument("--change-note-dir", metavar="DIR",
-                   help="the repository-relative directory holding one change-note fragment per branch, such as changes; "
+                   help="the repository-relative directory holding one change-note fragment per branch; "
                         "\"\" clears it, and an unset key leases no fragment")
+    p.add_argument("--cooldown-minutes", metavar="N",
+                   help="the minutes a cooled seat stays out of a launch; \"\" clears it to 60")
     p.add_argument("--affected-tests", metavar="JSON",
-                   help="JSON object or JSON file for the affectedTests layout; \"\" clears it; - reads stdin")
+                   help="JSON object or file for the affectedTests layout; \"\" clears it; - reads stdin")
     p.add_argument("--shared-docs", metavar="JSON",
-                   help="JSON list or JSON file for the sharedDocs catalog; \"\" clears it; - reads stdin")
+                   help="JSON list or file for the sharedDocs catalog; \"\" clears it; - reads stdin")
     p.add_argument("--doc-timebox", metavar="N",
-                   help="the shared-document timebox in minutes, a whole number of 1 or more; \"\" clears it to 90")
+                   help="the shared-document timebox in minutes, 1 or more; \"\" clears it to 90")
     p.add_argument("--context-cap", default=None,
                    help="the auto-compact window written to .claude/settings.local.json when the provider is claude; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
@@ -168,7 +168,7 @@ def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
     It checks contextCap, coordinatorProvider, caps, review, lowReserve, roundBudget, livenessMs, affectedTests, sharedDocs,
-    docTimebox, and changeNoteDir, by calling each setting's reader predicate, so a value accepted here is a value that reader
+    docTimebox, changeNoteDir, and cooldownMinutes, by calling each setting's reader predicate, so a value accepted here is a value that reader
     accepts. A missing key keeps its default.
     """
     effective_cap(meta)
@@ -180,6 +180,7 @@ def validate_settings(meta):
     layout(meta)
     doc_policy(meta)
     change_note_dir(meta)
+    cooldown_minutes(meta)
 
 
 def preflight_settings(prospective, args):
@@ -336,6 +337,11 @@ def setting_changes(restaurant, args):
             drop.append(CHANGE_NOTE_KEY)
         else:
             changes[CHANGE_NOTE_KEY] = parse_change_note_dir(args.change_note_dir)
+    if args.cooldown_minutes is not None:
+        if args.cooldown_minutes == "":
+            drop.append(COOLDOWN_KEY)
+        else:
+            changes[COOLDOWN_KEY] = parse_cooldown_minutes(args.cooldown_minutes)
     if args.affected_tests is not None:
         if args.affected_tests == "":
             drop.append("affectedTests")
