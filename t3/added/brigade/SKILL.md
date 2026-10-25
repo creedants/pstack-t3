@@ -147,7 +147,6 @@ The head chef owns every git and PR chore its work creates. Read [housekeeping](
 Run on the liveness schedule, and at the start of any service while work is in progress.
 
 1. `$B watch`. On `handed to you`, run `$B ticket take`. On `unblocked`, run the printed `fire` command. Read [liveness](reference/liveness.md) for every watch line before acting.
-   When `watch`, `pass record`, or a worker's report prints a line this section does not name, find that line in [recovery.md](recovery.md) and follow its step.
 
 2. Read [liveness](reference/liveness.md) for the report-written check.
 
