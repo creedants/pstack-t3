@@ -47,7 +47,7 @@ class WorkerSetupTest(BrigadeTest):
         self.assertIn(self.BULLET, verify)
         self.assertTrue(verify.startswith(self.BULLET + "\n"))
 
-    def test_setup_bullet_reads_byte_identical_across_two_briefs_fails_when_a_reread_differs(self):
+    def test_setup_bullet_reads_byte_identical_across_two_briefs_fails_when_a_second_brief_differs(self):
         self.started("--setup", "make deps")
         self.brigade("set", "--thread", "thread-coord")
         self.brigade("ticket", "add", "--kind", "fix", "--summary", "two")
@@ -58,4 +58,3 @@ class WorkerSetupTest(BrigadeTest):
                                                   "--acceptance", "a", "--verify", "v", "--base", "origin/main"))
         self.assertEqual(self.setup_line(first), [self.BULLET])
         self.assertEqual(self.setup_line(second), [self.BULLET])
-        self.assertEqual(self.setup_line(first)[0].encode(), self.setup_line(second)[0].encode())
