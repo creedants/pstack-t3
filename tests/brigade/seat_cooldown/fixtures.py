@@ -27,10 +27,14 @@ class _CooldownHelpers:
         run_globals(self, SCRIPT)["now"] = lambda: self.moment
         return moment
 
+    def outcome_in_process(self, *args, stdin=None):
+        """The captured streams of one command run in this process, so the clock `freeze` pinned is the one the command reads."""
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *args]
+        return call_in_process(self, SCRIPT, [str(arg) for arg in argv], stdin=stdin)
+
     def command_in_process(self, *args, ok=True, stdin=None):
         """Run one command in this process, so the clock `freeze` pinned is the one the command reads."""
-        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *args]
-        outcome = call_in_process(self, SCRIPT, [str(arg) for arg in argv], stdin=stdin)
+        outcome = self.outcome_in_process(*args, stdin=stdin)
         self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
         return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
 
@@ -83,18 +87,22 @@ class _CooldownHelpers:
         return self.brigade("fire", "--tickets", f"T{number}", "--station", "perf-issue", "--summary", f"Work {number}",
                             "--branch", branch, "--thread", thread)
 
-    def write_cooldown_row(self, seat=FAILED, end=NOW, dish="D1", attempt="1", start=NOW):
-        """Write one cooldown row into threads.tsv, replacing any cooldown row already there."""
+    def write_cooldown_rows(self, rows, start=NOW, dish="D1", attempt="1"):
+        """Write one cooldown row per `(seat, end)` pair into threads.tsv, replacing any cooldown row already there."""
         path = self.at / "threads.tsv"
         lines = [line for line in path.read_text().splitlines() if line]
         keys = lines[0].split("\t")
-        rows = [dict(zip(keys, line.split("\t"))) for line in lines[1:]]
-        rows = [row for row in rows if row["role"] != "cooldown"]
-        row = {"at": start, "dish": dish, "attempt": attempt, "role": "cooldown", "thread": "", "seat": seat,
-               "start": start, "end": end}
-        rows.append(row)
-        path.write_text("\n".join([lines[0]] + ["\t".join(row.get(key, "") for key in keys) for row in rows]) + "\n")
-        return row
+        kept = [dict(zip(keys, line.split("\t"))) for line in lines[1:]]
+        kept = [row for row in kept if row["role"] != "cooldown"]
+        for seat, end in rows:
+            kept.append({"at": start, "dish": dish, "attempt": attempt, "role": "cooldown", "thread": "",
+                         "seat": seat, "start": start, "end": end})
+        path.write_text("\n".join([lines[0]] + ["\t".join(row.get(key, "") for key in keys) for row in kept]) + "\n")
+        return kept[-1]
+
+    def write_cooldown_row(self, seat=FAILED, end=NOW, dish="D1", attempt="1", start=NOW):
+        """Write one cooldown row into threads.tsv, replacing any cooldown row already there."""
+        return self.write_cooldown_rows([(seat, end)], start=start, dish=dish, attempt=attempt)
 
     def cooldown_rows(self):
         lines = [line for line in (self.at / "threads.tsv").read_text().splitlines() if line]
