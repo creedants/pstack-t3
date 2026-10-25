@@ -19,6 +19,7 @@ If the thread is settled, call `t3_thread_organize` with `action: "unsettle"` (n
 ## Root setup
 
 - A root launch runs project setup only with a worktree path. Inspect effective actions before you launch a coordinator. Reuse an existing coordinator or stop with a clear explanation when the actions are inappropriate. Never promise that a root launch has no setup side effects.
+- Brigade opening offers the contract's setup command as a project script that runs on worktree create when the contract records one, per [Open a restaurant](../brigade/opening.md#open-a-restaurant) step 6.
 
 ## History notes
 
