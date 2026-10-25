@@ -51,14 +51,14 @@ def window_cutoff(now, days):
 def send_back_outcome(pass_rows, position, row, budget):
     """`upheld`, `overruled`, or `""` for one send-back row, judged on the rows after it.
 
-    The dish's next recorded round at another SHA upholds it. A pass at its SHA, or a round-budget
-    decision that accepts the findings with no later code change, overrules it. Otherwise it is pending.
+    The dish's next recorded round upholds the send-back when it is a pass at another SHA, which is the next
+    review accepting the change. A next round that is a pass at the row's own SHA overrules it, and so does a
+    round-budget decision that accepts the findings with no later non-member round at another SHA. A later round
+    at another SHA that is not a pass shows only that the author committed again, so it upholds nothing.
     """
     later = item_verdicts(pass_rows[position + 1:], row["dish"])
-    if later and later[0]["sha"] != row["sha"]:
-        return "upheld"
-    if later and later[0]["sha"] == row["sha"] and later[0]["verdict"] == "pass":
-        return "overruled"
+    if later and later[0]["verdict"] == "pass":
+        return "overruled" if later[0]["sha"] == row["sha"] else "upheld"
     if not any(later_row["sha"] != row["sha"] for later_row in later) and accepted_after(budget, row):
         return "overruled"
     return ""

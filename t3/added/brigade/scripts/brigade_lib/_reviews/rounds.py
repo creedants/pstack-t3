@@ -2,7 +2,7 @@ import functools
 import json
 import runpy
 from datetime import datetime, timedelta, timezone
-from brigade_lib.shared import BrigadeError
+from brigade_lib.shared import BrigadeError, plural
 from brigade_lib.store import OWING_STATES, REASONS, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, UNRECORDED_REASON, roles_script, round_budget_of
 
 @functools.cache
@@ -119,9 +119,49 @@ SEND_BACK_DAYS = 7
 
 
 def _at_utc(text):
-    """The datetime of a pass.tsv at cell, with a naive value read as UTC."""
+    """The datetime of a store table's at cell, with a naive value read as UTC. A datetime passes through."""
+    if isinstance(text, datetime):
+        return text if text.tzinfo else text.replace(tzinfo=timezone.utc)
     moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+SPAN_UNITS = (("day", 86400), ("hour", 3600), ("minute", 60))
+
+
+def earliest_record(rows):
+    """The earliest at cell of these rows as a datetime, or None when they hold none."""
+    moments = [_at_utc(row["at"]) for row in rows if row.get("at")]
+    return min(moments) if moments else None
+
+
+def covered_span(first, now, days):
+    """The span the store covers when its earliest record is newer than the window start, else "".
+
+    Records that begin under a minute before now have no whole unit to name, so they report no span either.
+    """
+    if first is None:
+        return ""
+    if first <= _at_utc(now) - timedelta(days=days):
+        return ""
+    delta = (_at_utc(now) - first).total_seconds()
+    if delta < 60:
+        return ""
+    for unit, size in SPAN_UNITS:
+        count = int(delta // size)
+        if unit == "day" and count < 2:
+            continue
+        if count >= 1:
+            return f"over the {plural(count, unit)} this store has records for"
+    return ""
+
+
+def window_phrases(first, now, days):
+    """The (heading, sentence) phrases for a closeout window."""
+    covered = covered_span(first, now, days)
+    if not covered:
+        return (f"last {days} days", f"in the last {days} days")
+    return (covered, covered)
 
 
 def reason_counts(items):
@@ -153,10 +193,14 @@ def reason_summary(counts):
 
 
 def send_back_section(rows, now):
-    """The `## Send-back reasons (last 7 days)` lines for these pass.tsv rows."""
+    """The `## Send-back reasons` lines for these pass.tsv rows.
+
+    The earliest record comes only from the pass.tsv rows this function is handed, which the caller passes whole.
+    """
+    heading, sentence = window_phrases(earliest_record(rows), now, SEND_BACK_DAYS)
     cutoff = _at_utc(now) - timedelta(days=SEND_BACK_DAYS)
-    return ["## Send-back reasons (last 7 days)", "",
-            reason_summary(reason_counts(send_back_window(rows, cutoff))) or "No send-backs in the last 7 days.", ""]
+    return [f"## Send-back reasons ({heading})", "",
+            reason_summary(reason_counts(send_back_window(rows, cutoff))) or f"No send-backs {sentence}.", ""]
 
 
 def pass_rate(passed, items):

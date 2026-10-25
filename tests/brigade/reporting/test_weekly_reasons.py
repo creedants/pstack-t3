@@ -54,7 +54,7 @@ class WeeklyReasonsTest(BrigadeTest):
         dry = self.brigade("close", "--dry-run")
         written = self.brigade("close", "--to-file")
         text = Path(written).read_text()
-        self.assertIn(f"{TITLE}\n\nmissing-test 1\n\n", text)
+        self.assertIn("## Send-back reasons (over the 24 hours this store has records for)\n\nmissing-test 1\n\n", text)
         self.assertEqual(text.strip(), dry)
 
     def test_the_section_and_pass_stats_count_reasons_the_same_way(self):
@@ -64,6 +64,10 @@ class WeeklyReasonsTest(BrigadeTest):
         self.append_pass(self.days_ago(3), reason="mystery")
         self.append_pass(self.days_ago(4))
         self.append_pass(self.days_ago(5), reason="other", member="yes")
-        summary = self.section_body(self.brigade("close", "--dry-run"))
+        dry = self.brigade("close", "--dry-run")
+        lines = dry.splitlines()
+        heading = next(line for line in lines if line.startswith("## Send-back reasons ("))
+        self.assertEqual(heading, "## Send-back reasons (over the 5 days this store has records for)")
+        summary = lines[lines.index(heading) + 2]
         self.assertEqual(summary, "missing-test 1, scope 1, unrecorded 2")
         self.assertIn(f"send-backs: {summary}", self.brigade("pass", "stats"))
