@@ -218,6 +218,13 @@ if not os.path.exists(@REPORT@):
     with open(@REPORT@, "w") as handle:
         json.dump({"verdict": "stopped", "message": done.stdout + done.stderr,
                    "code": done.returncode}, handle)
+record = os.path.join(@BASE1@, "pstack-t3-isolation-%d" % os.getuid(), "%d.json" % os.getpid())
+published = []
+if os.path.exists(record):
+    with open(record) as handle:
+        published = json.load(handle).get("roots", [])
+with open(@REPORT@ + ".after", "w") as handle:
+    json.dump({"roots": published}, handle)
 '''
 
 STALE_PLANT = '''old = os.path.join(@SCRATCH_DIR@, "old")
@@ -387,6 +394,8 @@ class RecordTrustTest(unittest.TestCase):
         found = self.drive("", PROTECTING_LAUNCH)
         self.assertEqual(found["verdict"], "refused", found)
         self.assert_kept()
+        after = json.loads((self.scratch / "child.json.after").read_text())
+        self.assertNotIn(str(self.external), after["roots"], after)
 
 
 if __name__ == "__main__":
