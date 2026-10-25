@@ -9,24 +9,23 @@ raises SystemExit on the first value that escapes, so an install that finds a va
 run root stops the process instead of letting it use a real path.
 
 The guard is one audit hook, wrappers around os.open, os.mkfifo, os.mknod, os.chown, and os.lchown,
-and a replacement os.environ.clear. Its filesystem path checks resolve symlinks in the directory
-part first. A checked delete or rename acts on a final symlink name itself. Checked deletes, rename
-sources, and replaced rename destinations must sit inside the run root. A descriptor's path comes from
-/proc/self/fd, then from macOS F_GETPATH checked by device and inode. A call on a descriptor that
-resolves through neither is refused, and a write placed through a descriptor must also sit inside the
-run root. The write handlers check protected real roots outside the checkout. SQLite ATTACH remains
-unguarded. Removing a guarded variable or setting one to an empty value is refused. Guarded path
-variables reject relative or protected paths. The token and root record have their own assignment
-rules. os.environ.clear() keeps the guarded variables.
+and a replacement os.environ.clear. Checked deletes, rename sources, and replaced rename destinations
+must sit inside the run root, and so must a write placed through a descriptor. The write handlers
+check protected real roots outside the checkout, by spelling and by the storage those roots reach.
+SQLite ATTACH remains unguarded. Removing a guarded variable or setting one to an empty value is
+refused. Guarded path variables reject relative or protected paths. The token and root record have
+their own assignment rules. os.environ.clear() keeps the guarded variables.
 
 PSTACK_TEST_PROTECTED_ROOTS carries a JSON array of absolute paths. This process keeps its trusted
 roots in memory, and a run root's marker carries the roots of the process that marked it, so a child
 that adopts the root protects them whatever record its environment holds. Assignments cannot drop
 those roots, and os.environ.clear() keeps the record. A malformed inherited root record stops the
 process. A marker with the inherited token and missing or malformed roots also stops the process.
-A malformed assignment is refused. os.chown with follow_symlinks False and os.lchown are wrapped,
-because the os.chown audit event carries no follow_symlinks field, so a protected link
-name whose target is outside protection stays refused.
+`tests/isolation_roots.py` publishes the same roots to one record per pid under a per-user temporary
+directory, so a child that inherits no environment protects them too. A record that exists but cannot be
+read stops the child. A malformed assignment is refused. os.chown with follow_symlinks False and
+os.lchown are wrapped, because the os.chown audit event carries no follow_symlinks field, so a
+protected link name whose target is outside protection stays refused.
 
 The defect this replaces: a helper that returned None for a pathlib.Path concluded the real
 XDG_STATE_HOME was safe, and a cleanup rmtree then deleted the user's state directory.
@@ -57,12 +56,14 @@ def _sibling(name: str, filename: str):
 
 
 _sibling("pstack_test_isolation_paths", "isolation_paths.py")
+_sibling("pstack_test_isolation_roots", "isolation_roots.py")
 # MARKER stays exported because the adoption tests read isolation.MARKER to reach a run root's marker file.
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
-    _entry, _fail, _fd_target, _frozen, _placed, _probe, _real, _real_roots, _refuse, _within,
-    _write_intent, encode_roots, layout, parse_roots, write_marker,
+    _entry, _fail, _fd_target, _frozen, _owned, _placed, _probe, _protected_write, _real,
+    _real_roots, _refuse, _within, _write_intent, encode_roots, layout, parse_roots, write_marker,
 )
+from pstack_test_isolation_roots import inherited, prune, publish
 
 
 _GUARDED = frozenset(_LAYOUT) | {POINTER, TOKEN, ORIGINALS}
@@ -82,20 +83,9 @@ _os_chown = getattr(os, "chown", None)
 _os_lchown = getattr(os, "lchown", None)
 
 
-def _protected_write(real: str) -> bool:
-    """Return whether a write at the real path lands in a protected real root, with the checkout allowed."""
-    if _within(real, _CHECKOUT):
-        return False
-    return any(_within(real, base) for base in _protected)
-
-
-def _owned(real: str) -> bool:
-    """Return whether the real path stays inside the run root and outside every protected root."""
-    return _root is not None and _within(real, _root) and not any(_within(real, base) for base in _protected)
-
-
 def _record(roots) -> None:
-    """Merge roots into the trusted record, publish it in ORIGINALS, and protect it from now on.
+    """Merge roots into the trusted record, publish it in ORIGINALS and this process's record file, and
+    protect it from now on.
 
     The environment write happens before the in-memory state changes, so a refused write changes
     nothing. A repeat call with a subset changes nothing.
@@ -105,6 +95,7 @@ def _record(roots) -> None:
     os.environ[ORIGINALS] = encode_roots(merged)
     _originals = merged
     _protected = tuple(dict.fromkeys(_protected + merged))
+    publish(os.getpid(), merged, _protected)
 
 
 @contextlib.contextmanager
@@ -190,7 +181,7 @@ def install() -> Path:
         protected = _real_roots(_real(pointer) if os.path.isabs(pointer) else None, os.environ)
         active = _adopt(os.environ, protected)
     else:
-        protected = _real_roots(None, os.environ)
+        protected = tuple(dict.fromkeys(_real_roots(None, os.environ) + inherited()))
         active = _create(protected)
     if _root is not None and active != _root:
         raise _fail(f"{POINTER} now names {active!r}, not the run root {_root!r} this process installed")
@@ -201,6 +192,9 @@ def install() -> Path:
         # refuses a rename in the checkout, so bytecode for this process goes under the run root instead.
         sys.pycache_prefix = os.path.join(active, "pycache")
     _root = active
+    if not _armed:
+        # The guard refuses a delete outside the run root, so stale records go before it is armed.
+        prune(protected)
     # Publish the trusted record. The first install runs before _arm(); a repeat install writes a superset.
     _record(protected)
     _arm()
@@ -267,7 +261,7 @@ def _open(path, flags, mode=0o777, *, dir_fd=None):
         if target is None:
             raise _refuse("os.open", "write", path, "because its directory descriptor cannot be resolved")
         target = _real(target)
-        if not _owned(target):
+        if not _owned(target, _root, _protected):
             raise _refuse("os.open", "write", target, f"outside the run root {_root!r} or inside a protected root")
     return _os_open(path, flags, mode, dir_fd=dir_fd)
 
@@ -315,7 +309,7 @@ def _deny_delete(event: str, path, dir_fd) -> None:
     if target is None:
         raise _refuse(event, "delete", path, "because its directory descriptor cannot be resolved")
     entry = _entry(target)
-    if not _owned(entry):
+    if not _owned(entry, _root, _protected):
         raise _refuse(event, "delete", entry, f"outside the run root {_root!r} or inside a protected root")
 
 
@@ -329,9 +323,9 @@ def _deny_write(event: str, path, dir_fd, resolve) -> None:
     if target is None:
         raise _refuse(event, "write", path, "because its descriptor cannot be resolved")
     real = resolve(target)
-    if _protected_write(real):
+    if _protected_write(real, _CHECKOUT, _protected):
         raise _refuse(event, "write", real, "inside a protected real home")
-    if _placed(path, dir_fd) and not _owned(real):
+    if _placed(path, dir_fd) and not _owned(real, _root, _protected):
         raise _refuse(event, "write", real, f"outside the run root {_root!r} or inside a protected root")
 
 

@@ -1,12 +1,21 @@
 """Path rules, protected real roots, and run-root admission for the test isolation guard.
 
-`tests/isolation.py` imports from here and holds the guard state, the audit hook, the wrappers, and `install()`.
+`tests/isolation.py` imports from here and holds the guard state, the audit hook, the wrappers, and
+`install()`. `_protected_write` and `_owned` also live here, because each needs the mount table.
 
 A descriptor's path comes from `/proc/self/fd` where that exists, and otherwise from the macOS `fcntl`
 `F_GETPATH`, accepted only when a stat of the path names the same device and inode as the descriptor. A
 descriptor that resolves through neither has no path, and every caller refuses it. `_placed` names the
 operations whose target arrives through a descriptor: the descriptor itself, or a relative name and the
-directory descriptor it is relative to.
+directory descriptor it is relative to, and `_owned` keeps such a target inside the run root. Path
+checks resolve symlinks in the directory part first, and a checked delete or rename acts on a final
+symlink name itself.
+
+`os.path.realpath` follows symlinks and not mounts, so a bind mount inside the run root makes a
+protected directory answer to a run-root name. `_mount_table` reads `/proc/self/mountinfo` at check time,
+and `_identity` turns a path into the device and on-device path of the longest mount point above it. The
+same directory then has one identity under every spelling. A host without that file, which includes
+macOS, has no table, and the spelling rules stand alone there.
 """
 
 from __future__ import annotations
@@ -60,6 +69,85 @@ def _entry(path) -> str:
 def _within(path: str, base: str) -> bool:
     """Return whether the real path is the real base or below it, comparing whole components."""
     return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
+
+
+_ESCAPES = {b"040": b" ", b"011": b"\t", b"012": b"\n", b"134": b"\\"}
+_MOUNTINFO = "/proc/self/mountinfo"
+
+
+def _unescape(field: bytes) -> str:
+    """Return the field with mountinfo's octal escapes for space, tab, newline, and the escape decoded."""
+    out = bytearray()
+    index = 0
+    while index < len(field):
+        code = field[index + 1:index + 4]
+        if field[index:index + 1] == b"\\" and code in _ESCAPES:
+            out += _ESCAPES[code]
+            index += 4
+        else:
+            out.append(field[index])
+            index += 1
+    return os.fsdecode(bytes(out))
+
+
+def _mount_table() -> tuple[tuple[str, str, str], ...]:
+    """Return (mount point, device, on-device root) for every mount, or () when the host has no table."""
+    try:
+        with open(_MOUNTINFO, "rb") as table:
+            lines = table.read().splitlines()
+    except OSError:
+        return ()
+    found = []
+    for line in lines:
+        fields = line.split(b" - ", 1)[0].split()
+        if len(fields) < 5:
+            continue
+        found.append((_unescape(fields[4]), os.fsdecode(fields[2]), _unescape(fields[3])))
+    return tuple(found)
+
+
+def _identity(path: str, table) -> tuple[str, str] | None:
+    """Return the device and on-device path of the longest mount point that covers the path, or None."""
+    best = None
+    for entry in table:
+        mount = entry[0]
+        if path == mount or path.startswith(mount.rstrip(os.sep) + os.sep):
+            if best is None or len(mount) > len(best[0]):
+                best = entry
+    if best is None:
+        return None
+    mount, device, root = best
+    return device, os.path.normpath(os.path.join(root, path[len(mount):].lstrip(os.sep)))
+
+
+def _covers(identity, base) -> bool:
+    """Return whether the identity is the base identity or below it."""
+    return base is not None and identity[0] == base[0] and _within(identity[1], base[1])
+
+
+def _reaches(path: str, bases) -> bool:
+    """Return whether the path sits on the storage a base names or below it, whatever its spelling."""
+    table = _mount_table()
+    here = _identity(path, table)
+    if here is None:
+        return False
+    return any(_covers(here, _identity(base, table)) for base in bases)
+
+
+def _protected_write(real: str, checkout: str, protected) -> bool:
+    """Return whether a write at the real path lands in a protected root, by spelling or by the storage it
+    reaches, with the checkout allowed."""
+    if _within(real, checkout):
+        return False
+    return any(_within(real, base) for base in protected) or _reaches(real, protected)
+
+
+def _owned(real: str, root: str | None, protected) -> bool:
+    """Return whether the real path stays inside the run root, outside every protected root, and off protected
+    storage."""
+    return (root is not None and _within(real, root)
+            and not any(_within(real, base) for base in protected)
+            and not _reaches(real, protected))
 
 
 def _real_roots(root: str | None, environ) -> tuple[str, ...]:
