@@ -8,9 +8,9 @@
   `<base>/pstack-t3-isolation-<uid>/<pid>.json` under the first of `/tmp`, `/var/tmp`, and `/usr/tmp`
   that is a directory and is outside every protected root, because a child with no environment cannot
   be told where to look. The directory is made with mode 0700 and must have no group or other write
-  bit. New record files request mode 0600. A child with no pointer reads the records of its own pid and
-  of `os.getppid()` and protects their roots too, because a guarded process that replaces itself with a
-  stripped environment keeps its pid and its parent is then the grandparent.
+  bit. New record files request mode 0600. A child with no pointer reads the records of its own pid,
+  which covers a process that replaced itself with a stripped environment, and of `os.getppid()`,
+  which covers a fresh child of a guarded process.
 - A child stops when a record it finds cannot be read. A
   live record that is not JSON, is not an object, names another uid or pid, or holds a root that is not an
   absolute path raises SystemExit with the module's message prefix.
