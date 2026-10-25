@@ -73,3 +73,20 @@ class ReviewNumbersTest(BrigadeTest):
         self.assertIn("## Send-back reasons (last 7 days)", out)
         self.assertIn("No send-backs in the last 7 days.", out)
         self.assertIn("- no ticket was created in the last 14 days.", out)
+
+    def test_the_hit_rate_window_wording_names_the_span_a_young_store_covers(self):
+        self.fired_bug_fix()
+        self.refile("T1", hours=39)
+        self.append_pass(self.ago(timedelta(hours=39)), verdict="send-back", sha="abc")
+        self.assertEqual(self.brigade("pass", "hits").splitlines()[0],
+                         "over the 39 hours this store has records for by verifier seat")
+        self.assertIn("## Reviewer hit rate (over the 39 hours this store has records for)",
+                      self.brigade("close", "--dry-run"))
+
+    def test_the_hit_rate_window_wording_keeps_last_7_days_for_an_old_store(self):
+        self.fired_bug_fix()
+        self.refile("T1", days=20)
+        self.append_pass(self.ago(timedelta(days=20)), verdict="send-back", sha="abc")
+        self.append_pass(self.ago(timedelta(hours=1)), verdict="pass", sha="def", verifier=CLAUDE)
+        self.assertEqual(self.brigade("pass", "hits").splitlines()[0], "last 7 days by verifier seat")
+        self.assertIn("## Reviewer hit rate (last 7 days)", self.brigade("close", "--dry-run"))

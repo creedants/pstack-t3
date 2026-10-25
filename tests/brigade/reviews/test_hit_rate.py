@@ -170,7 +170,7 @@ class HitRateTest(BrigadeTest):
         printed = self.brigade("pass", "hits")
         dry = self.brigade("close", "--dry-run")
         written = Path(self.brigade("close", "--to-file")).read_text()
-        self.assertIn(TITLE, dry)
+        self.assertIn("## Reviewer hit rate (over the 2 hours this store has records for)", dry)
         for verifier in (CODEX, CLAUDE):
             expected = dict(zip(("rounds", "pass", "edits", "send-back", "upheld", "overruled", "upheld rate"),
                                 self.seat(printed, verifier)[1:]))
