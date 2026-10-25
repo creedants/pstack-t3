@@ -59,6 +59,14 @@ from ..support import (
 from .base import STOPPED_AFTER_TERM_MAIN, SlotBase
 
 
+def _zombie(pid):
+    """Return True when pid is a zombie, and False where /proc holds no entry for it, as it does once the kernel reaps it."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
 class LandingTest(SlotBase, LandingTestBase):
 
     def test_sigint_to_an_exclusive_land_py_kills_a_same_group_child_that_ignores_sigterm(self):
@@ -84,12 +92,6 @@ class LandingTest(SlotBase, LandingTestBase):
     def test_a_signal_during_grace_after_the_leader_exits_kills_the_group(self):
         self.governor(1)
 
-        def zombie(pid):
-            try:
-                return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
-            except FileNotFoundError:
-                return False
-
         statuses = {signal.SIGTERM: 143, signal.SIGHUP: 129, signal.SIGINT: -2}
         for label, main in (("waitid", EXCLUSIVE_MAIN), ("no-waitid", EXCLUSIVE_MAIN_WITHOUT_WAITID)):
             for signum, status in statuses.items():
@@ -105,9 +107,9 @@ class LandingTest(SlotBase, LandingTestBase):
                         parent_pid = self.wait_for_pid(parent_path)
                         self.assertEqual(child_group, parent_pid)
                         deadline = time.monotonic() + 10
-                        while not zombie(parent_pid) and time.monotonic() < deadline:
+                        while not _zombie(parent_pid) and time.monotonic() < deadline:
                             time.sleep(0.01)
-                        self.assertTrue(zombie(parent_pid), "the leader did not exit at the cap")
+                        self.assertTrue(_zombie(parent_pid), "the leader did not exit at the cap")
                         os.kill(process.pid, signum)
                         code = process.wait(timeout=10)
                         self.assert_dead(child_pid)
@@ -132,12 +134,6 @@ class LandingTest(SlotBase, LandingTestBase):
         # grace later.
         self.governor(1)
 
-        def zombie(pid):
-            try:
-                return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
-            except FileNotFoundError:
-                return False
-
         parent_path, child_path = self.base / "term-gap-parent.pid", self.base / "term-gap-child.pid"
         process = self.popen_exclusive(
             ["slot", "--exclusive", "--", sys.executable, "-c", IGNORING_GROUP,
@@ -148,9 +144,9 @@ class LandingTest(SlotBase, LandingTestBase):
             parent_pid = self.wait_for_pid(parent_path)
             self.assertEqual(child_group, parent_pid)
             deadline = time.monotonic() + 10
-            while not zombie(parent_pid) and time.monotonic() < deadline:
+            while not _zombie(parent_pid) and time.monotonic() < deadline:
                 time.sleep(0.01)
-            self.assertTrue(zombie(parent_pid), "the leader did not exit at the cap")
+            self.assertTrue(_zombie(parent_pid), "the leader did not exit at the cap")
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 state = Path(f"/proc/{process.pid}/stat").read_text().rpartition(")")[2].split()[0]
@@ -178,3 +174,40 @@ class LandingTest(SlotBase, LandingTestBase):
             process.stdout.close()
             process.stderr.close()
             self.release_recorded_group(parent_path, child_path)
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "the test reads a zombie state from /proc")
+    def test_a_process_reaped_after_its_stat_entry_opens_counts_as_not_a_zombie(self):
+        """A read through an entry opened while its process ran raises ProcessLookupError once the kernel reaps that process, so the zombie helper reports that it is not a zombie instead of raising out of the test."""
+
+        def held(reap):
+            """Start a real child and open its stat entry. If reap is true, kill and reap the child after opening the entry. Return its pid and the open entry."""
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            self.addCleanup(child.wait)
+            self.addCleanup(child.kill)
+            handle = os.open(f"/proc/{child.pid}/stat", os.O_RDONLY)
+            self.addCleanup(os.close, handle)
+            if reap:
+                child.kill()
+                child.wait()
+            return child.pid, handle
+
+        def reads_through(handle, entry):
+            """Return a Path.read_text that reads the open entry for entry, and reads every other path as before."""
+            original = Path.read_text
+
+            def read_text(itself, *args, **kwargs):
+                if itself != entry:
+                    return original(itself, *args, **kwargs)
+                os.lseek(handle, 0, os.SEEK_SET)
+                return os.read(handle, 65536).decode()
+
+            return read_text
+
+        live, live_handle = held(reap=False)
+        with mock.patch.object(Path, "read_text", reads_through(live_handle, Path(f"/proc/{live}/stat"))):
+            self.assertFalse(_zombie(live), "a live process read through its own entry is not a zombie")
+        reaped, reaped_handle = held(reap=True)
+        entry = Path(f"/proc/{reaped}/stat")
+        with mock.patch.object(Path, "read_text", reads_through(reaped_handle, entry)):
+            self.assertRaises(ProcessLookupError, entry.read_text)
+            self.assertFalse(_zombie(reaped), "a process reaped after its entry opened is not a zombie")
