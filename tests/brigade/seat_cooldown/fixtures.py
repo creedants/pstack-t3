@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ..support import CLAUDE, CODEX, ROOT, SCRIPT, json, os, run_globals
+from ..support import CLAUDE, CODEX, ROOT, SCRIPT, _owner_words, call_in_process, json, os, run_globals
 
 
 NOW = "2026-02-01T00:00:00+00:00"
@@ -22,7 +22,7 @@ NOT_A_LIMIT = "the provider returned a malformed response"
 
 class _CooldownHelpers:
     def freeze(self, moment=NOW):
-        """Pin the loaded command's clock, so every cooldown stamp and window is exact."""
+        """Pin the loaded command's clock in this process, so every cooldown stamp and window is exact."""
         self.moment = moment
         run_globals(self, SCRIPT)["now"] = lambda: self.moment
         return moment
@@ -62,9 +62,16 @@ class _CooldownHelpers:
         return path
 
     def usage_limit(self, text, dish="D1", role="perf-issue", seat=FAILED, *extra, ok=True):
-        """Run the dish usage-limit command with the error text on standard input."""
-        return self.brigade("dish", dish, "--usage-limit", seat, "--role", role, "--error", "-",
-                            "--catalog", str(self.catalog()), "--parent", PARENT, *extra, stdin=text, ok=ok)
+        """Run the dish usage-limit command in this process, so the frozen clock reaches the command.
+
+        A separate process would read the real clock.
+        """
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at),
+                "dish", dish, "--usage-limit", seat, "--role", role, "--error", "-",
+                "--catalog", str(self.catalog()), "--parent", PARENT, *extra]
+        outcome = call_in_process(self, SCRIPT, [str(arg) for arg in argv], stdin=text)
+        self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
+        return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
 
     def fire_another(self, number, branch, thread):
         """Fire one more dish on the same station, so several dishes share the store's cooldown rows."""
