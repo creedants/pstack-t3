@@ -56,7 +56,7 @@ def _sibling(name: str, filename: str):
 _sibling("pstack_test_isolation_mounts", "isolation_mounts.py")
 _sibling("pstack_test_isolation_paths", "isolation_paths.py")
 _sibling("pstack_test_isolation_roots", "isolation_roots.py")
-# MARKER stays exported because the adoption tests read isolation.MARKER to reach a run root's marker file.
+# MARKER stays exported because the adoption tests read isolation.MARKER.
 from pstack_test_isolation_paths import (
     MARKER, ORIGINALS, POINTER, TOKEN, _LAYOUT, _WRITE_FLAGS, _adopt, _arg, _at, _base, _check,
     _entry, _fail, _fd_target, _frozen, _owned, _placed, _probe, _protected_write, _real,
@@ -64,7 +64,7 @@ from pstack_test_isolation_paths import (
     write_marker,
 )
 from pstack_test_isolation_roots import (
-    after_fork, anchored_call, anchored_fd, inherited, prune, publish,
+    after_fork, anchored_call, anchored_open, inherited, prune, publish,
 )
 
 
@@ -258,12 +258,12 @@ def _arm() -> None:
 
 
 def _open(path, flags, mode=0o777, *, dir_fd=None):
-    """os.open, refusing a write through dir_fd outside the run root or inside a protected root.
+    """os.open with guarded dir_fd writes, except fresh record writes through an anchor.
 
     The open audit event leaves out dir_fd, so the hook alone would judge a relative name against the working directory.
     """
     path = _frozen(path)
-    if anchored_fd(dir_fd, path):
+    if anchored_open(dir_fd, path, flags):
         _local.busy = True
         try:
             return _os_open(path, flags, mode, dir_fd=dir_fd)

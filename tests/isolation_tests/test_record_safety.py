@@ -5,10 +5,11 @@ does not replace the value the process already holds. The other cases cover the 
 files. One replaces the record name with a symlink to a protected canary, and the guard must replace
 the name instead of following it. Another swaps the record directory for a symlink at the moment the
 guard lists it, and the replacement target must keep its file. The third makes the record directory
-itself a protected root, so the guard must skip that candidate and keep the file it holds. Three more
-cases cover what the descriptor allowance passes. A child forked while an anchor is open must refuse a
+itself a protected root, so the guard must skip that candidate and keep the file it holds. Four more
+cases cover the descriptor allowance. A child forked while an anchor is open must refuse a
 delete in a protected root, an anchored descriptor must not authorize an absolute or multi-component
-name, and a rename must be refused when only one of its descriptors is anchored.
+name, a rename must be refused when only one of its descriptors is anchored, and an anchored open to
+a protected link or entry is refused.
 """
 
 if __package__ in (None, ""):
@@ -220,6 +221,37 @@ print("STOLEN", os.path.exists(os.path.join(@OUTSIDE@, "stolen.txt")))
 '''
 
 
+ANCHORED_OPEN_CHILD = CONSTANTS + '''with open(os.path.join(@STATE@, "canary.txt"), "w") as handle:
+    handle.write("original")
+os.symlink("canary.txt", os.path.join(@STATE@, "soft"))
+os.link(os.path.join(@STATE@, "canary.txt"), os.path.join(@STATE@, "hard"))
+with open(os.path.join(@STATE@, "keep"), "w") as handle:
+    handle.write("original")
+exec(@LOADER@)
+roots = sys.modules["pstack_test_isolation_roots"]
+number = os.open(@STATE@, os.O_RDONLY)
+cases = (("SOFT", "soft", os.O_WRONLY | os.O_TRUNC),
+         ("HARD", "hard", os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW),
+         ("KEEP", "keep", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW),
+         ("FRESH", "fresh", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW))
+with roots.anchored(number):
+    for label, name, flags in cases:
+        try:
+            handle = os.open(name, flags, 0o600, dir_fd=number)
+        except PermissionError:
+            print(label, "REFUSED")
+        except OSError as problem:
+            print(label, "FAILED", problem)
+        else:
+            os.close(handle)
+            print(label, "OPENED")
+os.close(number)
+for label, name in (("CANARY", "canary.txt"), ("KEEP", "keep")):
+    with open(os.path.join(@STATE@, name), "rb") as handle:
+        print(label, repr(handle.read()))
+'''
+
+
 class RecordSafetyTest(unittest.TestCase):
     def setUp(self):
         self.scratch = Path(tempfile.mkdtemp(prefix="record-safety-"))
@@ -311,6 +343,23 @@ class RecordSafetyTest(unittest.TestCase):
         self.assertIn("STOLEN False", done.stdout, done.stdout + done.stderr)
         self.assertNotIn("RENAMED", done.stdout, done.stdout + done.stderr)
         self.assertEqual((self.external / "canary.txt").read_text(), "kept")
+
+    def test_an_anchored_open_that_reaches_a_protected_link_or_entry_is_refused(self):
+        done = self.run_child(self.child(ANCHORED_OPEN_CHILD), state=self.external)
+        output = done.stdout + done.stderr
+        self.assertEqual(done.returncode, 0, output)
+        for line in ("SOFT REFUSED", "HARD REFUSED", "KEEP REFUSED", "FRESH OPENED"):
+            self.assertIn(line, done.stdout, output)
+        self.assertNotIn("FAILED", done.stdout, output)
+        self.assertIn("CANARY b'original'", done.stdout, output)
+        self.assertIn("KEEP b'original'", done.stdout, output)
+        damaged = ("an anchored descriptor let os.open write through a link or reuse an entry "
+                   "in a protected root\n" + output)
+        self.assertEqual((self.external / "canary.txt").read_bytes(), b"original", damaged)
+        self.assertEqual((self.external / "keep").read_bytes(), b"original", damaged)
+        self.assertTrue((self.external / "fresh").is_file(),
+                        "a fresh name with O_CREAT and O_EXCL was not created through the anchored "
+                        "descriptor\n" + output)
 
 
 if __name__ == "__main__":

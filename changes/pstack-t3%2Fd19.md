@@ -1,0 +1,4 @@
+- kind fix
+- `_open` admitted any `os.open` through an anchored descriptor without reading `flags`, so a symlink at a plain name was followed and `O_WRONLY | O_TRUNC` emptied a protected canary
+- `anchored_open` admits an anchored open only when `flags` sets all of `O_CREAT | O_EXCL | O_NOFOLLOW`. Anything else falls through to the ordinary `dir_fd` branch, where a write is judged by `_at`, `_real`, `_owned`. `publish()` already passes all three bits
+- `test_an_anchored_open_that_reaches_a_protected_link_or_entry_is_refused` makes a real symlink, a hard link, and a real entry keep `original` and still creates a fresh `O_CREAT | O_EXCL` name. At base it fails with `SOFT OPENED`, `KEEP OPENED`, `CANARY b''`, `KEEP b''`
