@@ -8,6 +8,8 @@ How often the coordinator replies. Options are `milestones`, `every-turn`, and `
 
 Which mode the workers use. Options are `light` and `full`. For a project with routine dishes, choose `light`. Record it with `open --mode` or `set --mode`. A missing key leaves the choice to the roles files, so onboard lists it as missing until it is recorded.
 
+Whether pull requests credit the models that did the work. Options are `on` and `off`. Record it with `open --pr-credit` or `set --pr-credit`. A missing key reads as off and is missing until it is recorded.
+
 Which models the workers use. This is missing when neither the user roles file nor the project roles file exists. Record it with setup-pstack.
 
 How many dishes run at once. This is a whole number of 1 or more. Recommend 2. Record it with `open --workers` or `set --workers`. A missing key reads as 2 and is never missing.

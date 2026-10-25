@@ -8,6 +8,7 @@ from brigade_lib import seam
 from brigade_lib.commands.onboard_contract import _read_cap, _read_contract_checks, _read_generated, _read_landing
 from brigade_lib.commands.setup import validate_settings
 from brigade_lib.compact import effective_cap, effective_provider
+from brigade_lib.credit import KEY as CREDIT_KEY, credit_on
 from brigade_lib.leases import require_workers
 from brigade_lib.shared import BrigadeError, command_words, slug
 from brigade_lib.store import ADMIN_DIR, AUTOFIRE, REPORTING, _read_meta, change_note_dir, liveness_of, low_reserve_of, roles_script, round_budget_of, write_atomic
@@ -55,6 +56,11 @@ def _read_mode(ctx):
     if value not in ("full", "light"):
         return ("invalid", "mode is not full or light")
     return ("configured", value)
+
+def _read_credit(ctx):
+    if CREDIT_KEY not in _meta(ctx):
+        return ("missing", "")
+    return ("configured", credit_on(_meta(ctx)))
 
 def _read_intake(ctx):
     value = _meta(ctx).get("intake")
@@ -296,6 +302,7 @@ SETTINGS = (
     ("reporting", _read_reporting, "set --reporting milestones", _text),
     ("workers", _read_workers, "open --workers 2 or set --workers 2", _text),
     ("mode", _read_mode, "open --mode light or set --mode light", _text),
+    ("pr_credit", _read_credit, "open --pr-credit on or set --pr-credit on", _text),
     ("models", _read_models, "run setup-pstack", _text),
     ("intake", _read_intake, "set --intake <sources>", _text),
     ("autofire", _read_autofire, "set --autofire normal", _text),

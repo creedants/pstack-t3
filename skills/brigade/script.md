@@ -54,6 +54,8 @@ Each command's text below is the text that moved out of the command block in [th
 
 **`$B set --mode`.** this restaurant's mode from the next brief. `--mode ""` returns it to the roles files.
 
+**`$B set --pr-credit`.** whether pull requests credit the models that did the work. `on` or `off`. Read back through the JSON that set prints.
+
 **`$B set --build-command --check-command`.** the two commands edits verify runs. none for one the project lacks.
 
 **`$B set --cap`.** at most that many items of the kind holding a worker slot. A pair with no number clears that kind's cap. An empty value clears every cap. Read back through the JSON that set prints.
@@ -153,6 +155,10 @@ Each command's text below is the text that moved out of the command block in [th
 **`$B pass record`.** `--reviewer-thread` writes the reviewer row of threads.tsv for this attempt. It takes its seat from `--verifier`.
 
 **`$B pass check`.** exits 1 unless that SHA passed. `--json` prints verdict, author, verifier, note, and crossFamily.
+
+### credit
+
+**`$B credit D<n> --coordinator <provider/model>`.** one line, `Coordinated by <coordinator>. Written by <authors>. Reviewed by <verifiers>.`, with every part that names no recorded value left out. Authors and verifiers are the distinct cells of every pass.tsv row of the item, in first-recorded order, joined with `, `. `--coordinator` may be omitted, which leaves out the Coordinated by part. With `prCredit` off or unrecorded it prints `credit: off for this restaurant; set --pr-credit on to turn it on`.
 
 ### edits
 

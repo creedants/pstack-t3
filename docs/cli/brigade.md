@@ -18,12 +18,12 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `onboard`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `onboard`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `credit`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
 
 ## brigade.py open
 
 ```text
-brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--rename NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] open --project-root PROJECT_ROOT [--name NAME] [--rename NAME] [--admin] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off]
 ```
 
 create a restaurant, or print an existing one
@@ -40,11 +40,12 @@ create a restaurant, or print an existing one
 | `--mode MODE` |  | `full`, `light` |  | this restaurant's light or full mode; missing leaves it to the roles files |
 | `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | on creation, choose claude or other; missing uses claude; an existing store uses its saved provider |
+| `--pr-credit on|off` |  |  |  | on makes credit print the line a pull request body carries; off or no flag records no credit |
 
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off]
 ```
 
 record a setting
@@ -77,6 +78,7 @@ record a setting
 | `--doc-timebox N` |  |  |  | the shared-document timebox in minutes, 1 or more; "" clears it to 90 |
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json when the provider is claude; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
+| `--pr-credit on|off` |  |  |  | whether pull requests credit the models that did the work; on or off |
 
 ## brigade.py ticket
 
@@ -549,6 +551,19 @@ The upheld rate is upheld over upheld plus overruled, one decimal place, and n/a
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--last LAST` |  |  | `7` | how many days to cover, counting back from now; default 7 |
+
+## brigade.py credit
+
+```text
+brigade.py [flags] credit [--coordinator PROVIDER/MODEL] dish
+```
+
+print the credit line a pull request body carries
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `dish` | yes |  |  |  |
+| `--coordinator PROVIDER/MODEL` |  |  |  | the coordinator's model; adds the Coordinated by part |
 
 ## brigade.py edits
 

@@ -41,6 +41,12 @@ The three roles are `worker`, `reviewer`, and `coordinator`. A rule is a line th
 
 When a role's size is over the cap, `brief` exits 1 and writes no brief and no contract, and prints one line for each over-cap role that names the role, its size, and the cap. `next` prints the same line for each over-cap role on standard error and exits 0.
 
+## prCredit
+
+`prCredit` sets whether pull requests credit the models that did the work. Set it with `set --pr-credit` or at creation with `open --pr-credit`. Both flags take `on` or `off`. For example `set --pr-credit on` records `true`.
+
+It is a JSON boolean and defaults to unset. A missing key reads as off. When it is off, `credit` prints `credit: off for this restaurant; set --pr-credit on to turn it on`. Onboard lists it as `pr_credit`, missing until it is recorded, and its fix is `open --pr-credit on or set --pr-credit on`. A present value that is not a boolean is refused.
+
 ## Refusals
 
 `set` validates the prospective settings with the same readers `affected` and `fire` use. `layout` judges `affectedTests`. `doc_policy` judges `sharedDocs` and `docTimebox`. `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment. `fire` always reads `sharedDocs` and `docTimebox` and never reads `affectedTests`.

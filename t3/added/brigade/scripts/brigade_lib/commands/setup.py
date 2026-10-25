@@ -6,6 +6,7 @@ from brigade_lib._store.opening import rename_restaurant
 from brigade_lib._store.settings import COOLDOWN_KEY, cooldown_minutes, parse_cooldown_minutes
 from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
+from brigade_lib.credit import KEY as CREDIT_KEY, credit_on, parse_credit
 from brigade_lib.items import doc_policy
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
@@ -87,6 +88,8 @@ def register_open(sub):
                    help="on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone")
     p.add_argument("--coordinator-provider", default=None,
                    help="on creation, choose claude or other; missing uses claude; an existing store uses its saved provider")
+    p.add_argument("--pr-credit", metavar="on|off",
+                   help="on makes credit print the line a pull request body carries; off or no flag records no credit")
 
 
 def register_set(sub):
@@ -138,6 +141,8 @@ def register_set(sub):
                    help="the auto-compact window written to .claude/settings.local.json when the provider is claude; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
                    help="claude or other; \"\" clears it to claude; other writes no settings file")
+    p.add_argument("--pr-credit", metavar="on|off",
+                   help="whether pull requests credit the models that did the work; on or off")
 
 
 def register(sub):
@@ -149,7 +154,7 @@ def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
     It checks contextCap, coordinatorProvider, caps, review, lowReserve, roundBudget, livenessMs, affectedTests, sharedDocs,
-    docTimebox, changeNoteDir, and cooldownMinutes, by calling each setting's reader predicate, so a value accepted here is a value that reader
+    docTimebox, changeNoteDir, cooldownMinutes, and prCredit, by calling each setting's reader predicate, so a value accepted here is a value that reader
     accepts. A missing key keeps its default.
     """
     effective_cap(meta)
@@ -162,6 +167,7 @@ def validate_settings(meta):
     doc_policy(meta)
     change_note_dir(meta)
     cooldown_minutes(meta)
+    credit_on(meta)
 
 
 def preflight_settings(prospective, args):
@@ -189,10 +195,14 @@ def handle_open(args, root):
     coordinator_provider = None
     if args.coordinator_provider not in (None, ""):
         coordinator_provider = parse_coordinator_provider(args.coordinator_provider)
+    pr_credit = None
+    if args.pr_credit is not None:
+        pr_credit = parse_credit(args.pr_credit)
     restaurant, created = open_restaurant(root, args.project_root, args.name, args.reporting,
                                           intake_list(args.intake), args.workers, args.admin, args.mode,
                                           context_cap=context_cap,
-                                          coordinator_provider=coordinator_provider)
+                                          coordinator_provider=coordinator_provider,
+                                          pr_credit=pr_credit)
     validate_settings(restaurant.meta)
     lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
     meta = restaurant.meta
@@ -208,6 +218,10 @@ def handle_open(args, root):
         lines.append(f"context-cap stays {effective_cap(meta)}; change it with set --context-cap")
     if not created and coordinator_provider is not None and coordinator_provider != effective_provider(meta):
         lines.append(f"coordinator-provider stays {effective_provider(meta)}; change it with set --coordinator-provider")
+    if not created and pr_credit is not None:
+        kept = "on" if credit_on(meta) else "off"
+        if kept != ("on" if pr_credit else "off"):
+            lines.append(f"pr-credit stays {kept}; change it with set --pr-credit")
     lines.extend(sibling_lines(restaurant))
     if siblings(restaurant.dir, restaurant.meta.get("projectRoot")) and not is_admin(meta):
         cap = repository_cap(restaurant.meta["projectRoot"])
@@ -324,6 +338,8 @@ def setting_changes(restaurant, args):
     _clear_or_parse(args.doc_timebox, "docTimebox", parse_doc_timebox, changes, drop)
     _clear_or_parse(args.context_cap, "contextCap", parse_context_cap, changes, drop)
     _clear_or_parse(args.coordinator_provider, "coordinatorProvider", parse_coordinator_provider, changes, drop)
+    if args.pr_credit is not None:
+        changes[CREDIT_KEY] = parse_credit(args.pr_credit)
     if args.schedule:
         schedules = dict(meta.get("schedules") or {})
         for pair in args.schedule:
