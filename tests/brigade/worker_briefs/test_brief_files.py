@@ -77,6 +77,25 @@ class BriefFilesMixin:
         self.assertTrue(second.is_file())
         self.assertEqual(second.read_text(), self.brief_body(second_text) + "\n")
 
+    def test_a_task_recorded_in_review_leaves_the_attempt_number_alone(self):
+        """A `dish --task` recorded while the item is in review is not a worker attempt.
+
+        Counting it as one would shift the fix-round brief to briefs/D1-3.md and leave briefs/D1-2.md missing.
+        """
+        self.fire_feature()
+        self.brigade(*self.BRIEF)
+        first = self.at / "briefs" / "D1.md"
+        first_bytes = first.read_bytes()
+        self.brigade("dish", "D1", "--thread", "w1")
+        self.brigade("dish", "D1", "--state", "in-review", "--sha", "abc")
+        self.brigade("dish", "D1", "--task", "verifier-1")
+        self.send_back("abc")
+        self.brigade("dish", "D1", "--state", "in-progress")
+        self.brigade(*self.FIX_BRIEF, "--paths", "src/a.py", "--lease", "L1")
+        self.assertEqual(first.read_bytes(), first_bytes)
+        self.assertTrue((self.at / "briefs" / "D1-2.md").is_file())
+        self.assertFalse((self.at / "briefs" / "D1-3.md").exists())
+
     def test_every_reader_reads_the_attempt_the_launch_gets(self):
         """`launch_text` and `record_usage_limit` read the attempt file the launch gets.
 

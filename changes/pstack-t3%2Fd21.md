@@ -1,0 +1,3 @@
+- kind fix
+- `skills/brigade/SKILL.md` Run a service step 4.3 now sends the launch line `brigade.py brief` prints as `t3_thread_launch`'s `message`, and says to paste the brief file's contents only when the worker cannot read the store path
+- a new test pins that a `dish --task` recorded while an item is in review does not advance the brief attempt number, so the fix round still writes `briefs/<dish>-2.md`
