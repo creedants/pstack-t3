@@ -1,8 +1,10 @@
+import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
 from brigade_lib import seam
-from brigade_lib._affected.report import contract_check, records_check
+from brigade_lib._affected.report import _common_dir, _contract_rows, contract_check, records_check
 from brigade_lib._reviews.rounds import item_verdicts, roles_family, round_debt
 from brigade_lib._reviews.threads import report_threads, report_threads_refusal, write_threads
 from brigade_lib.edits import NEEDS_COMMANDS, commit_tree, replay, report_edits
@@ -136,9 +138,51 @@ def edits_gate(restaurant, dish_id, sha, report):
                        f"--from {last['sha']} --to {sha}, or name a second review's report with --report")
 
 
+def contract_setup(root):
+    """The landing contract's setup command for root, or an empty string.
+
+    It reads the setup value from the contract table of the land.db whose commonDir resolves to root's
+    common git directory, through the same read-only reader contract_check uses: _common_dir and
+    _contract_rows from brigade_lib._affected.report. It reads the commonDir and setup keys and no other,
+    and it changes no reader.
+    It skips a candidate whose log has no index or whose database the read cannot open, and returns an
+    empty string when no candidate matches. It returns the setup value stripped when that value is a string,
+    and an empty string in every other case: no common directory, a contract with no setup key, a value that
+    is not JSON or not a string, and a value that is empty once stripped.
+    """
+    common = _common_dir(root)
+    if common is None:
+        return ""
+    base = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "pstack-t3" / "landing"
+    try:
+        candidates = sorted(base.glob("*/land.db"))
+    except (OSError, ValueError):
+        return ""
+    for path in candidates:
+        try:
+            rows = _contract_rows(path)
+            if rows is None:
+                continue
+            recorded = Path(json.loads(rows.get("commonDir"))).resolve()
+        except Exception:
+            continue
+        if recorded != common:
+            continue
+        try:
+            value = json.loads(rows["setup"])
+        except Exception:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return ""
+    return ""
+
+
 def verify_edits(restaurant, dish_id, from_sha, to_sha):
-    """Called from handle(), because it starts subprocesses. It reads projectRoot and the landing contract before taking the store lock. It holds the lock while checking tables and appending edits.tsv, and runs subprocesses outside the lock."""
-    contract = contract_check(restaurant.meta.get("projectRoot") or "")
+    """Called from handle(), because it starts subprocesses. It reads projectRoot and the landing contract's check and setup commands before taking the store lock. It holds the lock while checking tables and appending edits.tsv, and runs subprocesses outside the lock."""
+    root = restaurant.meta.get("projectRoot") or ""
+    contract = contract_check(root)
+    setup = contract_setup(root)
     with restaurant.checked():
         restaurant.fence()
         _, dish = restaurant.find("dishes.tsv", dish_id)
@@ -159,7 +203,7 @@ def verify_edits(restaurant, dish_id, from_sha, to_sha):
     edits = report_edits(restaurant, name)
     (reviewed, before), (_, after) = (commit_tree(meta["projectRoot"], sha) for sha in (from_sha, to_sha))
     lines, verified = replay(meta["projectRoot"], reviewed, before, after, edits, build, check, from_sha,
-                             fragment_for(meta, dish["branch"]))
+                             fragment_for(meta, dish["branch"]), setup=setup)
     for line in lines:
         print(line)
     if not verified:
