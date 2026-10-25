@@ -38,7 +38,7 @@ Read this before creating the fix worker in step 7.
    - `blocked`: `86 add` if only the user can unblock it. Otherwise fix the environment and run the pass again.
 
 
-   - Usage limit: when a provider in the `verifiers` role or a station's role hits its usage limit, launch no replacement before following [Usage limit](../recovery.md#usage-limit). For a worker, run steps 1 and 2 of the three drop steps in step 7 without step 3 and wait for a terminal state before any replacement. Do not change the mode on your own.
+   - Usage limit: when a provider in the `verifiers` role or a station's role hits its usage limit, launch no replacement before following [Usage limit](../recovery.md#usage-limit). For a worker, run steps 1 and 2 of the three drop steps in step 7 without step 3 and wait for a terminal state before any replacement. For a worker or a verifier, run `$B dish <id> --usage-limit <failed seat> --role <role> --error - --catalog <file> --parent <provider/model>` with the error text on stdin, and repeat `--author` for every model that wrote the diff when the role is `verifiers`. It records the cooldown and prints one next step. Do not change the mode on your own.
 
 
 - Drop a dish in three steps. A requested interrupt is not a stop. `t3_thread_interrupt` can return `status: "interrupt_requested"` while the worker's run goes on.
