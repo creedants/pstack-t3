@@ -13,9 +13,11 @@ stops when a candidate directory is not a directory this user owns with no group
 record carries the process start time when /proc gives one. Where /proc gives the live start, a record
 a dead process left under a reused pid is ignored instead of trusted. A child reads its own pid's
 record, which covers a process that replaced itself with a stripped environment, and its parent's,
-which covers a fresh child of a guarded process. Every write and delete acts through a descriptor of a
-verified directory with a single-component name, and the guard lets exactly those calls through, so
-the record machinery cannot damage a protected file.
+which covers a fresh child of a guarded process. Every record file write, and every record entry
+delete or rename, acts through a descriptor of a verified directory with a single-component name. The
+allowance admits a call only when its descriptor number is open as an anchor and its names are single
+components, and a rename only when both of its descriptors are, so the record machinery cannot damage
+a protected file.
 """
 
 from __future__ import annotations
@@ -91,7 +93,7 @@ def anchored_fd(number, name=None) -> bool:
 
 
 def anchored_call(event: str, args: tuple) -> bool:
-    """Return whether an audit event is one of this module's own calls through an anchored descriptor and a plain name."""
+    """Return whether an audit event acts through an open anchor and a plain name."""
     if event == "os.remove":
         return anchored_fd(_arg(args, 1), _arg(args, 0))
     if event == "os.rename":
@@ -300,7 +302,8 @@ def publish(pid: int, roots, protected) -> str:
 def after_fork() -> None:
     """Publish the inherited protection under the child's own pid, or stop the child rather than run with fewer roots.
 
-    The parent's anchored numbers mean nothing in this process, so the child starts with none.
+    The parent's anchored numbers still name open descriptors here, so the child drops them and
+    honors none.
     """
     _ANCHORS.clear()
     try:
