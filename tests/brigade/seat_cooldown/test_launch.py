@@ -36,7 +36,7 @@ class SeatCooldownLaunchTest(BrigadeTest, _CooldownHelpers):
         self.assertEqual(outcome.stderr_text(), f"D1: {FAILED} cooling until {COOLING_END}; launch on {BACKUP}\n")
 
     def test_launch_prints_the_normal_seat_after_the_cooldown_end_passes(self):
-        """The defect: a cooldown whose end has passed still diverts the launch to a backup seat."""
+        """The defect: a fix that reads a cooldown row without comparing its end diverts the launch after the end has passed."""
         self.cooldown_store()
         self.write_cooldown_row(seat=FAILED, end="2026-01-31T23:00:00+00:00")
         outcome = self.launch_outcome()
