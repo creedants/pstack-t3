@@ -923,11 +923,11 @@ a request from the executive admin
 brigade.py [flags] launch --parent PARENT --catalog CATALOG dish
 ```
 
-print one JSON object for the t3_thread_launch modelSelection of this dish. The command writes nothing.
+print one JSON object for the t3_thread_launch modelSelection of this dish. The command does not change the store.
 
 The object always names instanceId, model, and options. A seat with no options object prints an empty options object. providerInstanceId is renamed to instanceId. A brief with one Mode line of full or light is passed as --brief-mode. bug-fix, perf-issue, and hillclimb use that role name. feature and refactoring use the role "feature, refactoring". investigation has no code-delegate role and the command exits 1.
 
-The command exits 1 when the role is missing, seats are a string, or the seat count is not one. It exits 1 when the seat lacks providerInstanceId or model, and when options are not an object. The refusal is printed on stderr.
+When the resolved seat's provider has a live cooldown, roles.py backup excludes every cooling provider while choosing a replacement. A replacement object goes to stdout, and one line naming the cooling seat and its end goes to stderr. The command exits 1 when the role is missing, seats are a string, or the seat count is not one. It exits 1 when the seat lacks providerInstanceId or model, and when options are not an object. With a cooling resolved provider and no runnable backup, it exits 1 and names the earliest cooldown end. The refusal is printed on stderr.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
