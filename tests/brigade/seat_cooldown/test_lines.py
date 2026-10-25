@@ -24,19 +24,21 @@ class SeatCooldownLinesTest(BrigadeTest, _CooldownHelpers):
         self.freeze("2026-02-01T02:00:00+00:00")
         self.assertEqual([line for line in self.brigade("watch").splitlines() if line.startswith("cooling ")], [])
 
-    def test_close_lists_the_cooldown_with_its_seat_and_the_seat_used_instead(self):
-        """The defect: a closeout omits the cooldown, so the user cannot see which seat went out or what replaced it."""
+    def test_close_lists_the_cooldown_with_its_seat_and_suggested_replacement(self):
+        """The defect: a closeout omits the cooldown, so the user cannot see which seat went out or what replacement was suggested."""
         self.cooldown_store()
         self.usage_limit(LIMIT_SPAN)
         code, text, errors = self.close_run("--dry-run")
         self.assertEqual((code, errors), (0, ""))
         self.assertIn("## Seat cooldowns\n\n"
-                      f"- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; relaunched on {BACKUP}\n", text)
+                      f'- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; replacement suggested {BACKUP} '
+                      'options {"reasoningEffort": "medium"}\n', text)
         self.brigade("dish", "D1", "--thread", "thread-10")
         self.usage_limit(LIMIT_SPAN)
         code, text, errors = self.close_run("--dry-run")
         self.assertEqual((code, errors), (0, ""))
-        self.assertIn(f"- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; launched nothing\n", text)
+        self.assertIn(f"- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; no replacement suggested\n", text)
         self.assertEqual([line for line in text.splitlines() if line.startswith("- D1:")],
-                         [f"- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; relaunched on {BACKUP}",
-                          f"- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; launched nothing"])
+                         [f'- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; replacement suggested {BACKUP} '
+                          'options {"reasoningEffort": "medium"}',
+                          f"- D1: {FAILED} cooled {NOW} to 2026-02-01T00:30:00+00:00; no replacement suggested"])

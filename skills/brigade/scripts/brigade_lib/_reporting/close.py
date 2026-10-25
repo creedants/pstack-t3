@@ -115,7 +115,7 @@ def report(restaurant, write=True):
 def cooldown_section(restaurant, since):
     """The `## Seat cooldowns` lines for every cooldown event after `since`, in table order.
 
-    Each line names the dish, the seat that cooled, its start and end, and the seat used instead.
+    Each line names the dish, the seat that cooled, its start and end, and the suggested replacement.
     A row this section cannot read is left out, and a store with no such row prints none of these lines.
     """
     lines = []
@@ -128,7 +128,7 @@ def cooldown_section(restaurant, since):
             continue
         if not isinstance(note, dict) or not note.get("seat") or not note.get("end"):
             continue
-        used = f"relaunched on {note['replacement']}" if note.get("replacement") else "launched nothing"
+        used = f"replacement suggested {note['replacement']}" if note.get("replacement") else "no replacement suggested"
         lines.append(f"- {row['id']}: {note['seat']} cooled {note.get('start', '')} to {note['end']}; {used}")
     return ["## Seat cooldowns", "", *lines, ""] if lines else []
 

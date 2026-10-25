@@ -128,10 +128,10 @@ def register_set(sub):
                    help="the lowest ticket priority startable lists, or off; missing reads as normal")
     p.add_argument("--cap", metavar="KIND=N",
                    help="comma-separated kind=number pairs, at most that many items of that kind in a worker slot; "
-                        "a bare kind clears that kind's cap; \"\" clears every cap")
+                        "kind= clears that kind's cap; \"\" clears every cap")
     p.add_argument("--review", metavar="KIND=MODE",
                    help="comma-separated kind=mode pairs, the default mode for a new item of that kind; "
-                        "a bare kind clears that kind's depth; \"\" clears every depth")
+                        "kind= clears that kind's depth; \"\" clears every depth")
     p.add_argument("--scratch-dir", metavar="DIR",
                    help="the parent directory briefs pass to mktemp -d -p; an absolute path outside /tmp; "
                         "\"\" clears it")
