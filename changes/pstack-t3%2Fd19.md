@@ -1,4 +1,4 @@
 - kind fix
 - `_open` admitted any `os.open` through an anchored descriptor without reading `flags`, so a symlink at a plain name was followed and `O_WRONLY | O_TRUNC` emptied a protected canary. Base `757b441c` printed `ANCHORED True`, `ALLOWED`, `CANARY ''`; the same open with no anchor printed `REFUSED PermissionError`, `CANARY 'original'`
-- `anchored_open` admits an anchored open only when `flags` sets `O_NOFOLLOW`, and sets `O_EXCL` whenever it sets `O_CREAT`. Anything else falls through to the ordinary `dir_fd` branch, whose `_at`, `_real`, `_owned` checks refuse it. `publish()` already passes both bits
+- `anchored_open` admits an anchored open only when `flags` sets `O_NOFOLLOW`, and sets `O_EXCL` whenever it sets `O_CREAT`. Anything else falls through to the ordinary `dir_fd` branch, where a write is judged by `_at`, `_real`, `_owned`. `publish()` already passes both bits
 - `test_an_anchored_open_that_may_follow_a_link_or_reuse_an_entry_is_refused` makes a real symlink and a real entry keep `original` and still creates a fresh `O_CREAT | O_EXCL` name. At base it fails with `SOFT OPENED`, `KEEP OPENED`, `CANARY b''`, `KEEP b''`

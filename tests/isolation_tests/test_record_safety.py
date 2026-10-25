@@ -5,8 +5,8 @@ does not replace the value the process already holds. The other cases cover the 
 files. One replaces the record name with a symlink to a protected canary, and the guard must replace
 the name instead of following it. Another swaps the record directory for a symlink at the moment the
 guard lists it, and the replacement target must keep its file. The third makes the record directory
-itself a protected root, so the guard must skip that candidate and keep the file it holds. Three more
-cases cover what the descriptor allowance passes. A child forked while an anchor is open must refuse a
+itself a protected root, so the guard must skip that candidate and keep the file it holds. Four more
+cases cover the descriptor allowance. A child forked while an anchor is open must refuse a
 delete in a protected root, an anchored descriptor must not authorize an absolute or multi-component
 name, a rename must be refused when only one of its descriptors is anchored, and an anchored open must
 refuse to follow a link or reuse an entry.
