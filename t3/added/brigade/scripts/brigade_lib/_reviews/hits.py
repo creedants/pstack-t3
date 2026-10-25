@@ -148,7 +148,7 @@ def pass_hits(restaurant, days):
 
 
 def hit_section(pass_rows, edits_rows, rows86, now):
-    """The `## Reviewer hit rate (last 7 days)` lines for these rows."""
+    """The `## Reviewer hit rate` lines for these rows, naming the span their records cover."""
     hits = seat_hits(pass_rows, edits_rows, rows86, window_cutoff(now, SEND_BACK_DAYS))
     heading, _ = window_phrases(earliest_record(pass_rows), now, SEND_BACK_DAYS)
     body = [seat_line(verifier, seat) for verifier, seat in sorted(hits.items())]
