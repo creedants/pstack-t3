@@ -21,6 +21,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._reviews.threads import cooldown_seats, moment_of
+# dish.py imports brief_mode from this module while it loads, so this binds the module object that
+# import already made, and reads its backup runner and seat check once it is complete.
+from brigade_lib.commands._items import dish as _dish
 from brigade_lib.shared import BrigadeError
 from brigade_lib.spend import add_arguments, spend_text
 from brigade_lib.store import roles_script
@@ -148,8 +152,28 @@ def show_payload(catalog, argv):
     raise BrigadeError(show_failure(catalog, result.returncode, err_text))
 
 
+def launch_backup(project_root, args, role, mode, selected, live):
+    """The roles.py backup payload for a launch whose resolved seat's provider is cooling.
+
+    roles.py may run git, so this runs outside the store lock. The argument shape and the exclusion
+    list match the usage-limit path. --resume keeps backup from reading launch's empty text as not a
+    usage limit, and the failed seat's provider is out, so it falls through to the role's backups.
+    """
+    argv = [sys.executable, str(roles_script()), "backup", "--cwd", project_root, "--catalog", args.catalog,
+            "--parent", args.parent, "--role", role,
+            "--provider", selected["instanceId"], "--model", selected["model"]]
+    if selected["options"]:
+        argv += ["--options", json.dumps(selected["options"])]
+    # roles.py reads --out as a provider, so one provider with two cooling seats is passed once.
+    for name in dict.fromkeys(entry[0].partition("/")[0] for entry in live):
+        argv += ["--out", name]
+    if mode is not None:
+        argv += ["--brief-mode", mode]
+    return _dish.backup_payload(argv + ["--resume"], args.catalog, "")
+
+
 def launch_text(restaurant, args):
-    """One JSON object for t3_thread_launch modelSelection. The command writes nothing."""
+    """One JSON object for t3_thread_launch modelSelection. The command writes nothing to stdout but the object."""
     if seam.HELD_LOCKS:
         raise BrigadeError(f"roles.py may run git; release {seam.HELD_LOCKS[0]}'s store lock before resolving the mode")
     ident = args.dish
@@ -159,6 +183,7 @@ def launch_text(restaurant, args):
         project_root = restaurant.meta["projectRoot"]
         brief_path = restaurant.dir / "briefs" / f"{ident}.md"
         brief_bytes = brief_path.read_bytes() if brief_path.is_file() else None
+        live = cooldown_seats(restaurant, moment_of(seam.now()))
     if brief_bytes is None:
         text = None
     else:
@@ -173,7 +198,21 @@ def launch_text(restaurant, args):
     if mode is not None:
         argv += ["--brief-mode", mode]
     payload = show_payload(args.catalog, argv)
-    return json.dumps(selection_from_show(payload, role))
+    selected = selection_from_show(payload, role)
+    # A cooldown covers every model on its provider, because the usage-limit path excludes by provider.
+    cooling = [entry for entry in live if entry[0].partition("/")[0] == selected["instanceId"]]
+    if not cooling:
+        return json.dumps(selected)
+    own = f"{selected['instanceId']}/{selected['model']}"
+    seat, end, _ = next((entry for entry in cooling if entry[0] == own), cooling[0])
+    backup = launch_backup(project_root, args, role, mode, selected, live)
+    if backup.get("decision") != "relaunch":
+        earliest = min(live, key=lambda entry: moment_of(entry[1]))[1]
+        raise BrigadeError(f"{ident}: {seat} cooling until {end}; no seat is runnable before {earliest}")
+    replacement = backup.get("seat")
+    words = _dish.seat_word(replacement)
+    print(f"{ident}: {seat} cooling until {end}; launch on {words}", file=sys.stderr)
+    return json.dumps(selection_from_show({"roles": {role: {"seats": [replacement]}}}, role))
 
 
 def register_launch(sub):
