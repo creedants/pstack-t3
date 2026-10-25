@@ -1,0 +1,2 @@
+- kind feature
+- edits verify runs the landing contract's setup command in its replay copy before the build and check commands

@@ -10,6 +10,7 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from brigade_lib import seam
+from brigade_lib._edits.setup import prepare
 from brigade_lib.compact import SETTINGS_MODE, SETTINGS_RELATIVE, settings_cap_only
 from brigade_lib.shared import BrigadeError, command_words
 
@@ -221,19 +222,21 @@ def _cap_only(project_root, before, after):
     return settings_cap_only(earlier, git(project_root, "cat-file", "blob", after.oid).stdout)
 
 
-def compared_paths(project_root, before, after, extracted, edited, built):
+def compared_paths(project_root, before, after, extracted, edited, prepared, built):
     """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted.
 
-    The settings file is compared like every other path, except that it is left out when its two tree states
+    The build is measured against the copy after the setup. A path the setup created and the build left alone is not
+    compared when neither commit holds it. The settings file is compared like every other path, except that it is left out when its two tree states
     differ by nothing but the cap splice and the scratch copy agrees at that path at every stage, meaning the
-    extracted, edited, and built digests there are equal.
+    extracted, edited, prepared, and built digests there are equal.
     """
     found = {path for path in before.keys() | after.keys()
              if before.get(path) != after.get(path) or extracted.get(path) != edited.get(path)
-             or edited.get(path) != built.get(path)}
+             or prepared.get(path) != built.get(path)}
     return sorted(path for path in found
                   if path != SETTINGS_RELATIVE or not _cap_only(project_root, before.get(path), after.get(path))
-                  or extracted.get(path) != edited.get(path) or edited.get(path) != built.get(path))
+                  or extracted.get(path) != edited.get(path) or edited.get(path) != prepared.get(path)
+                  or prepared.get(path) != built.get(path))
 
 
 def renamed_note(before, after, skipped):
@@ -249,8 +252,8 @@ def renamed_note(before, after, skipped):
     return found[0] if len(found) == 1 else ""
 
 
-def path_lines(paths, edited, built, head, sha, skipped=""):
-    """One line per path, and whether the scratch copy and the head agree at every compared path.
+def path_lines(paths, prepared, built, head, sha, skipped=""):
+    """One line per path, keyed on whether the build changed the path after the setup, and whether the scratch copy and the head agree at every compared path.
 
     The skipped path prints SKIPPED_LINE instead of its PATH_LINES line, and it decides nothing.
     """
@@ -261,7 +264,7 @@ def path_lines(paths, edited, built, head, sha, skipped=""):
             continue
         same = built.get(path) == head.get(path)
         agree.append(same)
-        lines.append(PATH_LINES[edited.get(path) != built.get(path), same].format(path=path, sha=sha))
+        lines.append(PATH_LINES[prepared.get(path) != built.get(path), same].format(path=path, sha=sha))
     return lines, all(agree)
 
 
@@ -325,10 +328,11 @@ def exit_code(scratch, command):
     return result.returncode
 
 
-def replay(project_root, reviewed, before, after, edits, build, check, sha, skip=""):
-    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the build's output.
+def replay(project_root, reviewed, before, after, edits, build, check, sha, skip="", setup=""):
+    """The lines of one verify, and whether it is clean. One scratch copy holds the reviewed commit, then the edits, then the setup's output, then the build's output.
 
-    A path named by skip is left out of the comparison when the reviewed commit holds no entry at it and the new head
+    The setup runs after the edits and before the build, in the copy, and a failing setup, or a setup that changes a path
+    the reviewed commit holds, returns its one line. A path named by skip is left out of the comparison when the reviewed commit holds no entry at it and the new head
     does, and it prints SKIPPED_LINE instead. When the reviewed commit holds exactly one regular .md file in that
     path's directory that the new head does not, that file is the same note under its old name and is compared at
     skip's digest. A file there that does not end in .md is never the old note, so a deleted .json is not one.
@@ -352,19 +356,29 @@ def replay(project_root, reviewed, before, after, edits, build, check, sha, skip
         for path, data in changed.items():
             (scratch / path).write_bytes(data)
         edited = digests(scratch)
+        if setup:
+            failure = prepare(scratch, setup)
+            if failure:
+                return [failure], False
+            prepared = digests(scratch)
+            touched = sorted(path for path in before if prepared.get(path) != edited.get(path))
+            if touched:
+                return [f"FAIL setup: {setup} changed {touched[0]}"], False
+        else:
+            prepared = edited
         if build != NO_COMMAND:
             code = exit_code(scratch, build)
             if code:
                 return [f"FAIL build: {build} exited {code}"], False
         built = digests(scratch)
-        paths = compared_paths(project_root, before, after, extracted, edited, built)
+        paths = compared_paths(project_root, before, after, extracted, edited, prepared, built)
         head = {path: head_digest(project_root, after[path]) for path in paths if path in after}
         skipped = skip if skip and skip not in before and skip in after else ""
         if skipped:
             old = renamed_note(before, after, skipped)
             if old:
                 head[old] = head[skipped]
-        lines, clean = path_lines(paths, edited, built, head, sha, skipped)
+        lines, clean = path_lines(paths, prepared, built, head, sha, skipped)
         if clean and check != NO_COMMAND:
             code = exit_code(scratch, check)
             lines.append(f"FAIL check: {check} exited {code}" if code else "ok check")
