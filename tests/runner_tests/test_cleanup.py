@@ -17,6 +17,8 @@ import select
 import subprocess
 import sys
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from .support import LINUX, MARKS, RUNNER, RunnerCase, setUpModule, start_time
 
@@ -205,6 +207,51 @@ class CleanupTest(RunnerCase, unittest.TestCase):
         self.assertEqual(worker, sleeper.pid)
         self.end(worker)
         self.assert_answers(sleeper)
+
+
+    def held_entry(self, reap):
+        """Start a real child and open its stat entry, then kill and reap the child when reap is true. Return the pid and the open entry."""
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        handle = os.open(f"/proc/{child.pid}/stat", os.O_RDONLY)
+        self.addCleanup(os.close, handle)
+        if reap:
+            child.kill()
+            child.wait()
+        return child.pid, handle
+
+    def reads_through(self, handle, entry):
+        """Return a Path.read_text that reads the open entry for entry, and reads every other path as before."""
+        original = Path.read_text
+
+        def read_text(itself, *args, **kwargs):
+            if itself != entry:
+                return original(itself, *args, **kwargs)
+            os.lseek(handle, 0, os.SEEK_SET)
+            return os.read(handle, 65536).decode()
+
+        return read_text
+
+    @unittest.skipUnless(LINUX, "the test reads /proc")
+    def test_a_process_reaped_after_its_stat_entry_opened_counts_as_gone_to_both_helpers(self):
+        """A read through an entry opened while its process ran raises ProcessLookupError once the kernel reaps that process, so both helpers count it as gone instead of raising out of a test."""
+        pid, handle = self.held_entry(reap=True)
+        entry = Path(f"/proc/{pid}/stat")
+        with mock.patch.object(Path, "read_text", self.reads_through(handle, entry)):
+            self.assertRaises(ProcessLookupError, entry.read_text)
+            self.assert_dead(pid)
+            with self.assertRaises(AssertionError) as raised:
+                self.assert_alive(pid)
+        self.assertIn(f"process {pid}", str(raised.exception))
+
+    @unittest.skipUnless(LINUX, "the test reads /proc")
+    def test_a_live_process_read_through_its_stat_entry_is_alive_and_not_dead_at_the_deadline(self):
+        """A read through the entry of a live process still reports its state, so assert_alive passes and assert_dead fails at its deadline instead of counting a live process as gone."""
+        pid, handle = self.held_entry(reap=False)
+        with mock.patch.object(Path, "read_text", self.reads_through(handle, Path(f"/proc/{pid}/stat"))):
+            self.assert_alive(pid)
+            self.assertRaises(AssertionError, self.assert_dead, pid, 0.1)
 
 
 if __name__ == "__main__":

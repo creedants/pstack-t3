@@ -38,7 +38,7 @@ def wait_gone(pid: int, limit: float = 10.0) -> bool:
             state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
             if state == "Z":
                 return True
-        except (FileNotFoundError, IndexError):
+        except (FileNotFoundError, IndexError, ProcessLookupError):
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
@@ -196,7 +196,7 @@ class ParentExitTest(RunnerCase, unittest.TestCase):
                     while True:
                         try:
                             state = Path(f"/proc/{watcher}/stat").read_text().rsplit(") ", 1)[1][0]
-                        except FileNotFoundError:
+                        except (FileNotFoundError, ProcessLookupError):
                             return
                         if state == "Z":
                             return

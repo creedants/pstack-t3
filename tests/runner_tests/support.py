@@ -252,7 +252,7 @@ RELEASES_THE_PARENT = """
     def ended(pid):
         try:
             return Path(f"/proc/{{pid}}/stat").read_text().rsplit(") ", 1)[1][0] == "Z"
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             return True
 
     class ReleaseTest(unittest.TestCase):
@@ -421,7 +421,7 @@ class RunnerCase:
     def assert_alive(self, pid):
         try:
             state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             state = "gone"
         self.assertIn(state, ("S", "R"), f"process {pid}")
 
