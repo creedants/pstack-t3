@@ -10,13 +10,14 @@ SETUP_TIMEOUT = 1800
 def prepare(scratch, setup):
     """Run the contract's setup command in the scratch copy, and return "" or the one failure line.
 
-    An empty command returns "" and starts no process. The command runs through the platform shell in its
-    own process group, with stdin closed and its output captured, because the landing queue runs the same
-    contract string through a shell and a setup such as `cd web && npm ci` must work here too.
-    A non-zero exit returns `FAIL setup: <command> exited <code>`. A run that reaches SETUP_TIMEOUT kills
-    the process group and returns `FAIL setup: <command> timed out`. The command's own output goes to
-    stderr, the way exit_code sends a failed build's output there. A shell that cannot start raises
-    BrigadeError, as exit_code does.
+    An empty command returns "" and starts no process. The command runs through the platform shell,
+    with stdin closed and its output captured. On POSIX it starts a new session and process group.
+    The landing queue runs the same contract string through a shell, so `cd web && npm ci` works here too.
+    A non-zero exit returns `FAIL setup: <command> exited <code>`. A run that reaches SETUP_TIMEOUT
+    attempts to kill the process group, or kills the shell process when the group APIs are absent,
+    and returns `FAIL setup: <command> timed out`. Captured output goes to stderr only on failure,
+    the way exit_code sends a failed build's output there. A shell that cannot start raises BrigadeError,
+    as exit_code does.
     """
     if not setup.strip():
         return ""

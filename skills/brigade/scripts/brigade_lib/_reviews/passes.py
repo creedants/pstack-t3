@@ -143,8 +143,8 @@ def contract_setup(root):
 
     It reads the setup value from the contract table of the land.db whose commonDir resolves to root's
     common git directory, through the same read-only reader contract_check uses: _common_dir and
-    _contract_rows from brigade_lib._affected.report. It reads the commonDir and setup keys and no other,
-    and it changes no reader.
+    _contract_rows from brigade_lib._affected.report. That reader loads the contract table. This function
+    uses only the commonDir and setup values, and it changes no reader.
     It skips a candidate whose log has no index or whose database the read cannot open, and returns an
     empty string when no candidate matches. It returns the setup value stripped when that value is a string,
     and an empty string in every other case: no common directory, a contract with no setup key, a value that

@@ -225,8 +225,8 @@ def _cap_only(project_root, before, after):
 def compared_paths(project_root, before, after, extracted, edited, prepared, built):
     """The paths either commit's tree holds where the two trees differ or the scratch copy changed in the edits or the build, sorted.
 
-    The build is measured against the copy after the setup, so a path the setup created and the build left alone is not
-    compared. The settings file is compared like every other path, except that it is left out when its two tree states
+    The build is measured against the copy after the setup. A path the setup created and the build left alone is not
+    compared when neither commit holds it. The settings file is compared like every other path, except that it is left out when its two tree states
     differ by nothing but the cap splice and the scratch copy agrees at that path at every stage, meaning the
     extracted, edited, prepared, and built digests there are equal.
     """
