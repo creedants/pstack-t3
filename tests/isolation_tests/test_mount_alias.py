@@ -1,12 +1,16 @@
 """A path inside the run root that mounts protected storage is judged by the storage it reaches.
 
 `os.path.realpath` follows symlinks and not mounts, so a bind mount at a name inside the run root used to
-make protected storage look like the run root. The child registers the mounted directory as a protected
-root for the four attempts, because the guard protects the roots it is given and resolves nothing by
-mount. The first case makes that mount for real in a private user and mount namespace, which needs no
-root and leaves the host untouched. The second case answers the mount table from a line that names the
-alias as a mount of the protected directory, the way `test_descriptor_paths.py` answers `F_GETPATH`, so
-the resolver is covered on a host where the mount cannot be made.
+make protected storage look like the run root. Each child registers the mounted directory as a protected
+root for the four attempts, so the mount-identity check has the protected root to compare. One case makes
+that bind mount for real in a private user and mount namespace, which needs no root on the host. The
+mounts stay in the private namespace, but the guard can leave process records in the temporary
+directory this module names. A second case stacks a tmpfs at the protected directory with another tmpfs
+bound over it, so the first mount is hidden. A third makes the same real bind alias with a mount table
+that cannot be read or parsed, and the child must stop or refuse. The last case answers the mount table
+from a line that names the alias as a mount of the protected directory, the way
+`test_descriptor_paths.py` answers `F_GETPATH`, so the resolver is covered on a host where the mount
+cannot be made.
 """
 
 if __package__ in (None, ""):

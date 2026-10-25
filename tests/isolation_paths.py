@@ -15,8 +15,8 @@ symlink name itself.
 protected directory answer to a run-root name. `tests/isolation_mounts.py` holds the mount table and
 gives a path a candidate storage identity for every mount point above it, hidden entries included.
 `_reaches` compares every candidate the target has with every candidate each protected root has, so an
-alias that reaches either backing storage is refused. A host without that table, which includes macOS,
-has no table, and the spelling rules stand alone there.
+alias that reaches either backing storage is refused. macOS has no such file, so it has no table, and
+the spelling rules stand alone there.
 """
 
 from __future__ import annotations
@@ -71,7 +71,10 @@ def _entry(path) -> str:
 
 
 def _sqlite_path(database: str) -> str | None:
-    """Return the path a SQLite database name acts on, None when it names no filesystem path, or raise ValueError."""
+    """Return the path a SQLite database name acts on, None when it names no filesystem path.
+
+    A `file:` URI that names no local path raises ValueError.
+    """
     if database in ("", ":memory:"):
         return None
     if not database.startswith("file:"):

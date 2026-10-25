@@ -4,6 +4,12 @@ A runner replaces HOME and the XDG values for each child, so a child that comput
 roots from that environment alone loses the originals. The fixture here has no isolation prelude. It
 asks for one write into each original directory, records the verdict, and starts a nested runner on
 a second copy of itself so the nested report proves the roots survive a nested run.
+
+The last cases cover the guard's own record files. One replaces the record name with a symlink to a
+protected canary, and the guard must replace the name instead of following it. Another swaps the
+record directory for a symlink at the moment the guard lists it, and the replacement target must keep
+its file. The third makes the record directory itself a protected root, so the guard must skip that
+candidate and keep the file it holds.
 """
 
 if __package__ in (None, ""):
