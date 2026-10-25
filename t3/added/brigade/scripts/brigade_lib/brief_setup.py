@@ -1,20 +1,19 @@
-"""Read the landing contract's setup command for the worker brief and for brigade opening."""
-import argparse
+"""The landing contract's setup command, read once for the worker brief line."""
 import json
 import os
-import sys
 from pathlib import Path
-
-if __package__ in (None, ""):
-    sys.path[0] = str(Path(__file__).resolve().parents[1])
-    sys.dont_write_bytecode = True
 
 from brigade_lib._affected.report import _common_dir, _contract_rows
 from brigade_lib.edits import NO_COMMAND
 
 
 def contract_setup(root):
-    """The landing contract's setup command for root, or an empty string."""
+    """The landing contract's setup command for root, or an empty string.
+
+    It takes the setup value from the contract table of the land.db whose commonDir resolves to root's common git directory.
+    A root git cannot name, an unreadable store, a missing key, a value that is not a string, a blank value, and the
+    literal none all read as no setup command.
+    """
     common = _common_dir(root)
     if common is None:
         return ""
@@ -50,17 +49,3 @@ def setup_lines(root):
     if not setup:
         return ()
     return (f"- Before your first build or test, run the project's setup command through `land.py slot --` unless the worktree already has it run: {setup}.",)
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project-root", default=".", help="checkout whose contract holds the setup command")
-    args = parser.parse_args(argv)
-    command = contract_setup(args.project_root)
-    if command:
-        print(command)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
