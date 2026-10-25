@@ -11,7 +11,8 @@ bound over it, so the first mount is hidden. A third makes the same real bind al
 that cannot be read or parsed, and the child must stop or refuse. The last case answers the mount table
 from a line that names the alias as a mount of the protected directory, the way
 `test_descriptor_paths.py` answers `F_GETPATH`, so the resolver is covered on a host where the mount
-cannot be made.
+cannot be made. The three cases that make a real mount probe the namespace once per process and
+skip, naming the probe's stderr, on a host that refuses it, such as GitHub's Ubuntu runners.
 """
 
 if __package__ in (None, ""):
@@ -205,6 +206,23 @@ mounts._mount_table = lambda: table + ((alias, device, root),)
 ENTRIES = ("write", "truncate", "rename", "delete")
 PROTECTED_FILES = ("keep-for-delete.txt", "keep-for-rename.txt")
 
+_UNPROBED = object()
+_namespace_refusal = _UNPROBED
+
+
+def namespace_refusal():
+    """Return why this host refuses a private user and mount namespace, or None when it allows one, probing once."""
+    global _namespace_refusal
+    if _namespace_refusal is _UNPROBED:
+        done = subprocess.run(["unshare", "-Ur", "-m", "true"], capture_output=True, text=True,
+                              timeout=60)
+        if done.returncode == 0:
+            _namespace_refusal = None
+        else:
+            detail = (done.stderr or done.stdout).strip()
+            _namespace_refusal = detail or f"unshare exited {done.returncode}"
+    return _namespace_refusal
+
 
 class MountAliasTest(unittest.TestCase):
     def setUp(self):
@@ -222,6 +240,13 @@ class MountAliasTest(unittest.TestCase):
         self.records.mkdir()
         self.report = self.scratch / "report.json"
         self.visible = self.scratch / "visible.json"
+
+    def require_namespace(self):
+        """Skip when this host refuses the private user and mount namespace a real mount case needs."""
+        refusal = namespace_refusal()
+        if refusal:
+            raise unittest.SkipTest(
+                f"this host cannot create a private user and mount namespace: {refusal}")
 
     def child(self, setup, verify=""):
         """Return the body of a child that installs the guard, makes the alias reach protected storage, and mutates through it."""
@@ -269,11 +294,13 @@ class MountAliasTest(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith("linux"), "a private user and mount namespace is a Linux feature")
     @unittest.skipUnless(shutil.which("unshare"), "unshare is not installed")
     def test_a_real_bind_mount_at_a_name_inside_the_run_root_cannot_reach_protected_storage(self):
+        self.require_namespace()
         self.assert_nothing_moved(self.namespaced(MOUNT))
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "a private user and mount namespace is a Linux feature")
     @unittest.skipUnless(shutil.which("unshare"), "unshare is not installed")
     def test_a_protected_root_hidden_by_a_stacked_mount_cannot_be_reached_through_an_alias(self):
+        self.require_namespace()
         setup = STACKED.replace("@SCRATCH_DIR@", repr(str(self.scratch)))
         verify = VISIBLE.replace("@VISIBLE@", repr(str(self.visible)))
         source = self.scratch / "stacked.py"
@@ -290,6 +317,7 @@ class MountAliasTest(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith("linux"), "a private user and mount namespace is a Linux feature")
     @unittest.skipUnless(shutil.which("unshare"), "unshare is not installed")
     def test_a_mount_table_that_cannot_be_read_or_parsed_stops_or_refuses_the_real_bind_alias(self):
+        self.require_namespace()
         broken = self.scratch / "broken-mountinfo"
         broken.write_text("this is not a mountinfo entry\n")
         cases = {"missing": self.scratch / "no-such-mountinfo", "malformed": broken}
