@@ -72,8 +72,8 @@
   platform's own `os.mkfifo` or `os.mknod` is absent from `os.supports_dir_fd`, which is the function the
   guard captured before it wrapped them. Both still run on Linux.
 - Round 3 closes the anchored-descriptor leak. `after_fork` clears the anchored set before it
-  republishes, so a fork child keeps none of the parent's descriptor numbers. An anchored descriptor
-  is honored only for a single-component relative name, a rename needs both of its descriptors
-  anchored, and the unused truncate allowance is gone, so the allowance covers only the record
-  machinery's own calls. Three regressions cover a fork child, an absolute and a multi-component name,
-  and a rename with one anchored descriptor.
+  republishes, so a fork child keeps none of the parent's descriptor numbers as anchors. An anchored
+  descriptor is honored only for a single-component relative name, a rename needs both of its
+  descriptors anchored, and the unused truncate allowance is gone, so the allowance is open only
+  inside an `anchored()` block. Three regressions cover a fork child, an absolute and a multi-component
+  name, and a rename with one anchored descriptor.
