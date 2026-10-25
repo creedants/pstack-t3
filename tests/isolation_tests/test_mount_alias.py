@@ -1,11 +1,12 @@
 """A path inside the run root that mounts protected storage is judged by the storage it reaches.
 
 `os.path.realpath` follows symlinks and not mounts, so a bind mount at a name inside the run root used to
-make protected storage look like the run root. The first case makes that mount for real in a private user
-and mount namespace, which needs no root and leaves the host untouched. The second case answers the mount
-table from a line that names the alias as a mount of the protected directory, the way
-`test_descriptor_paths.py` answers `F_GETPATH`, so the resolver is covered on a host where the mount cannot
-be made.
+make protected storage look like the run root. The child registers the mounted directory as a protected
+root for the four attempts, because the guard protects the roots it is given and resolves nothing by
+mount. The first case makes that mount for real in a private user and mount namespace, which needs no
+root and leaves the host untouched. The second case answers the mount table from a line that names the
+alias as a mount of the protected directory, the way `test_descriptor_paths.py` answers `F_GETPATH`, so
+the resolver is covered on a host where the mount cannot be made.
 """
 
 if __package__ in (None, ""):
@@ -79,10 +80,11 @@ def delete():
         os.close(handle)
 
 
-attempt("write", write)
-attempt("truncate", truncate)
-attempt("rename", rename)
-attempt("delete", delete)
+with isolation.protecting(protected):
+    attempt("write", write)
+    attempt("truncate", truncate)
+    attempt("rename", rename)
+    attempt("delete", delete)
 with open(@REPORT@, "w") as handle:
     json.dump(verdicts, handle)
 '''
