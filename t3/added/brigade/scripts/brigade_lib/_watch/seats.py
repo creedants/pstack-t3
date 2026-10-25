@@ -29,6 +29,7 @@ from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import LEASED_STATES, OPEN_LINES, OPEN_RUN_MINUTES
 from brigade_lib.tickets import handed_count, handoff_id, inbox_file, sibling_rails, taken_row
 from brigade_lib._watch.progress import attempt_count
+from brigade_lib._reviews.threads import cooldown_seats, moment_of
 
 def require_seat(seat):
     """The cleaned provider/model seat. Provider is the text before the first slash. The model id is the rest and may contain further slashes. Both parts must be non-empty, and the seat holds no whitespace."""
@@ -37,6 +38,79 @@ def require_seat(seat):
     if not (provider and model) or any(character.isspace() for character in value):
         raise BrigadeError("a model is provider/model")
     return value
+
+
+ISO_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?")
+
+
+CLOCK_UTC = re.compile(r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s?(?:UTC|GMT|Z)\b")
+
+
+CLOCK_SPAN = re.compile(r"\b(?:in|after)\s+(\d+)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
+                        re.IGNORECASE)
+
+
+SPAN_UNITS = {"h": "hours", "m": "minutes", "s": "seconds"}
+
+
+def _iso_end(text):
+    """The first ISO 8601 date-time in the text that names a zone and parses, or None."""
+    for match in ISO_STAMP.finditer(text):
+        stamp = match.group(0)
+        if not (stamp.endswith("Z") or re.search(r"[+-]\d{2}:?\d{2}$", stamp)):
+            continue
+        found = moment_of(stamp)
+        if found is not None:
+            return found
+    return None
+
+
+def _clock_end(text, moment):
+    """The first clock time in the text, when it is still ahead of `moment`, or None.
+
+    A clock time counts only when `UTC`, `GMT`, or `Z` follows it. The first one that parses
+    decides, so a text whose first clock time has passed reads as no clock time.
+    """
+    for match in CLOCK_UTC.finditer(text):
+        hour, minute = int(match.group(1)), int(match.group(2))
+        second = int(match.group(3) or 0)
+        if hour > 23 or minute > 59 or second > 59:
+            continue
+        found = moment.replace(hour=hour, minute=minute, second=second, microsecond=0)
+        return found if found > moment else None
+    return None
+
+
+def _span_end(text, moment):
+    """`moment` plus the first relative span in the text, or None when there is none or the sum cannot be represented."""
+    for match in CLOCK_SPAN.finditer(text):
+        unit = SPAN_UNITS[match.group(2)[0].lower()]
+        try:
+            return moment + timedelta(**{unit: int(match.group(1))})
+        except (OverflowError, ValueError):
+            return None
+    return None
+
+
+def cooldown_end(text, now, minutes):
+    """The ISO end time a cooled seat is out until.
+
+    Three shapes are read, and nothing else. An ISO 8601 date-time anywhere in the text that names a
+    zone, such as `2026-10-25T12:30:00Z` or `2026-10-25 12:30:00+00:00`. A clock time followed by
+    `UTC`, `GMT`, or `Z`, such as `resets at 12:30 UTC`, which counts only when it is still ahead of
+    `now`. A relative span, such as `try again in 30 minutes` or `retry after 20s`, with the units
+    second, sec, s, minute, min, m, hour, hr, or h. An ISO stamp with no zone and a clock time that
+    has passed are not read, so the next shape in the text is tried, and a relative span too large to
+    represent is not read either. When no shape is read, the end is `now` plus `minutes`, with no
+    exception, as for an empty text, a shape that does not parse, and a parsed time that is not after
+    `now`. `now` is the ISO stamp the cooldown starts at.
+    """
+    moment = moment_of(now)
+    fallback = moment + timedelta(minutes=minutes)
+    found = _iso_end(text) or _clock_end(text, moment) or _span_end(text, moment)
+    if found is None or found <= moment:
+        return fallback.isoformat()
+    return found.isoformat()
 
 
 def latest_models(restaurant):
@@ -49,9 +123,16 @@ def latest_models(restaurant):
 
 
 def skip_lines(restaurant):
-    """One line per seat whose latest model row is skipped, sorted by seat."""
-    return [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
-            for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
+    """One skipped line per seat whose latest model row is skipped, sorted by seat, then one cooling line per live cooldown, sorted by seat.
+
+    The cooling lines come after every skipped line and before the dish lines, and a seat whose end
+    has passed prints none of them.
+    """
+    lines = [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
+             for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
+    lines += [f"cooling {seat} until {end} ({dish})"
+              for seat, end, dish in cooldown_seats(restaurant, moment_of(seam.now()))]
+    return lines
 
 
 def record_model_skip(restaurant, seat, cause):

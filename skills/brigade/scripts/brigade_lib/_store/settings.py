@@ -3,7 +3,7 @@ import posixpath
 import re
 from pathlib import Path
 from brigade_lib import seam
-from brigade_lib._store.vocab import LOW_RESERVE, ROUND_BUDGET
+from brigade_lib._store.vocab import COOLDOWN_MINUTES, LOW_RESERVE, ROUND_BUDGET
 from brigade_lib.compact import refuse_setting
 from brigade_lib.shared import BrigadeError
 
@@ -26,6 +26,9 @@ LIVENESS_FLOOR = 60000
 
 
 CHANGE_NOTE_KEY = "changeNoteDir"
+
+
+COOLDOWN_KEY = "cooldownMinutes"
 
 
 CHANGE_NOTE_REFUSAL = ("it is not a repository-relative directory path with no leading slash, "
@@ -110,6 +113,30 @@ def parse_round_budget(text):
         raise BrigadeError(f"--round-budget takes a whole number of 1 or more, got '{text}'") from None
     if value < 1:
         raise BrigadeError(f"--round-budget takes a whole number of 1 or more, got '{text}'")
+    return value
+
+
+def cooldown_minutes(meta):
+    """The minutes a cooled seat stays out of a launch.
+
+    A missing key takes COOLDOWN_MINUTES. A present value that is a boolean, is not an integer, or is under 1 is refused.
+    """
+    if COOLDOWN_KEY not in meta:
+        return COOLDOWN_MINUTES
+    value = meta[COOLDOWN_KEY]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        refuse_setting(COOLDOWN_KEY, value, "it is not a whole number of 1 or more")
+    return value
+
+
+def parse_cooldown_minutes(text):
+    """The integer a --cooldown-minutes flag stores. Empty string is the caller's clear signal, not this function's."""
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        raise BrigadeError(f"--cooldown-minutes takes a whole number of 1 or more, got '{text}'") from None
+    if value < 1:
+        raise BrigadeError(f"--cooldown-minutes takes a whole number of 1 or more, got '{text}'")
     return value
 
 

@@ -34,9 +34,9 @@ create a restaurant, or print an existing one
 | `--name NAME` |  |  |  |  |
 | `--rename NAME` |  |  |  | rename the --name restaurant and move its store; refused while landing work or an item is held |
 | `--admin` |  |  |  | open the repository's executive admin at \<project>/.admin; takes no --name |
-| `--reporting REPORTING` |  | `every-turn`, `milestones`, `digest` | `milestones` | how often the coordinator replies (default: milestones) |
+| `--reporting REPORTING` |  | `every-turn`, `milestones`, `digest` | `milestones` | how often the coordinator replies, default milestones |
 | `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns, such as github |
-| `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review; missing reads as 2 |
+| `--workers WORKERS` |  |  |  | dishes in progress or in review at once; missing reads as 2 |
 | `--mode MODE` |  | `full`, `light` |  | this restaurant's light or full mode; missing leaves it to the roles files |
 | `--context-cap CONTEXT_CAP` |  |  |  | on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | on creation, choose claude or other; missing uses claude; an existing store uses its saved provider |
@@ -44,36 +44,37 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER]
 ```
 
-record the head chef thread, a schedule id, or the reporting level
+record a setting
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--thread THREAD` |  |  |  |  |
 | `--replace` |  |  |  | replace a recorded coordinator thread |
-| `--expect EXPECT` |  |  |  | executive admin only: replace the thread only while it is still this value |
+| `--expect EXPECT` |  |  |  | executive admin only: replace the thread while it is still this value |
 | `--stopped STOPPED` |  |  |  | with --expect recovering:\<id>: the run id t3_thread_wait reported terminal, idle, or gone |
-| `--reports-to REPORTS_TO` |  |  |  | the executive admin's thread this coordinator reports to; "" clears it |
+| `--reports-to REPORTS_TO` |  |  |  | the executive admin's thread to report to; "" clears it |
 | `--schedule NAME=ID` (repeatable) |  |  |  |  |
 | `--reporting REPORTING` |  | `every-turn`, `milestones`, `digest` |  | how often the coordinator replies |
-| `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list, and "" clears it |
-| `--workers WORKERS` |  |  |  | how many dishes may be in progress or in review |
+| `--intake INTAKE` |  |  |  | comma-separated intake sources this coordinator owns; replaces the list; "" clears it |
+| `--workers WORKERS` |  |  |  | dishes in progress or in review at once |
 | `--mode MODE` |  |  |  | full or light from the next brief; "" leaves it to the roles files |
-| `--build-command BUILD_COMMAND` |  |  |  | the build command edits verify runs; none records that the project has no build, and "" removes the setting |
-| `--check-command CHECK_COMMAND` |  |  |  | the check command edits verify runs; none records that the project has no check, and "" removes the setting |
-| `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority the startable command lists as startable, or off; missing reads as normal |
-| `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of the kind holding a worker slot; a pair with no number clears that kind's cap; an empty value clears every cap |
-| `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind, full or light; a pair with no mode clears that kind's depth; an empty value clears every depth |
-| `--scratch-dir DIR` |  |  |  | the parent directory worker briefs pass to mktemp -d -p; an absolute directory path outside /tmp; "" clears the setting |
-| `--low-reserve N` |  |  |  | the most workers still idle when a low ticket is held back while an urgent or normal ticket can start; 0 holds no low ticket back; "" clears it to 1 |
-| `--round-budget N` |  |  |  | the send-backs that owe a round decision. Higher waits for more send-backs. "" clears it to 3 |
-| `--liveness-ms N` |  |  |  | the interval a new liveness schedule uses, a whole number of at least 60000; "" removes the setting |
-| `--change-note-dir DIR` |  |  |  | the repository-relative directory holding one change-note fragment per branch, such as changes; "" clears it, and an unset key leases no fragment |
-| `--affected-tests JSON` |  |  |  | JSON object or JSON file for the affectedTests layout; "" clears it; - reads stdin |
-| `--shared-docs JSON` |  |  |  | JSON list or JSON file for the sharedDocs catalog; "" clears it; - reads stdin |
-| `--doc-timebox N` |  |  |  | the shared-document timebox in minutes, a whole number of 1 or more; "" clears it to 90 |
+| `--build-command BUILD_COMMAND` |  |  |  | the build command edits verify runs; none means the project has no build; "" removes it |
+| `--check-command CHECK_COMMAND` |  |  |  | the check command edits verify runs; none means the project has no check; "" removes it |
+| `--autofire AUTOFIRE` |  | `off`, `urgent`, `normal`, `low` |  | the lowest ticket priority startable lists, or off; missing reads as normal |
+| `--cap KIND=N` |  |  |  | comma-separated kind=number pairs, at most that many items of that kind in a worker slot; kind= clears that kind's cap; "" clears every cap |
+| `--review KIND=MODE` |  |  |  | comma-separated kind=mode pairs, the default mode for a new item of that kind; kind= clears that kind's depth; "" clears every depth |
+| `--scratch-dir DIR` |  |  |  | the parent directory briefs pass to mktemp -d -p; an absolute path outside /tmp; "" clears it |
+| `--low-reserve N` |  |  |  | the workers still idle while a low ticket waits behind an urgent or normal one; "" clears it to 1 |
+| `--round-budget N` |  |  |  | the send-backs that owe a round decision; "" clears it to 3 |
+| `--liveness-ms N` |  |  |  | the interval a liveness schedule uses, a whole number of at least 60000; "" clears it |
+| `--change-note-dir DIR` |  |  |  | the repository-relative directory holding one change-note fragment per branch; "" clears it, and an unset key leases no fragment |
+| `--cooldown-minutes N` |  |  |  | the minutes a cooled seat stays out of a launch; "" clears it to 60 |
+| `--affected-tests JSON` |  |  |  | JSON object or file for the affectedTests layout; "" clears it; - reads stdin |
+| `--shared-docs JSON` |  |  |  | JSON list or file for the sharedDocs catalog; "" clears it; - reads stdin |
+| `--doc-timebox N` |  |  |  | the shared-document timebox in minutes, 1 or more; "" clears it to 90 |
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json when the provider is claude; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 
@@ -431,7 +432,7 @@ record one thread an item used, for a role no other command writes
 ## brigade.py dish
 
 ```text
-brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--worker-ended WORKER_ENDED] [--lease LEASE] [--paths PATHS] [--add-paths ADD_PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] id
+brigade.py [flags] dish [--state STATE] [--task TASK] [--thread THREAD] [--branch BRANCH] [--pr PR] [--sha SHA] [--timebox TIMEBOX] [--reported] [--worker-ended WORKER_ENDED] [--lease LEASE] [--paths PATHS] [--add-paths ADD_PATHS] [--stopped STOPPED] [--mode MODE] [--reason REASON] [--usage-limit PROVIDER/MODEL] [--error ERROR] [--role ROLE] [--author AUTHOR] [--catalog CATALOG] [--parent PARENT] [--options OPTIONS] id
 ```
 
 update a dish
@@ -454,6 +455,13 @@ update a dish
 | `--stopped STOPPED` |  |  |  | with --state dropped: the run id t3_thread_wait reported terminal, or idle |
 | `--mode MODE` |  |  |  | full, to move open work to full mode once; needs --reason |
 | `--reason REASON` |  |  |  | one line: why the dish moves to full mode |
+| `--usage-limit PROVIDER/MODEL` |  |  |  | the seat that hit its usage limit; records a cooldown and prints one next step, and takes no other dish flag |
+| `--error ERROR` |  |  |  | with --usage-limit: the error text; missing or - reads stdin |
+| `--role ROLE` |  |  |  | with --usage-limit: the roles.py role of the failed seat |
+| `--author AUTHOR` (repeatable) |  |  |  | with --usage-limit: a model that wrote the diff; repeat for each |
+| `--catalog CATALOG` |  |  |  | with --usage-limit: orchestrator_capabilities JSON, as on launch |
+| `--parent PARENT` |  |  |  | with --usage-limit: this thread's provider/model, as on launch |
+| `--options OPTIONS` |  |  |  | with --usage-limit: the failed seat's options JSON |
 
 ## brigade.py pass
 

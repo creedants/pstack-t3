@@ -62,6 +62,8 @@ Each command's text below is the text that moved out of the command block in [th
 
 **`$B set --change-note-dir`.** the repository-relative directory holding one change-note fragment per branch. `""` clears it, and an unset key leases no fragment. Read back through the JSON that set prints.
 
+**`$B set --cooldown-minutes`.** the minutes a cooled seat stays out of a launch. A whole number of 1 or more. `""` clears it to 60. Read back through the JSON that set prints.
+
 ### ticket
 
 **`$B ticket add`.** prints T<n>. `--request` refuses a second ticket for that request. `--again` lifts the same-summary refusal in Filing tracker work step 4. `--kind` is required with `--summary`. `--goal` takes an open or paused goal, and without it the ticket is unassigned.
@@ -143,6 +145,8 @@ Each command's text below is the text that moved out of the command block in [th
 **`$B dish --mode full`.** records the item's move to full once. `--mode light` exits 1.
 
 **`$B dish --worker-ended`.** records that this attempt's worker ended or failed and wrote no report. It takes no other dish flag. It writes one ended log row and changes no dish field.
+
+**`$B dish --usage-limit`.** records one cooldown row in threads.tsv for the failed seat and one cooldown event in log.tsv, prints one next step, and takes no other dish flag. The six flags it reads are `--error`, `--role`, `--author`, `--catalog`, `--parent`, and `--options`, and each is refused without `--usage-limit`. Only `--role`, `--catalog`, and `--parent` are required with it. `--error` reads stdin when it is missing or `-`. The step is `relaunch on <provider/model>`, `relaunch on <provider/model> options <json>`, `panel on <seat>, <seat>; rule <json>`, or `parked until <end>`, and a dish in progress moves to blocked on the park step. An error that names no usage limit changes nothing. The attempt ends when the dish is sent back, bounced, passed, merged, or dropped, so the next attempt gets its own retry, while a replacement worker, a fresh verifier, and a park keep the same one. A second limit error in one attempt and role, including one on the seat the first error retried to, parks the dish.
 
 ### pass
 
