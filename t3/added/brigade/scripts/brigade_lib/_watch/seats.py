@@ -66,9 +66,10 @@ def _iso_end(text):
 
 
 def _clock_end(text, moment):
-    """The first clock time in the text that is still ahead of `moment`, or None.
+    """The first clock time in the text, when it is still ahead of `moment`, or None.
 
-    A clock time counts only when `UTC`, `GMT`, or `Z` follows it. One that has passed is not read.
+    A clock time counts only when `UTC`, `GMT`, or `Z` follows it. The first one that parses
+    decides, so a text whose first clock time has passed reads as no clock time.
     """
     for match in CLOCK_UTC.finditer(text):
         hour, minute = int(match.group(1)), int(match.group(2))
@@ -81,13 +82,12 @@ def _clock_end(text, moment):
 
 
 def _span_end(text, moment):
-    """`moment` plus the first relative span in the text, or None when the sum cannot be represented."""
+    """`moment` plus the first relative span in the text, or None when there is none or the sum cannot be represented."""
     for match in CLOCK_SPAN.finditer(text):
         unit = SPAN_UNITS[match.group(2)[0].lower()]
-        count = int(match.group(1))
         try:
-            return moment + timedelta(**{unit: count})
-        except OverflowError:
+            return moment + timedelta(**{unit: int(match.group(1))})
+        except (OverflowError, ValueError):
             return None
     return None
 
@@ -99,10 +99,11 @@ def cooldown_end(text, now, minutes):
     zone, such as `2026-10-25T12:30:00Z` or `2026-10-25 12:30:00+00:00`. A clock time followed by
     `UTC`, `GMT`, or `Z`, such as `resets at 12:30 UTC`, which counts only when it is still ahead of
     `now`. A relative span, such as `try again in 30 minutes` or `retry after 20s`, with the units
-    second, sec, s, minute, min, m, hour, hr, or h. An ISO stamp with no zone, a clock time that has
-    passed, and a relative span too large to represent all end at `now` plus `minutes`, with no
-    exception, as do an empty text, a text with no such shape, a shape that does not parse, and a
-    parsed time that is not after `now`. `now` is the ISO stamp the cooldown starts at.
+    second, sec, s, minute, min, m, hour, hr, or h. An ISO stamp with no zone and a clock time that
+    has passed are not read, so the next shape in the text is tried, and a relative span too large to
+    represent is not read either. When no shape is read, the end is `now` plus `minutes`, with no
+    exception, as for an empty text, a shape that does not parse, and a parsed time that is not after
+    `now`. `now` is the ISO stamp the cooldown starts at.
     """
     moment = moment_of(now)
     fallback = moment + timedelta(minutes=minutes)
