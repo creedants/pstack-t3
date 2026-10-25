@@ -67,7 +67,11 @@ def _mount_table() -> tuple[tuple[str, str, str], ...]:
 
 
 def _identities(path: str, table) -> tuple[tuple[str, str], ...]:
-    """Return the device and on-device path of every mount point that covers the path."""
+    """Return the device and on-device path of every mount point that covers the path.
+
+    A hidden entry stays in the table and still names storage an alias can reach, so the comparison
+    keeps every entry on both sides.
+    """
     found = []
     for mount, device, root in table:
         if path == mount or path.startswith(mount.rstrip(os.sep) + os.sep):

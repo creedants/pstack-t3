@@ -15,8 +15,8 @@ symlink name itself.
 protected directory answer to a run-root name. `tests/isolation_mounts.py` holds the mount table and
 gives a path a candidate storage identity for every mount point above it, hidden entries included.
 `_reaches` compares every candidate the target has with every candidate each protected root has, so an
-alias that reaches either backing storage is refused. macOS has no such file, so it has no table, and
-the spelling rules stand alone there.
+alias that reaches either backing storage is refused. On Linux a table that cannot be read or parsed
+stops the process. macOS has no such file, so it has no table, and the spelling rules stand alone there.
 """
 
 from __future__ import annotations
