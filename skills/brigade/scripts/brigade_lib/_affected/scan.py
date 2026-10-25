@@ -349,7 +349,7 @@ def _resolve_expr(node, singles):
 
 
 def _joined_operands(node):
-    """The operands of a joined path expression, left to right, with one str or Path wrapper removed."""
+    """The operands of a joined path expression, left to right, with outer str and Path wrappers removed."""
     while (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("str", "Path")
            and len(node.args) == 1 and not node.keywords):
         node = node.args[0]
