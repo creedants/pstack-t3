@@ -172,7 +172,8 @@ def register_edits(sub):
                    help="the reviewed commit the report reviews")
     a.add_argument("--branch", required=True, help="the new branch to create for the applied edits")
     a.add_argument("--worktree", default=None,
-                   help="the directory for the new worktree; a new temporary directory when omitted")
+                   help="the new worktree's path; it must not exist and must lie outside the checkout, every registered "
+                        "worktree, and the git directory; a new temporary directory when omitted")
 
 
 def register_86(sub):

@@ -217,23 +217,24 @@ def verify_edits(restaurant, dish_id, from_sha, to_sha):
     return f"{dish_id}: edits verified, {from_sha} to {to_sha}"
 
 
-def _generated_list(root):
-    """The contract's generated paths for root, or () when the status read fails or names none."""
+def _generated_list(root, dish_id):
+    """The contract's generated paths for root. Any failed or invalid status read raises BrigadeError."""
+    def unreadable(why):
+        return BrigadeError(f"{dish_id}: cannot read the landing contract's generated paths; {why}")
+
     try:
         result = seam.land_result(root, "status", "--json")
-    except Exception:
-        return ()
+    except Exception as error:
+        raise unreadable(str(error) or type(error).__name__) from None
     if result.returncode:
-        return ()
+        raise unreadable(f"land.py status --json exited {result.returncode}")
     try:
         payload = json.loads(result.stdout)
     except Exception:
-        return ()
-    if not isinstance(payload, dict):
-        return ()
-    value = payload.get("generated")
+        raise unreadable("land.py status --json did not print JSON") from None
+    value = payload.get("generated") if isinstance(payload, dict) else None
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        return ()
+        raise unreadable("land.py status --json holds no generated list")
     return tuple(value)
 
 
@@ -241,7 +242,7 @@ def apply_edits_command(restaurant, dish_id, report, from_sha, branch, worktree)
     """Called from handle(), because it starts subprocesses. It reads projectRoot and the landing contract's setup command before taking the store lock. It holds the lock while checking tables, and runs subprocesses outside the lock. It never writes a table and never records a verdict."""
     root = restaurant.meta.get("projectRoot") or ""
     setup = contract_setup(root)
-    generated = _generated_list(root)
+    generated = _generated_list(root, dish_id)
     with restaurant.checked():
         restaurant.fence()
         restaurant.find("dishes.tsv", dish_id)

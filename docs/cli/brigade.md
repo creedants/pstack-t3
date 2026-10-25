@@ -603,7 +603,7 @@ apply the edits of a review report to a new branch from the reviewed commit, run
 | `--report REPORT` | yes |  |  | the review report under reports/, such as D2-review-1.md |
 | `--from SHA` | yes |  |  | the reviewed commit the report reviews |
 | `--branch BRANCH` | yes |  |  | the new branch to create for the applied edits |
-| `--worktree WORKTREE` |  |  |  | the directory for the new worktree; a new temporary directory when omitted |
+| `--worktree WORKTREE` |  |  |  | the new worktree's path; it must not exist and must lie outside the checkout, every registered worktree, and the git directory; a new temporary directory when omitted |
 
 ## brigade.py 86
 
