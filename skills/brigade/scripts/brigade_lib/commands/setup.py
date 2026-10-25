@@ -1,30 +1,12 @@
-import argparse
-import fcntl
-import fnmatch
-import functools
-import hashlib
-import io
 import json
-import os
-import posixpath
-import re
-import runpy
-import shlex
-import stat
-import subprocess
 import sys
-import tarfile
-import tempfile
-import time
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from brigade_lib import seam
 from brigade_lib._store.opening import rename_restaurant
 from brigade_lib._store.settings import COOLDOWN_KEY, cooldown_minutes, parse_cooldown_minutes
 from brigade_lib.affected import layout
 from brigade_lib.compact import _load, drift_line, effective_cap, effective_provider, parse_context_cap, parse_coordinator_provider, sync_meta
+from brigade_lib.credit import KEY as CREDIT_KEY, credit_on, parse_credit
 from brigade_lib.items import doc_policy
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean, command_words
@@ -106,6 +88,8 @@ def register_open(sub):
                    help="on creation, set the context cap; missing reads as 300000; creation with a cap, or with an explicit provider, writes the cap to the project's .claude/settings.local.json when the provider is claude, replacing any autoCompactWindow already there; a plain open writes nothing under the project root; an existing store is left alone")
     p.add_argument("--coordinator-provider", default=None,
                    help="on creation, choose claude or other; missing uses claude; an existing store uses its saved provider")
+    p.add_argument("--pr-credit", metavar="on|off",
+                   help="on creation, on records true and off records false; no flag leaves prCredit unset; an existing store keeps its setting")
 
 
 def register_set(sub):
@@ -157,6 +141,8 @@ def register_set(sub):
                    help="the auto-compact window written to .claude/settings.local.json when the provider is claude; \"\" clears it to 300000")
     p.add_argument("--coordinator-provider", default=None,
                    help="claude or other; \"\" clears it to claude; other writes no settings file")
+    p.add_argument("--pr-credit", metavar="on|off",
+                   help="whether pull requests credit the models that did the work; on or off")
 
 
 def register(sub):
@@ -168,7 +154,7 @@ def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
     It checks contextCap, coordinatorProvider, caps, review, lowReserve, roundBudget, livenessMs, affectedTests, sharedDocs,
-    docTimebox, changeNoteDir, and cooldownMinutes, by calling each setting's reader predicate, so a value accepted here is a value that reader
+    docTimebox, changeNoteDir, cooldownMinutes, and prCredit, by calling each setting's reader predicate, so a value accepted here is a value that reader
     accepts. A missing key keeps its default.
     """
     effective_cap(meta)
@@ -181,6 +167,7 @@ def validate_settings(meta):
     doc_policy(meta)
     change_note_dir(meta)
     cooldown_minutes(meta)
+    credit_on(meta)
 
 
 def preflight_settings(prospective, args):
@@ -208,10 +195,14 @@ def handle_open(args, root):
     coordinator_provider = None
     if args.coordinator_provider not in (None, ""):
         coordinator_provider = parse_coordinator_provider(args.coordinator_provider)
+    pr_credit = None
+    if args.pr_credit is not None:
+        pr_credit = parse_credit(args.pr_credit)
     restaurant, created = open_restaurant(root, args.project_root, args.name, args.reporting,
                                           intake_list(args.intake), args.workers, args.admin, args.mode,
                                           context_cap=context_cap,
-                                          coordinator_provider=coordinator_provider)
+                                          coordinator_provider=coordinator_provider,
+                                          pr_credit=pr_credit)
     validate_settings(restaurant.meta)
     lines = [f"{'opened' if created else 'exists'} {restaurant.dir}"]
     meta = restaurant.meta
@@ -227,6 +218,10 @@ def handle_open(args, root):
         lines.append(f"context-cap stays {effective_cap(meta)}; change it with set --context-cap")
     if not created and coordinator_provider is not None and coordinator_provider != effective_provider(meta):
         lines.append(f"coordinator-provider stays {effective_provider(meta)}; change it with set --coordinator-provider")
+    if not created and pr_credit is not None:
+        kept = "on" if credit_on(meta) else "off"
+        if kept != ("on" if pr_credit else "off"):
+            lines.append(f"pr-credit stays {kept}; change it with set --pr-credit")
     lines.extend(sibling_lines(restaurant))
     if siblings(restaurant.dir, restaurant.meta.get("projectRoot")) and not is_admin(meta):
         cap = repository_cap(restaurant.meta["projectRoot"])
@@ -257,6 +252,14 @@ def handle(restaurant, args):
     if args.command == "set":
         return handle_set(restaurant, args)
     return None
+
+
+def _clear_or_parse(value, key, parse, changes, drop):
+    """One flag's setting change. Empty string drops the key, None leaves it, and any other value stores its parse."""
+    if value == "":
+        drop.append(key)
+    elif value is not None:
+        changes[key] = parse(value)
 
 
 def setting_changes(restaurant, args):
@@ -317,31 +320,11 @@ def setting_changes(restaurant, args):
             changes[SCRATCH_KEY] = scratch
         else:
             drop.append(SCRATCH_KEY)
-    if args.low_reserve is not None:
-        if args.low_reserve == "":
-            drop.append(LOW_RESERVE_KEY)
-        else:
-            changes[LOW_RESERVE_KEY] = parse_low_reserve(args.low_reserve)
-    if args.round_budget is not None:
-        if args.round_budget == "":
-            drop.append(ROUND_BUDGET_KEY)
-        else:
-            changes[ROUND_BUDGET_KEY] = parse_round_budget(args.round_budget)
-    if args.liveness_ms is not None:
-        if args.liveness_ms == "":
-            drop.append(LIVENESS_KEY)
-        else:
-            changes[LIVENESS_KEY] = parse_liveness_ms(args.liveness_ms)
-    if args.change_note_dir is not None:
-        if args.change_note_dir == "":
-            drop.append(CHANGE_NOTE_KEY)
-        else:
-            changes[CHANGE_NOTE_KEY] = parse_change_note_dir(args.change_note_dir)
-    if args.cooldown_minutes is not None:
-        if args.cooldown_minutes == "":
-            drop.append(COOLDOWN_KEY)
-        else:
-            changes[COOLDOWN_KEY] = parse_cooldown_minutes(args.cooldown_minutes)
+    _clear_or_parse(args.low_reserve, LOW_RESERVE_KEY, parse_low_reserve, changes, drop)
+    _clear_or_parse(args.round_budget, ROUND_BUDGET_KEY, parse_round_budget, changes, drop)
+    _clear_or_parse(args.liveness_ms, LIVENESS_KEY, parse_liveness_ms, changes, drop)
+    _clear_or_parse(args.change_note_dir, CHANGE_NOTE_KEY, parse_change_note_dir, changes, drop)
+    _clear_or_parse(args.cooldown_minutes, COOLDOWN_KEY, parse_cooldown_minutes, changes, drop)
     if args.affected_tests is not None:
         if args.affected_tests == "":
             drop.append("affectedTests")
@@ -352,21 +335,11 @@ def setting_changes(restaurant, args):
             drop.append("sharedDocs")
         else:
             changes["sharedDocs"] = _json_setting(args, "shared_docs", "--shared-docs")
-    if args.doc_timebox is not None:
-        if args.doc_timebox == "":
-            drop.append("docTimebox")
-        else:
-            changes["docTimebox"] = parse_doc_timebox(args.doc_timebox)
-    if args.context_cap is not None:
-        if args.context_cap == "":
-            drop.append("contextCap")
-        else:
-            changes["contextCap"] = parse_context_cap(args.context_cap)
-    if args.coordinator_provider is not None:
-        if args.coordinator_provider == "":
-            drop.append("coordinatorProvider")
-        else:
-            changes["coordinatorProvider"] = parse_coordinator_provider(args.coordinator_provider)
+    _clear_or_parse(args.doc_timebox, "docTimebox", parse_doc_timebox, changes, drop)
+    _clear_or_parse(args.context_cap, "contextCap", parse_context_cap, changes, drop)
+    _clear_or_parse(args.coordinator_provider, "coordinatorProvider", parse_coordinator_provider, changes, drop)
+    if args.pr_credit is not None:
+        changes[CREDIT_KEY] = parse_credit(args.pr_credit)
     if args.schedule:
         schedules = dict(meta.get("schedules") or {})
         for pair in args.schedule:

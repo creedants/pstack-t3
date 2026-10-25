@@ -136,7 +136,7 @@ def _project_lock(parent):
 
 
 def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None,
-                  context_cap=None, coordinator_provider=None):
+                  context_cap=None, coordinator_provider=None, pr_credit=None):
     project_root = Path(project_root).resolve()
     if admin:
         name = ADMIN_NAME
@@ -173,6 +173,8 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
         meta["contextCap"] = context_cap
     if coordinator_provider is not None:
         meta["coordinatorProvider"] = coordinator_provider
+    if pr_credit is not None:
+        meta["prCredit"] = pr_credit
     if admin:
         meta["role"] = "admin"
     if (context_cap is not None or coordinator_provider is not None) and effective_provider(meta) == "claude":
@@ -207,14 +209,15 @@ def _rename_request(args):
     """The project root, old name, new name, and owner one open --rename works from, or a refusal.
 
     It refuses the executive admin, a missing --name, a new name whose slug is empty or equals --name's,
-    and nonempty --intake, --workers, --mode, --context-cap, and --coordinator-provider values.
+    and nonempty --intake, --workers, --mode, --context-cap, --coordinator-provider, and --pr-credit values.
     """
     if args.admin:
         raise BrigadeError("open --rename renames a coordinator; the executive admin keeps its directory")
     if not args.name:
         raise BrigadeError("open --rename needs --name, the restaurant's current name")
     for flag, value in (("--intake", args.intake), ("--workers", args.workers), ("--mode", args.mode),
-                        ("--context-cap", args.context_cap), ("--coordinator-provider", args.coordinator_provider)):
+                        ("--context-cap", args.context_cap), ("--coordinator-provider", args.coordinator_provider),
+                        ("--pr-credit", args.pr_credit)):
         if value not in (None, ""):
             raise BrigadeError(f"open --rename takes no {flag}")
     new_name = clean(args.rename)

@@ -65,6 +65,7 @@ COMMANDS = (
     Command("thread", _reviews.register_thread, _reviews.handle, _reviews.handle_locked),
     Command("dish", _items.register_dish, _items.handle_dish, _items.handle_locked),
     Command("pass", _reviews.register_pass, _reviews.handle, _reviews.handle_locked),
+    Command("credit", _reviews.register_credit, _reviews.handle, None),
     Command("edits", _reviews.register_edits, _reviews.handle, None),
     Command("86", _reviews.register_86, _reviews.handle, _reviews.handle_locked),
     Command("inbox", _rail.register_inbox, _rail.handle, _rail.handle_locked),

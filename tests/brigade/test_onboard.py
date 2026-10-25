@@ -30,7 +30,7 @@ class OnboardDetectTest(BrigadeTest):
         roles_dir.mkdir(exist_ok=True)
         (roles_dir / "t3-roles.json").write_text(json.dumps({"version": 1, "budget": "default", "roles": {}}))
         self.brigade("set", "--mode", "light", "--intake", "github", "--build-command", "make build",
-                     "--check-command", "make test", "--change-note-dir", "changes")
+                     "--check-command", "make test", "--change-note-dir", "changes", "--pr-credit", "on")
         before = self.store_files()
         found = self.detect()
         self.assertEqual(found["missing"], [])
@@ -53,7 +53,7 @@ class OnboardDetectTest(BrigadeTest):
         self.assertEqual(found["facts"]["trunk"], {"state": "detected", "value": "main", "fix": None})
         self.assertEqual(found["facts"]["contract_checks"]["state"], "unknown")
         self.assertEqual(found["facts"]["models"], {"state": "missing", "value": "", "fix": "run setup-pstack"})
-        self.assertEqual(found["missing"], ["restaurant", "mode", "models", "intake", "change_note_dir", "landing_mode"])
+        self.assertEqual(found["missing"], ["restaurant", "mode", "pr_credit", "models", "intake", "change_note_dir", "landing_mode"])
 
     def test_onboard_reports_no_test_command_when_only_this_repository_script_exists(self):
         self.git_project()
