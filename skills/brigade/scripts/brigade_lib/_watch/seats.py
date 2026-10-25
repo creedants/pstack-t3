@@ -96,8 +96,7 @@ def cooldown_end(text, now, minutes):
     today when it is still ahead and tomorrow otherwise. A relative span, such as `try again in 30
     minutes` or `retry after 20s`, with the units second, sec, s, minute, min, m, hour, hr, or h.
     An empty text, a text with no such shape, a shape that does not parse, and a parsed time that is
-    not after `now` all end at `now` plus `minutes`. `now` is an ISO stamp, and an invalid ISO value
-    is not an error.
+    not after `now` all end at `now` plus `minutes`. `now` is the ISO stamp the cooldown starts at.
     """
     moment = moment_of(now)
     fallback = moment + timedelta(minutes=minutes)
