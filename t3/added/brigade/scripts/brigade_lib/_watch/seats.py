@@ -29,7 +29,7 @@ from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import LEASED_STATES, OPEN_LINES, OPEN_RUN_MINUTES
 from brigade_lib.tickets import handed_count, handoff_id, inbox_file, sibling_rails, taken_row
 from brigade_lib._watch.progress import attempt_count
-from brigade_lib._reviews.threads import moment_of
+from brigade_lib._reviews.threads import cooldown_seats, moment_of
 
 def require_seat(seat):
     """The cleaned provider/model seat. Provider is the text before the first slash. The model id is the rest and may contain further slashes. Both parts must be non-empty, and the seat holds no whitespace."""
@@ -117,9 +117,16 @@ def latest_models(restaurant):
 
 
 def skip_lines(restaurant):
-    """One line per seat whose latest model row is skipped, sorted by seat."""
-    return [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
-            for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
+    """One skipped line per seat whose latest model row is skipped, sorted by seat, then one cooling line per live cooldown, sorted by seat.
+
+    The cooling lines come after every skipped line and before the dish lines, and a seat whose end
+    has passed prints none of them.
+    """
+    lines = [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
+             for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
+    lines += [f"cooling {seat} until {end} ({dish})"
+              for seat, end, dish in cooldown_seats(restaurant, moment_of(seam.now()))]
+    return lines
 
 
 def record_model_skip(restaurant, seat, cause):

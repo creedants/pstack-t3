@@ -29,7 +29,7 @@ from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import LEASED_STATES, OPEN_LINES, OPEN_RUN_MINUTES
 from brigade_lib.tickets import handed_count, handoff_id, inbox_file, sibling_rails, taken_row
 from brigade_lib._watch.progress import attempt_count
-from brigade_lib._reviews.threads import cooldown_seats
+from brigade_lib._reviews.threads import cooldown_seats, moment_of
 
 def require_seat(seat):
     """The cleaned provider/model seat. Provider is the text before the first slash. The model id is the rest and may contain further slashes. Both parts must be non-empty, and the seat holds no whitespace."""
@@ -53,19 +53,10 @@ CLOCK_SPAN = re.compile(r"\b(?:in|after)\s+(\d+)\s*(hours?|hrs?|h|minutes?|mins?
 SPAN_UNITS = {"h": "hours", "m": "minutes", "s": "seconds"}
 
 
-def stamp_moment(text):
-    """The datetime an ISO stamp names, or None when it does not parse. A stamp with no offset reads as UTC."""
-    try:
-        found = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return found if found.tzinfo is not None else found.replace(tzinfo=timezone.utc)
-
-
 def _iso_end(text):
     """The first ISO 8601 date-time in the text that parses, or None."""
     for match in ISO_STAMP.finditer(text):
-        found = stamp_moment(match.group(0))
+        found = moment_of(match.group(0))
         if found is not None:
             return found
     return None
@@ -108,7 +99,7 @@ def cooldown_end(text, now, minutes):
     not after `now` all end at `now` plus `minutes`. `now` is an ISO stamp, and an invalid ISO value
     is not an error.
     """
-    moment = stamp_moment(now)
+    moment = moment_of(now)
     fallback = moment + timedelta(minutes=minutes)
     found = _iso_end(text) or _clock_end(text, moment) or _span_end(text, moment)
     if found is None or found <= moment:
@@ -134,7 +125,7 @@ def skip_lines(restaurant):
     lines = [f"skipped {seat} ({row['note']}); run model clear {shlex.quote(seat)} after a smoke test passes"
              for seat, row in sorted(latest_models(restaurant).items()) if row["state"] == "skipped"]
     lines += [f"cooling {seat} until {end} ({dish})"
-              for seat, end, dish in cooldown_seats(restaurant, stamp_moment(seam.now()))]
+              for seat, end, dish in cooldown_seats(restaurant, moment_of(seam.now()))]
     return lines
 
 

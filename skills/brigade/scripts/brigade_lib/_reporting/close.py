@@ -101,6 +101,7 @@ def report(restaurant, write=True):
     lines += send_back_section(restaurant.rows("pass.tsv"), stamp)
     lines += hit_section(restaurant.rows("pass.tsv"), restaurant.rows("edits.tsv"), restaurant.rows("86.tsv"), stamp)
     lines += spend_section(restaurant, since)
+    lines += cooldown_section(restaurant, since)
     lines += share_lines(restaurant)
     text = "\n".join(lines)
     path = None
@@ -109,6 +110,27 @@ def report(restaurant, write=True):
         restaurant.write(path.relative_to(restaurant.dir), text)
         restaurant.change_meta(lastReportAt=stamp)
     return text, path
+
+
+def cooldown_section(restaurant, since):
+    """The `## Seat cooldowns` lines for every cooldown event after `since`, in table order.
+
+    Each line names the dish, the seat that cooled, its start and end, and the seat used instead.
+    A row this section cannot read is left out, and a store with no such row prints none of these lines.
+    """
+    lines = []
+    for row in restaurant.rows("log.tsv"):
+        if row["kind"] != "cooldown" or row["at"] <= since:
+            continue
+        try:
+            note = json.loads(row["note"])
+        except ValueError:
+            continue
+        if not isinstance(note, dict) or not note.get("seat") or not note.get("end"):
+            continue
+        used = f"relaunched on {note['replacement']}" if note.get("replacement") else "launched nothing"
+        lines.append(f"- {row['id']}: {note['seat']} cooled {note.get('start', '')} to {note['end']}; {used}")
+    return ["## Seat cooldowns", "", *lines, ""] if lines else []
 
 
 def spend_section(restaurant, since):
