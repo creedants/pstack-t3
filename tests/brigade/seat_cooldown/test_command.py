@@ -106,7 +106,8 @@ class SeatCooldownCommandTest(BrigadeTest, _CooldownHelpers):
         self.cooldown_store("2026-02-01T13:00:00+00:00")
         for text in ("You've hit your usage limit. Your limit will reset at 12:30 UTC.",
                      "You've hit your usage limit. Your limit will reset at 2026-02-02T12:30:00.",
-                     "You've hit your usage limit. Try again after 999999999999999999999999999999 hours."):
+                     "You've hit your usage limit. Try again after 999999999999999999999999999999 hours.",
+                     "You've hit your usage limit. Try again after " + "9" * 5000 + " hours."):
             with self.subTest(text=text):
                 self.assertIn("until 2026-02-01T14:00:00+00:00", self.usage_limit(text))
                 self.assertEqual(self.cooldown_rows()[-1]["end"], "2026-02-01T14:00:00+00:00")
