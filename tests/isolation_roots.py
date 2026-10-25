@@ -230,6 +230,7 @@ def inherited() -> tuple[str, ...]:
     record whose start differs from its pid's live start, when /proc gives one, belongs to a dead
     process and is ignored. A directory that is not one this user owns with no group or other write
     bit, and a record that
+    cannot be opened, parsed, or validated, stop the process.
     """
     found: list[str] = []
     for pid in (os.getpid(), os.getppid()):
