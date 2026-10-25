@@ -175,8 +175,7 @@ def record_usage_limit(restaurant, args):
         _, dish = restaurant.find("dishes.tsv", args.id)
         chain = retry_chain(restaurant, args.id)
         spent = retry_spent(restaurant, args.id, args.role, chain)
-        # A parked dish waits out the reset through --resume, so a report on it launches nothing either.
-        parked = decision == "park" or spent or dish["state"] == "blocked"
+        parked = decision == "park" or spent
         record_cooldown(restaurant, args.id, attempt, seat, start, end)
         restaurant.log("cooldown", args.id, attempt, json.dumps({
             "seat": seat, "role": args.role, "start": start, "end": end,
