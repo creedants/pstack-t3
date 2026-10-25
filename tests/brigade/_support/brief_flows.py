@@ -115,6 +115,10 @@ class BriefFlows:
         return "\n".join([f"Use the poteto-mode skill and its `{station}` playbook.", *lines, "Gate: brigade", self.SEAT_RULE])
 
 
+    def brief_body(self, output):
+        """The brief text a `brief` run printed, without the trailing path and launch lines."""
+        return output.rsplit("\n\n", 1)[0]
+
     def paused_brief(self, case):
         """The child waits in `roles_mode`. The patch is installed before `main`. The test does not overlap this child with another started process. The test acts while the child is stopped, and `call` cannot return that status."""
         case.mkdir()

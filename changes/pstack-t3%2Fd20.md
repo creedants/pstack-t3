@@ -1,0 +1,6 @@
+- kind feature
+- `brigade.py brief` writes one brief file per attempt. The item's first launch writes `briefs/<dish>.md` and a later launch writes `briefs/<dish>-<k>.md`, where `k` is the attempt number the launch's worker row in `threads.tsv` gets, which is one more than the worker rows the item already holds when the brief is written. A brief a worker was launched with is never overwritten
+- the brief prints the file's absolute path, then one launch sentence holding that path and the store root. The file holds the brief text alone, and the store root comes from the store's own path
+- `$B launch` and `$B dish <id> --usage-limit` read the mode through `current_brief_mode` in `commands/tools.py`, whose file comes from `current_brief`, the newest attempt file at or below the next launch's number. After `dish --thread` records a launch, the probe lands on the file that launch read, so a hand-edited older file changes no seat
+- `brief_seat_mode` is gone, so `commands/tools.py` holds the only reader and `brief_mode` names the file it refused
+- `$B contract` is unchanged. The contract is a separate file, `briefs/<dish>.contract.md`, written on every brief

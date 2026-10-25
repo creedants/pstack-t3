@@ -10,7 +10,7 @@ from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, reco
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
 from brigade_lib.shared import BrigadeError, same_text, slug
-from brigade_lib.store import HELD_LOCKS, MODES, SCRATCH_KEY, SCRATCH_REFUSAL, VERDICTS, roles_script, scratch_parent_text
+from brigade_lib.store import HELD_LOCKS, MODES, SCRATCH_KEY, SCRATCH_REFUSAL, VERDICTS, WORKER_ROLES, roles_script, scratch_parent_text
 
 
 
@@ -19,12 +19,7 @@ MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
 
 @dataclass(frozen=True)
 class _Standing:
-    """One rule the brief pastes verbatim, with the anchors that show the coordinator already stated it.
-
-    The placeholders in `text` and the anchors are `<reports>` and `<scratch>`. A rule whose
-    placeholder has no value is not rendered. A rule is dropped when the coordinator's context and verify
-    text already hold every one of its anchors.
-    """
+    """One rule the brief pastes verbatim, with the anchors that show the coordinator already stated it."""
     text: str
     anchors: tuple
 
@@ -73,12 +68,7 @@ WAIT_RULE = ("- Never end your turn while a child task you started with delegate
 
 @dataclass(frozen=True)
 class ModeInputs:
-    """The inputs to the brief's mode resolution. brief is the review depth recorded for the dish's kind, or "" when it has none.
-
-    The other fields are the project root, the station, the attempt, the leased paths, the send-back count, the
-    restaurant's recorded mode, the item's recorded escalation, the dish row, the coordinator thread, and the
-    store's generation.
-    """
+    """The inputs to the brief's mode resolution."""
     project_root: str
     station: str
     attempt: str
@@ -212,11 +202,7 @@ def _fill_standing(text, values):
 
 
 def standing_rules(restaurant, context, verify):
-    """The STANDING RULES bullets, in _RULES order.
-
-    A rule whose placeholder has no value is skipped. A rule is dropped when the coordinator's context and
-    verify text already hold every one of its anchors.
-    """
+    """The STANDING RULES bullets, in _RULES order."""
     try:
         scratch = scratch_parent_text(restaurant.meta.get(SCRATCH_KEY))
     except BrigadeError:
@@ -313,13 +299,28 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         "", "STANDING ORDERS:", worker_house_rules(standing_orders),
     ]
     text = "\n".join(lines) + "\n"
+    name = brief_file(ident, brief_attempt(restaurant, dish))
     restaurant.write(contract_file(ident), contract + "\n")
-    restaurant.write(Path("briefs") / f"{ident}.md", text)
-    return text
+    restaurant.write(name, text)
+    root = restaurant.dir.resolve()
+    return (f"{text}\n{root / name}\n"
+            f"Your brief is the file {root / name}. Read the whole file first and follow it exactly. "
+            f"It is your full task. Do not edit, move, or delete anything under {root.parents[1]}.")
 
 
 def contract_file(ident):
     return Path("briefs") / f"{ident}.contract.md"
+
+
+def brief_file(ident, attempt):
+    """The brief for one launch: briefs/<id>.md for the first, and briefs/<id>-<attempt>.md after it."""
+    return Path("briefs") / (f"{ident}-{attempt}.md" if attempt > 1 else f"{ident}.md")
+
+
+def brief_attempt(restaurant, dish):
+    """The attempt the next brief serves, which is the number write_threads gives that launch's worker row."""
+    return 1 + sum(1 for row in restaurant.rows("threads.tsv")
+                   if row["dish"] == dish["id"] and row["role"] in WORKER_ROLES)
 
 
 def stored_contract(restaurant, ident):
