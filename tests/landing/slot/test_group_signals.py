@@ -63,7 +63,7 @@ def _zombie(pid):
     """Return True when pid is a zombie, and False where /proc holds no entry for it, as it does once the kernel reaps it."""
     try:
         return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
 
 
