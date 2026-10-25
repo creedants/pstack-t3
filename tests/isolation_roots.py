@@ -10,11 +10,12 @@ Roots written to and returned from records are real absolute path strings.
 A child reads every candidate record rather than the first one it finds, so a stale or forged record
 cannot hide the genuine one. A child stops when a record it finds cannot be read or parsed. It also
 stops when a candidate directory is not a directory this user owns with no group or other write bit. A
-record carries the process start time, so a record a dead process left under a reused pid is ignored
-instead of trusted. A child reads its own pid's record, which covers a process that replaced itself
-with a stripped environment, and its parent's, which covers a fresh child of a guarded process. Every
-write and delete acts through a descriptor of a verified directory, and the guard lets exactly those
-descriptors through, so the record machinery cannot damage a protected file.
+record carries the process start time when /proc gives one. Where /proc gives the live start, a record
+a dead process left under a reused pid is ignored instead of trusted. A child reads its own pid's
+record, which covers a process that replaced itself with a stripped environment, and its parent's,
+which covers a fresh child of a guarded process. Every write and delete acts through a descriptor of a
+verified directory with a single-component name, and the guard lets exactly those calls through, so
+the record machinery cannot damage a protected file.
 """
 
 from __future__ import annotations
@@ -62,6 +63,16 @@ def _start(pid: int) -> int | None:
     return int(fields[19])
 
 
+def _plain(name) -> bool:
+    """Return whether name is one relative component, so a descriptor names an entry of the directory it holds."""
+    if isinstance(name, int) or not isinstance(name, (str, bytes)):
+        return False
+    text = os.fsdecode(name)
+    separators = (os.sep,) if os.altsep is None else (os.sep, os.altsep)
+    return bool(text) and text not in (os.curdir, os.pardir) and not os.path.isabs(text) and not any(
+        separator in text for separator in separators)
+
+
 @contextlib.contextmanager
 def anchored(number: int):
     """Act through a verified record descriptor, so the guard lets this module's own calls through."""
@@ -72,19 +83,20 @@ def anchored(number: int):
         _ANCHORS.discard(number)
 
 
-def anchored_fd(number) -> bool:
-    """Return whether number is a descriptor this module is acting through right now."""
-    return isinstance(number, int) and number in _ANCHORS
+def anchored_fd(number, name=None) -> bool:
+    """Return whether number is a descriptor this module is acting through right now, for name when one is given."""
+    if not isinstance(number, int) or number not in _ANCHORS:
+        return False
+    return name is None or _plain(name)
 
 
 def anchored_call(event: str, args: tuple) -> bool:
-    """Return whether an audit event acts through one of those descriptors."""
+    """Return whether an audit event is one of this module's own calls through an anchored descriptor and a plain name."""
     if event == "os.remove":
-        return anchored_fd(_arg(args, 1))
-    if event == "os.truncate":
-        return anchored_fd(_arg(args, 0))
+        return anchored_fd(_arg(args, 1), _arg(args, 0))
     if event == "os.rename":
-        return anchored_fd(_arg(args, 2)) or anchored_fd(_arg(args, 3))
+        return (anchored_fd(_arg(args, 2), _arg(args, 0))
+                and anchored_fd(_arg(args, 3), _arg(args, 1)))
     return False
 
 
@@ -204,7 +216,7 @@ def _body_roots(body: dict, path: str, pid: int) -> tuple[str, ...]:
 
 
 def _live(body: dict, start: int | None) -> bool:
-    """Return whether the record describes the pid as it runs now, so a record a dead process left is ignored."""
+    """Return whether the record's start is the pid's live start, or True when /proc gives no live start."""
     if start is None:
         return True
     recorded = body.get("start")
@@ -215,9 +227,9 @@ def inherited() -> tuple[str, ...]:
     """Return the real trusted roots every valid record names for this process or its parent.
 
     Every candidate directory is read, so a stale or forged first record cannot hide a later one. A
-    record whose start is not the live start of its pid belongs to a dead process and is ignored. A
-    directory that is not one this user owns with no group or other write bit, and a record that
-    cannot be opened, parsed, or validated, stop the process.
+    record whose start differs from its pid's live start, when /proc gives one, belongs to a dead
+    process and is ignored. A directory that is not one this user owns with no group or other write
+    bit, and a record that
     """
     found: list[str] = []
     for pid in (os.getpid(), os.getppid()):
@@ -285,7 +297,11 @@ def publish(pid: int, roots, protected) -> str:
 
 
 def after_fork() -> None:
-    """Publish the inherited protection under the child's own pid, or stop the child rather than run with fewer roots."""
+    """Publish the inherited protection under the child's own pid, or stop the child rather than run with fewer roots.
+
+    The parent's anchored numbers mean nothing in this process, so the child starts with none.
+    """
+    _ANCHORS.clear()
     try:
         publish(os.getpid(), _PROTECTION, _PROTECTION)
     except BaseException as problem:
