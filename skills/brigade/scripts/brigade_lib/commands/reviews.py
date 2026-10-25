@@ -23,7 +23,7 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib.credit import credit_text
 from brigade_lib.items import announce_archive
-from brigade_lib.reviews import latest_verdict, pass_check, pass_hits, pass_json, pass_stats, reason_refusal, record_pass, round_decision, verify_edits, write_threads
+from brigade_lib.reviews import apply_edits_command, latest_verdict, pass_check, pass_hits, pass_json, pass_stats, reason_refusal, record_pass, round_decision, verify_edits, write_threads
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import EDITS_VERDICT, REASONS, ROUND_KIND, THREAD_COMMAND_ROLES, VERDICTS
 from brigade_lib.wake import closing_options, open_item_decisions, option_key
@@ -162,6 +162,17 @@ def register_edits(sub):
     a.add_argument("--from", dest="from_sha", metavar="SHA", required=True,
                    help="the reviewed commit, as the pass-with-edits row records it")
     a.add_argument("--to", metavar="SHA", required=True, help="the head to compare")
+    a = t.add_parser("apply",
+                     help="apply the edits of a review report to a new branch from the reviewed commit, run the "
+                          "setup and build there, and commit the result; no worker runs")
+    a.add_argument("dish")
+    a.add_argument("--report", required=True,
+                   help="the review report under reports/, such as D2-review-1.md")
+    a.add_argument("--from", dest="from_sha", metavar="SHA", required=True,
+                   help="the reviewed commit the report reviews")
+    a.add_argument("--branch", required=True, help="the new branch to create for the applied edits")
+    a.add_argument("--worktree", default=None,
+                   help="the directory for the new worktree; a new temporary directory when omitted")
 
 
 def register_86(sub):
@@ -198,6 +209,8 @@ def register(sub):
 def handle(restaurant, args):
     if args.command == "credit":
         return credit_text(restaurant, args.dish, args.coordinator)
+    if args.command == "edits" and args.action == "apply":
+        return apply_edits_command(restaurant, args.dish, args.report, args.from_sha, args.branch, args.worktree)
     if args.command == "edits":
         return verify_edits(restaurant, args.dish, args.from_sha, args.to)
     if args.command == "pass" and args.action == "stats":
