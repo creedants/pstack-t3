@@ -13,9 +13,10 @@ symlink name itself.
 
 `os.path.realpath` follows symlinks and not mounts, so a bind mount inside the run root makes a
 protected directory answer to a run-root name. `_mount_table` reads `/proc/self/mountinfo` at check time,
-and `_identity` turns a path into the device and on-device path of the longest mount point above it. The
-same directory then has one identity under every spelling. A host without that file, which includes
-macOS, has no table, and the spelling rules stand alone there.
+and `_identities` gives a path the storage identity of every mount point above it, so a mount a later
+mount hides cannot answer for it. `_reaches` compares each of those with each protected root's longest
+mount identity. A host without that file, which includes macOS, has no table, and the spelling rules
+stand alone there.
 """
 
 from __future__ import annotations
@@ -123,9 +124,8 @@ def _identity(path: str, table) -> tuple[str, str] | None:
 def _identities(path: str, table) -> tuple[tuple[str, str], ...]:
     """Return the device and on-device path of every mount point that covers the path.
 
-    A mount that a later mount hides stays in the table, so a hidden entry must not answer for a path a
-    visible entry also covers. One path therefore carries one identity per mount above it, and the
-    storage it reaches is protected when any of them is.
+    A hidden mount stays in the table, so it must not answer for a path a visible mount also covers.
+    One path carries one identity per mount above it, and it is protected when any of them is.
     """
     found = []
     for mount, device, root in table:

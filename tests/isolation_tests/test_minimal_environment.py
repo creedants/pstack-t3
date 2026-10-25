@@ -3,7 +3,7 @@
 A test that starts a child with `env={"PATH": ...}` drops the pointer, the token, and the protected-root
 record together, so the child used to create a fresh run root and protect only the real home. The driver
 here runs in its own process with a disposable XDG state root, so the guard it installs protects that root.
-It then starts one child per entry point the suite uses with that minimal environment, and each child
+It then starts one child per entry point a test uses to start a Python child, and each child
 reports what the guard did about one write into the original root. A last child runs after the driver's
 record is replaced with text that is not a record, so an unreadable record must stop a child rather than
 let it run with fewer roots.

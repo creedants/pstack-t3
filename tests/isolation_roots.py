@@ -7,7 +7,7 @@ It lives in a fixed per-user directory under the first temporary directory that 
 is not inside a protected root, because a child with no environment cannot be told where to look.
 Every function here takes and returns real absolute path strings.
 
-A record that exists is proof the parent was guarded, so a child that cannot read it stops the
+A record that exists was published by a guarded process, so a child that cannot read it stops the
 process instead of running with fewer roots. That is the fail-closed rule.
 """
 
