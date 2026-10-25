@@ -119,7 +119,7 @@ SEND_BACK_DAYS = 7
 
 
 def _at_utc(text):
-    """The datetime of a pass.tsv at cell, with a naive value read as UTC."""
+    """The datetime of a store table's at cell, with a naive value read as UTC. A datetime passes through."""
     if isinstance(text, datetime):
         return text if text.tzinfo else text.replace(tzinfo=timezone.utc)
     moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
@@ -136,7 +136,10 @@ def earliest_record(rows):
 
 
 def covered_span(first, now, days):
-    """The span the store covers when its earliest record is newer than the window start, else ""."""
+    """The span the store covers when its earliest record is newer than the window start, else "".
+
+    Records that begin under a minute before now have no whole unit to name, so they report no span either.
+    """
     if first is None:
         return ""
     if first <= _at_utc(now) - timedelta(days=days):
@@ -192,8 +195,7 @@ def reason_summary(counts):
 def send_back_section(rows, now):
     """The `## Send-back reasons` lines for these pass.tsv rows.
 
-    The earliest record can only come from the pass.tsv rows this function is handed, because the caller
-    cannot change what it passes.
+    The earliest record comes only from the pass.tsv rows this function is handed, which the caller passes whole.
     """
     heading, sentence = window_phrases(earliest_record(rows), now, SEND_BACK_DAYS)
     cutoff = _at_utc(now) - timedelta(days=SEND_BACK_DAYS)

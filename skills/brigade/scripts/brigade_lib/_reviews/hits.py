@@ -52,9 +52,9 @@ def send_back_outcome(pass_rows, position, row, budget):
     """`upheld`, `overruled`, or `""` for one send-back row, judged on the rows after it.
 
     The dish's next recorded round upholds the send-back when it is a pass at another SHA, which is the next
-    review accepting the change. A pass at the row's own SHA overrules it, and so does a round-budget decision
-    that accepts the findings with no later round at another SHA. A later round at another SHA that is not a
-    pass shows only that the author committed again, so it upholds nothing.
+    review accepting the change. A next round that is a pass at the row's own SHA overrules it, and so does a
+    round-budget decision that accepts the findings with no later non-member round at another SHA. A later round
+    at another SHA that is not a pass shows only that the author committed again, so it upholds nothing.
     """
     later = item_verdicts(pass_rows[position + 1:], row["dish"])
     if later and later[0]["verdict"] == "pass":
