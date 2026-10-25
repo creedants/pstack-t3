@@ -49,7 +49,7 @@ class BriefFilesMixin:
         return first_text, self.brigade(*self.FIX_BRIEF, "--paths", "src/a.py", "--lease", "L1")
 
     def install_recording_roles(self, record):
-        """A roles.py that appends its argv to record, and answers show and backup with one role's seat."""
+        """A roles.py that appends its argv to record, answers show with one role's seat, and answers backup with no usage limit."""
         script = Path(self.temporary.name) / "record-roles.py"
         script.write_text(
             "import sys\n"
