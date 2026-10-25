@@ -231,8 +231,8 @@ def inherited() -> tuple[str, ...]:
     Every candidate directory is read, so a stale or forged first record cannot hide a later one. A
     record whose start differs from its pid's live start, when /proc gives one, belongs to a dead
     process and is ignored. A directory that is not one this user owns with no group or other write
-    bit, and a record that
-    cannot be opened, parsed, or validated, stop the process.
+    bit stops the process, and so does a record that cannot be opened or parsed. A live record that
+    cannot be validated stops it too.
     """
     found: list[str] = []
     for pid in (os.getpid(), os.getppid()):
