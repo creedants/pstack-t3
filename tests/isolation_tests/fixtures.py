@@ -7,6 +7,7 @@ from pathlib import Path
 from tests import isolation
 
 ROOT = Path(__file__).resolve().parents[2]
+ORIGINALS = "PSTACK_TEST_PROTECTED_ROOTS"
 _outside = None
 
 

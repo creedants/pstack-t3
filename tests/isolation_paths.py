@@ -1,12 +1,22 @@
 """Path rules, protected real roots, and run-root admission for the test isolation guard.
 
-`tests/isolation.py` imports from here and holds the guard state, the audit hook, the wrappers, and `install()`.
+`tests/isolation.py` imports from here and holds the guard state, the audit hook, the wrappers, and
+`install()`. `_protected_write` and `_owned` also live here, because each needs the mount table.
 
 A descriptor's path comes from `/proc/self/fd` where that exists, and otherwise from the macOS `fcntl`
 `F_GETPATH`, accepted only when a stat of the path names the same device and inode as the descriptor. A
 descriptor that resolves through neither has no path, and every caller refuses it. `_placed` names the
 operations whose target arrives through a descriptor: the descriptor itself, or a relative name and the
-directory descriptor it is relative to.
+directory descriptor it is relative to, and `_owned` keeps such a target inside the run root. Path
+checks resolve symlinks in the directory part first, and a checked delete or rename acts on a final
+symlink name itself.
+
+`os.path.realpath` follows symlinks and not mounts, so a bind mount inside the run root makes a
+protected directory answer to a run-root name. `tests/isolation_mounts.py` holds the mount table and
+gives a path a candidate storage identity for every mount point above it, hidden entries included.
+`_reaches` compares every candidate the target has with every candidate each protected root has, so an
+alias that reaches either backing storage is refused. On Linux a table that cannot be read or parsed
+stops the process. macOS has no such file, so it has no table, and the spelling rules stand alone there.
 """
 
 from __future__ import annotations
@@ -18,7 +28,10 @@ import pwd
 import secrets
 import stat
 import tempfile
+import urllib.parse
 from pathlib import Path
+
+from pstack_test_isolation_mounts import _fail, _reaches, _within
 
 POINTER = "PSTACK_TEST_HOME_ROOT"
 TOKEN = "PSTACK_TEST_HOME_TOKEN"
@@ -57,9 +70,36 @@ def _entry(path) -> str:
     return os.path.join(_real(head or "."), tail)
 
 
-def _within(path: str, base: str) -> bool:
-    """Return whether the real path is the real base or below it, comparing whole components."""
-    return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
+def _sqlite_path(database: str) -> str | None:
+    """Return the path a SQLite database name acts on, None when it names no filesystem path.
+
+    A `file:` URI that names no local path raises ValueError.
+    """
+    if database in ("", ":memory:"):
+        return None
+    if not database.startswith("file:"):
+        return database
+    parts = urllib.parse.urlsplit(database)
+    name = urllib.parse.unquote(parts.path)
+    if parts.netloc not in ("", "localhost") or not name:
+        raise ValueError("it names no local path")
+    return None if name == ":memory:" else name
+
+
+def _protected_write(real: str, checkout: str, protected) -> bool:
+    """Return whether a write at the real path lands in a protected root, by spelling or by the storage it
+    reaches, with the checkout allowed."""
+    if _within(real, checkout):
+        return False
+    return any(_within(real, base) for base in protected) or _reaches(real, protected)
+
+
+def _owned(real: str, root: str | None, protected) -> bool:
+    """Return whether the real path stays inside the run root, outside every protected root, and off protected
+    storage."""
+    return (root is not None and _within(real, root)
+            and not any(_within(real, base) for base in protected)
+            and not _reaches(real, protected))
 
 
 def _real_roots(root: str | None, environ) -> tuple[str, ...]:
@@ -149,10 +189,6 @@ def layout(root) -> dict[str, str]:
     """Return the one mapping from each isolated variable to its directory under root."""
     base = os.path.abspath(os.fspath(root))
     return {name: os.path.join(base, part) for name, part in _LAYOUT.items()}
-
-
-def _fail(problem: str) -> SystemExit:
-    return SystemExit(f"pstack-t3 test isolation: {problem}")
 
 
 def _adopt(environ, protected: tuple[str, ...]) -> str:
