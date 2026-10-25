@@ -29,6 +29,7 @@ from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import LEASED_STATES, OPEN_LINES, OPEN_RUN_MINUTES
 from brigade_lib.tickets import handed_count, handoff_id, inbox_file, sibling_rails, taken_row
 from brigade_lib._watch.progress import attempt_count
+from brigade_lib._reviews.threads import moment_of
 
 def require_seat(seat):
     """The cleaned provider/model seat. Provider is the text before the first slash. The model id is the rest and may contain further slashes. Both parts must be non-empty, and the seat holds no whitespace."""
@@ -37,6 +38,73 @@ def require_seat(seat):
     if not (provider and model) or any(character.isspace() for character in value):
         raise BrigadeError("a model is provider/model")
     return value
+
+
+ISO_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?")
+
+
+CLOCK_UTC = re.compile(r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s?(?:UTC|GMT|Z)\b")
+
+
+CLOCK_SPAN = re.compile(r"\b(?:in|after)\s+(\d+)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
+                        re.IGNORECASE)
+
+
+SPAN_UNITS = {"h": "hours", "m": "minutes", "s": "seconds"}
+
+
+def _iso_end(text):
+    """The first ISO 8601 date-time in the text that parses, or None."""
+    for match in ISO_STAMP.finditer(text):
+        found = moment_of(match.group(0))
+        if found is not None:
+            return found
+    return None
+
+
+def _clock_end(text, moment):
+    """The next time one clock time in the text falls after `moment`, or None.
+
+    A clock time counts only when `UTC`, `GMT`, or `Z` follows it. It is today when it is still
+    ahead and tomorrow otherwise.
+    """
+    for match in CLOCK_UTC.finditer(text):
+        hour, minute = int(match.group(1)), int(match.group(2))
+        second = int(match.group(3) or 0)
+        if hour > 23 or minute > 59 or second > 59:
+            continue
+        found = moment.replace(hour=hour, minute=minute, second=second, microsecond=0)
+        return found if found > moment else found + timedelta(days=1)
+    return None
+
+
+def _span_end(text, moment):
+    """`moment` plus the first relative span in the text, or None."""
+    for match in CLOCK_SPAN.finditer(text):
+        unit = SPAN_UNITS[match.group(2)[0].lower()]
+        count = int(match.group(1))
+        return moment + timedelta(**{unit: count})
+    return None
+
+
+def cooldown_end(text, now, minutes):
+    """The ISO end time a cooled seat is out until.
+
+    Three shapes are read, and nothing else. An ISO 8601 date-time anywhere in the text, such as
+    `2026-10-25T12:30:00Z` or `2026-10-25 12:30:00+00:00`. A clock time followed by `UTC`, `GMT`, or
+    `Z`, such as `resets at 12:30 UTC`, which is the next time that clock time falls after `now`,
+    today when it is still ahead and tomorrow otherwise. A relative span, such as `try again in 30
+    minutes` or `retry after 20s`, with the units second, sec, s, minute, min, m, hour, hr, or h.
+    An empty text, a text with no such shape, a shape that does not parse, and a parsed time that is
+    not after `now` all end at `now` plus `minutes`. `now` is an ISO stamp, and an invalid ISO value
+    is not an error.
+    """
+    moment = moment_of(now)
+    fallback = moment + timedelta(minutes=minutes)
+    found = _iso_end(text) or _clock_end(text, moment) or _span_end(text, moment)
+    if found is None or found <= moment:
+        return fallback.isoformat()
+    return found.isoformat()
 
 
 def latest_models(restaurant):
