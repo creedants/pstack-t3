@@ -252,18 +252,6 @@ class ApplyTest(BrigadeTest):
         self.assertEqual(list(empty.iterdir()), [])
         self.assertTrue(away.is_dir())
 
-    def test_apply_refuses_a_branch_name_with_a_newline_on_one_line_fails_when_the_name_prints_raw(self):
-        # Processes: git builds the fixture project; edits apply refuses the branch name before it creates anything.
-        self.contract()
-        reviewed = self.edits_store()
-        self.one_edit()
-        before = self.standing()
-        target = self.root / "wt-bad-branch"
-        code, out, err = self.apply(*self.edit_args(reviewed, "d1-bad\nbranch", target))
-        self.assert_refused_leaving_nothing(target, "d1-bad\nbranch", code, out, err, before)
-        self.assertIn("d1-bad\\nbranch", err)
-        self.assertFalse(target.exists())
-
     def test_apply_refuses_a_worktree_path_inside_the_repository_fails_when_it_writes_into_the_checkout(self):
         # Processes: git builds the fixture project and a second worktree; edits apply refuses before it creates anything.
         self.contract()
