@@ -44,7 +44,12 @@ class LandingTest(LandingTestBase):
         hook.write_text(f"#!/bin/sh\necho '{text}' >&2\nexit 1\n")
         hook.chmod(0o755)
 
-    def test_a_rejected_push_pause_names_both_ways_out_without_doubled_prefix_or_period(self):
+    def reject_pushes_with_two_remote_lines(self):
+        hook = self.base / "origin.git/hooks/pre-receive"
+        hook.write_text("#!/bin/sh\nprintf 'first.\\nsecond.\\n' >&2\nexit 1\n")
+        hook.chmod(0o755)
+
+    def test_a_rejected_push_pause_names_resume_and_human_mode_without_doubled_prefix_or_period(self):
         self.init()
         self.reject_pushes("remote: error: GH006: Protected branch update failed for refs/heads/main.")
         self.queue_one()
@@ -55,11 +60,39 @@ class LandingTest(LandingTestBase):
         self.assertNotIn("..", paused)
         self.assertIn("land.py resume", paused)
         self.assertIn("land.py mode human", paused)
+        self.assertIn("requires an empty queue", paused)
+
+    def test_a_merge_mode_push_rejection_pause_keeps_base_wording(self):
+        with self.fake_gh():
+            self.allow_methods(squash=True)
+            self.init(mode="merge")
+            self.reject_pushes_with_two_remote_lines()
+            self.queue_one()
+            paused = self.land("land")
+        self.assertEqual(paused, "still queued: E1\nqueue paused: push failed: remote: first. remote: second.. Fix it, then run land.py resume")
 
     def test_git_reason_drops_userinfo_from_a_url(self):
-        reason = land.git_reason("fatal: unable to access 'https://user:secret@example.com/o/r.git/': The requested URL returned error: 401")
-        self.assertNotIn("secret", reason)
-        self.assertNotIn("user:", reason)
+        cases = (
+            ("https://user:secret@example.com/o/r.git/", "https://example.com/o/r.git/"),
+            ("https://user:sec@ret@example.com/o/r.git/", "https://example.com/o/r.git/"),
+            ("ssh://user:sec@ret@example.com/o/r.git/", "ssh://example.com/o/r.git/"),
+            ("https://example.com?email=alice@example.net", "https://example.com?email=alice@example.net"),
+        )
+        for url, expected in cases:
+            with self.subTest(url=url):
+                self.assertEqual(land.git_reason(f"fatal: {url}"), f"fatal: {expected}")
+
+    def test_git_reason_default_keeps_base_periods_and_remote_prefixes(self):
+        cases = (
+            ("fatal: repository not found.", "fatal: repository not found."),
+            ("remote: notice.\nerror: rejected.", "remote: notice."),
+            ("fatal: first\nerror: second.", "error: second."),
+            ("remote: first.\nremote: second.", "remote: first. remote: second."),
+            ("", "no output"),
+        )
+        for stderr, expected in cases:
+            with self.subTest(stderr=stderr):
+                self.assertEqual(land.git_reason(stderr), expected)
 
     def test_a_local_mode_bounce_prints_no_remote_delete_warning_and_runs_no_remote_delete(self):
         self.init(mode="local", base=sh("git", "rev-parse", "HEAD", cwd=self.work))
