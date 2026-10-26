@@ -64,9 +64,11 @@ class Store:
         common = seam.common_dir(path)
         directory = seam.state_home() / "landing" / store_name(common)
         if not (directory / "land.db").exists():
-            raise seam.LandError(f"{common.parent} has no landing contract; run land.py init in it")
+            raise no_contract_error(common)
         store = cls(directory)
         try:
+            if not store.contract:
+                raise no_contract_error(common)
             if Path(store.contract["commonDir"]) != common:
                 raise seam.LandError(f"store {directory} belongs to {store.contract['commonDir']}, not {common}")
         except BaseException:
@@ -158,6 +160,11 @@ def migrate_entry_ids(db):
 def store_name(common):
     name = common.parent.name if common.name == ".git" else common.name.removesuffix(".git")
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") + "-" + hashlib.sha1(str(common).encode()).hexdigest()[:8]
+
+
+def no_contract_error(common):
+    """The refusal for a repository with no contract. A store with no contract rows is the same as no store."""
+    return seam.LandError(f"{common.parent} has no landing contract; run land.py init in it")
 
 
 def pin_ref(sha):

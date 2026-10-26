@@ -205,8 +205,14 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                 db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeMaxTokens', ?)", (json.dumps(size_max_tokens),))
             if baseline_to_store is not None:
                 db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeBaseline', ?)", (json.dumps(baseline_to_store),))
-        if lane_sha:
-            seam.git("update-ref", lane, lane_sha, "", cwd=repo)
+            # The lane ref moves before COMMIT, so a refused ref rolls the contract back with it.
+            if lane_sha:
+                created = seam.git("update-ref", lane, lane_sha, "", cwd=repo, check=False)
+                if created.returncode != 0:
+                    lock = Path(common) / f"{lane}.lock"
+                    if lock.exists():
+                        raise seam.LandError(f"git cannot create {lane}: remove {lock} and run land.py init again")
+                    raise seam.LandError(f"git cannot create {lane}: {seam.git_reason(created.stderr)}")
         note = f"{'updated' if current else 'created'} {directory}"
         settings = generated_note(wanted["generated"], wanted["rebuild"])
         return f"{note}. {settings}" if settings else note
