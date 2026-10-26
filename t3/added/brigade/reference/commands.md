@@ -23,7 +23,9 @@ $B set --cooldown-minutes <N>                 # the minutes a cooled seat stays 
 $B ticket list [--state waiting|assigned|moved|done|dropped]
 $B ticket set T3 [--state dropped] [--priority urgent|normal|low] [--paths src/a,src/b] [--decision | --no-decision]   # at least one flag
 $B ticket set T3 --kind fix [--goal G1 | --no-goal]   # changes a waiting ticket
-$B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell
+$B ticket move T3 --to <sibling>             # hands a waiting ticket to a sibling. Prints the thread to tell. Refused while the ticket holds an --after
+$B ticket add --kind fix --summary "<text>" --after T1   # files a ticket that waits until T1 is done. --after <sibling>/T1 names a sibling's ticket
+$B ticket set T3 --after T1                  # holds a waiting ticket until T1 is done; --after "" stops waiting. fire refuses a held ticket
 $B ticket take                               # files every ticket a sibling handed to this restaurant
 $B ticket paths [--dry-run]                  # on each waiting ticket that records no paths, records the tracked paths its summary quotes in backticks
 $B ticket notes --paths a.py,b.py | --all   # prints the notes that name those paths, or every note
