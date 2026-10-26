@@ -55,7 +55,7 @@ def read_waits(restaurant, given=None):
         row = row_in(found, node[1])
         if row is None or row["state"] != "waiting" or not row["after"]:
             break
-        node = key_of(own, row["after"])
+        node = key_of(node[0], row["after"])
     return Rails(own, stores, asked)
 
 
@@ -147,7 +147,7 @@ def after_cell(rails, rows, given, ident=None):
         row = row_in(found, node[1])
         if row is None or row["state"] != "waiting" or not row["after"]:
             break
-        node = key_of(rails.own, row["after"])
+        node = key_of(node[0], row["after"])
     return cell
 
 
