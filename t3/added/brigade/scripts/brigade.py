@@ -55,6 +55,8 @@ _sys.modules["brigade_lib"] = _alias
 _bw = _sys.dont_write_bytecode
 _sys.dont_write_bytecode = True
 try:
+    from brigade_lib import notify
+    _sys.modules["brigade_lib.notify"] = notify
     from brigade_lib import seam as _seam_bootstrap
     from brigade_lib import spend as _spend_bootstrap
     _sys.modules["brigade_lib.spend"] = _spend_bootstrap
@@ -106,14 +108,17 @@ def run(argv):
     if not args.at:
         raise BrigadeError("pass --at <restaurant dir> or set BRIGADE_DIR")
     restaurant = Restaurant(args.at, args.owner)
-    admin = is_admin(restaurant.meta)
+    meta = restaurant.meta
+    admin = is_admin(meta)
     if admin and args.command in WORK_COMMANDS:
         raise BrigadeError("the executive admin routes work and never runs it")
     if admin and args.command == "model":
         raise BrigadeError("model works only in a coordinator's store")
     if not admin and args.command in ADMIN_COMMANDS:
         raise BrigadeError(f"{args.command} works only in the executive admin's store")
-    return BY_NAME[args.command].handle(restaurant, args)
+    probe = notify.watch(restaurant, meta, args)
+    result = BY_NAME[args.command].handle(restaurant, args)
+    return result if probe is None else notify.finish(restaurant, probe, result)
 
 
 def command(restaurant, args, contract=None, rails=None):

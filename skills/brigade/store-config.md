@@ -49,6 +49,21 @@ When a role's size is over the cap, `brief` exits 1 and writes no brief and no c
 
 It is a JSON boolean and defaults to unset. A missing key reads as off. When it is off, `credit` prints `credit: off for this restaurant; set --pr-credit on to turn it on`. Onboard lists it as `pr_credit`, missing until it is recorded, and its fix is `open --pr-credit on or set --pr-credit on`. A present value that is not a boolean is refused.
 
+## notify
+
+`notify` is an opt-in outside ping. Set it with `set --notify '<command>'`, and clear it with `set --notify ''`. The value is a command line that is split into words with no shell, so no expansion, pipe, or redirect applies. A value that cannot be split is refused with nothing written.
+
+When the key is set, the command runs once, after the triggering command has finished and released the store lock, at only these times:
+
+- `86 add` parks a new decision. It does not run when `86 add` returns the open decision that already exists for the same dish.
+- `next --failure stuck` runs, which is how a wake reports a paused queue or a provider failure. `next` writes nothing, and the ping fires on the flag alone.
+
+The command runs with the line as its last argument, one word after the words you set. The line is not sent on standard input, and standard input, output, and error go to `/dev/null`. The line names the restaurant and says that a decision is waiting or that work is stuck. It never holds the question text. The only variable part is the restaurant name, and a filter replaces a name that looks like a thread id, path, email, token, or URL with `brigade`. The line is cut at 200 characters. A restaurant name the filter would change prints as `brigade`.
+
+The command gets about 10 seconds. A failure, a missing command, or a timeout prints one `brigade: warning:` line on standard error. It never changes the exit status, the printed result, or the stored result of the command that triggered it. A command that fails before it writes anything never pings.
+
+`status` ends with `outside ping: on` when the key is set and prints nothing extra when it is not. `set` prints `on` in place of the command, and no other output shows it. The command is stored in `restaurant.json`. No schedule is created.
+
 ## Refusals
 
 `set` validates the prospective settings with the same readers `affected` and `fire` use. `layout` judges `affectedTests`. `doc_policy` judges `sharedDocs` and `docTimebox`. `set` refuses a malformed `changeNoteDir` with nothing written. `fire` with paths refuses a malformed `changeNoteDir` before it claims a lease. `fire` with no paths reads no `changeNoteDir` and leases no fragment. `fire` always reads `sharedDocs` and `docTimebox` and never reads `affectedTests`.
