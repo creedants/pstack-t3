@@ -14,7 +14,7 @@ Read [webhook schedules](../../pstack-runtime/webhooks.md) before you start. It 
    - `signature`: `header` `X-Hub-Signature-256`, `encoding` `hex`, `prefix` `sha256=`, and the `secretRef` from step 1. Never create the schedule without this object.
    - `filters`: `headers.x-github-event` equals `issues`, and `body.action` is `in` `opened` and `reopened`. The `in` op takes an array value. If a filter never matches a real delivery, the webhook never wakes you and polling files the issue.
    - `dedupe`: `replayKey` set to `headers.x-github-delivery`.
-   - `maxDeliveryAgeMinutes`: `120`. A backlog held offline does not replay late.
+   - `maxDeliveryAgeMinutes`: `120`.
    - `prompt`: `Use the brigade skill. You are the head chef for the restaurant at <restaurant dir>. Run $B next intake. The webhook named this issue: {{body.issue.html_url}}`. Pass nothing else from the payload. No title, body, labels, or user.
 4. Record the schedule id so the restaurant knows it exists: `$B set --schedule intake-webhook=<schedule id>`. The name must be exactly `intake-webhook`. That command records the name and the id only.
 
