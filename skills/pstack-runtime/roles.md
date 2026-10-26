@@ -23,7 +23,7 @@ The merged exclude list is the union of the user and project lists. User rules c
 A seat the exclude list refuses is refused in each place a new seat is chosen: a configured role seat, a backup candidate, and an inherit replacement. The refusal sentence is `the roles file's exclude list refuses this seat for this role`.
 
 - `show` skips a refused configured seat with the note `skipped configured seat <provider>/<model>: <reason>`. A role other than `review backups` that is left with no configured seat resolves to `"inherit"`, settled per the next bullet, or to `"catalog-required"` without a catalog, per the last bullet. A `review backups` role with no configured seat left reports `"seats": []` with a catalog.
-- An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the list allows, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
+- An `inherit` seat whose parent the exclude list refuses becomes that provider's first model the exclude list and the role's OpenCode allow list both allow, preferring the parent's model, with the note `inherit replaced by <provider>/<model>`. When that provider cannot run children or has no allowed model, `show` refuses the role.
 - `roles.py backup` skips a refused backup seat.
 - `validate` lists each refused seat and exits 1. `write` refuses a seat the rule matches on its own form, even with `--force`.
 - Without a catalog, `show` cannot settle an `inherit` seat whose parent the exclude list refuses, and reports `"seats": "catalog-required"`. Call `orchestrator_capabilities` and rerun `show` with `--catalog`.
@@ -40,7 +40,7 @@ Under light with budget `default`, `roles.py show` resolves every role except `v
 
 There is no built-in order. A configured seat whose provider is not runnable, or whose model is not in the catalog, falls back on its own. A configured seat the exclude list refuses never takes this path. A `review backups` seat never takes it either. `show` drops a `review backups` seat with a note instead. [Excluded seats](#excluded-seats) says how each command handles it.
 
-1. When the model is missing, use the same provider's first model the exclude list allows. When it allows none, `show` refuses the seat with the exclude sentence.
+1. When the model is missing, use the same provider's first model the exclude list and the role's OpenCode allow list both allow. Prefer the parent's own model when the parent runs on that provider. When neither list leaves a model, `show` refuses the seat.
 2. If the provider is not runnable, use `"inherit"`, settled per [Excluded seats](#excluded-seats).
 3. Say which seat changed and why. Never silently drop a seat, because the seat count is the panel size.
 

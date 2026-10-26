@@ -2,22 +2,61 @@
 
 
 from _roles.base import BUDGETS, CATALOG_REQUIRED, DefaultSelection, EXCLUDE_RULE, HAIKU_BRIEF, INHERIT, PANEL_BACKUP_ROLE, PANEL_CATALOG_NOTE, ROLES, RUNTIME_MODE_GAP, RolesError, UNSET_NOTE, UNSET_ROLE_NOTE
-from _roles.config import DEFAULT_MODE, allow_for, inherit_parent, stamp_parent
+from _roles.config import DEFAULT_MODE, OpenCodeAllow, allow_for, inherit_parent, stamp_parent
 from _roles.mode import seat_budget
-from _roles.seats import apply_budget, check_option_values, effort_option, exclude_reason, find_model, models_of, normalized_bare, opencode_allow_lines, options_of, providers_by_id, runnable, runs_on_cursor
+from _roles.seats import allow_refuses, apply_budget, check_option_values, effort_option, exclude_reason, find_model, models_of, normalized_bare, opencode_allow_lines, options_of, providers_by_id, runnable, runs_on_cursor
 from _roles import seam
 
 
-def _first_pickable(provider, exclude=(), role=None):
-    """The provider's first model the exclude list allows, or None."""
-    return next(
-        (
-            model for model in models_of(provider)
-            if exclude_reason(
-                {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, exclude, role
-            ) is None
-        ),
-        None,
+def _first_pickable(provider, catalog, allow, exclude=(), role=None, prefer=None):
+    """The provider's first model both lists allow, preferring one id, or None."""
+    candidates = [
+        model
+        for model in models_of(provider)
+        if exclude_reason(
+            {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, exclude, role
+        ) is None
+        and not allow_refuses(catalog, provider["providerInstanceId"], model["id"], allow)
+    ]
+    if prefer is not None:
+        for model in candidates:
+            if model["id"] == prefer:
+                return model
+    return next(iter(candidates), None)
+
+
+def role_allow(config, name):
+    """The allow list a role's substitutes answer to.
+
+    A configured role uses the list from the file that configures it. A role set
+    in no file uses every merged list, because no file names its seat.
+    """
+    if config["sources"].get(name):
+        return allow_for(config, name)
+    merged = OpenCodeAllow.empty()
+    for allow in (config.get("allowByFile") or {}).values():
+        merged = merged.add_all(allow.models)
+    return merged
+
+
+def _no_pick_detail(provider, catalog, allow, exclude, role):
+    allowed = [
+        model["id"]
+        for model in models_of(provider)
+        if exclude_reason(
+            {"providerInstanceId": provider["providerInstanceId"], "model": model["id"]}, exclude, role
+        ) is None
+    ]
+    if not allowed:
+        return f"{provider['providerInstanceId']} has no model the exclude list allows for {role!r}; {EXCLUDE_RULE}"
+    shown = ", ".join(allowed[:3])
+    if len(allowed) > 3:
+        shown += f" and {len(allowed) - 3} more"
+    pronoun = "it" if len(allowed) == 1 else "them"
+    return (
+        f"{provider['providerInstanceId']} has no model the exclude list and the allow list allow "
+        f"for {role!r}; the exclude list allows {shown}, and the allow list does not name {pronoun}. "
+        f"Add one with --allow-opencode {allowed[0]}"
     )
 
 
@@ -28,7 +67,7 @@ def default_seats(name):
     return DefaultSelection(INHERIT, (UNSET_ROLE_NOTE,))
 
 
-def inherit_replacement(catalog, budget, name, exclude=()):
+def inherit_replacement(catalog, budget, name, exclude=(), allow=None):
     """The seat that replaces an inherited parent the exclude list refuses, or None when it does not.
 
     It returns None when there is no parent, or the parent is not refused.
@@ -47,17 +86,17 @@ def inherit_replacement(catalog, budget, name, exclude=()):
             f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}; "
             f"{parent.provider} is not runnable ({detail})"
         )
-    model = _first_pickable(provider, exclude, name) if runnable(provider) else None
+    model = _first_pickable(provider, catalog, allow, exclude, name, parent.model) if runnable(provider) else None
     if model is None:
         raise RolesError(
             f"role {name!r} cannot inherit {parent.provider}/{parent.model}: {reason}; "
-            f"{parent.provider} has no model the exclude list allows"
+            + _no_pick_detail(provider, catalog, allow, exclude, name)
         )
     seat = finish_seat({"providerInstanceId": parent.provider, "model": model["id"]}, model, budget, exclude, name)
     return seat, [f"inherit replaced by {parent.provider}/{model['id']}: {reason}"]
 
 
-def _resolve_inherit(catalog, budget, name, exclude=()):
+def _resolve_inherit(catalog, budget, name, exclude=(), allow=None):
     """Settle an inherit seat and return resolve_seat's (seat, notes) shape.
 
     A parent the exclude list refuses becomes the same provider's first allowed
@@ -77,7 +116,7 @@ def _resolve_inherit(catalog, budget, name, exclude=()):
             f"role {name!r} cannot inherit {parent.provider}/{parent.model}: "
             f"{parent.provider} is not runnable ({gap})"
         )
-    replacement = inherit_replacement(catalog, budget, name, exclude)
+    replacement = inherit_replacement(catalog, budget, name, exclude, allow)
     if replacement is not None:
         return replacement
     parent_seat = {"providerInstanceId": parent.provider, "model": parent.model}
@@ -110,25 +149,27 @@ def settle_options(seat, model):
     return seat, notes, problems
 
 
-def resolve_seat(seat, catalog, budget, name, exclude=()):
+def resolve_seat(seat, catalog, budget, name, exclude=(), allow=None):
     """Return (resolved seat, notes, problems). Problems are seats the catalog rejects."""
     if seat == INHERIT:
-        value, notes = _resolve_inherit(catalog, budget, name, exclude)
+        value, notes = _resolve_inherit(catalog, budget, name, exclude, allow)
         return value, notes, []
     provider = providers_by_id(catalog).get(seat["providerInstanceId"])
     if not runnable(provider):
         reason = "; ".join(provider.get("constraints") or []) if provider else "not in catalog"
         note = f"{seat['providerInstanceId']} is not runnable ({reason}); seat inherits the parent"
-        value, inherit_notes = _resolve_inherit(catalog, budget, name, exclude)
+        value, inherit_notes = _resolve_inherit(catalog, budget, name, exclude, allow)
         return value, [note] + inherit_notes, [note]
     notes, problems = [], []
     model = find_model(provider, seat["model"])
     if model is None:
-        model = _first_pickable(provider, exclude, name)
+        parent = inherit_parent(catalog)
+        prefer = None
+        if parent is not None and parent.provider == provider["providerInstanceId"]:
+            prefer = parent.model
+        model = _first_pickable(provider, catalog, allow, exclude, name, prefer)
         if model is None:
-            raise RolesError(
-                f"{provider['providerInstanceId']} has no model the exclude list allows for {name!r}; {EXCLUDE_RULE}"
-            )
+            raise RolesError(_no_pick_detail(provider, catalog, allow, exclude, name))
         note = f"{seat['providerInstanceId']}/{seat['model']} is not in the catalog; using {model['id']}"
         notes.append(note)
         problems.append(note)
@@ -168,11 +209,11 @@ def settle_inherit_catalog(name, seats, catalog, parent, exclude=()):
     return seats, None
 
 
-def _store_settled(entry, name, catalog, parent, budget, exclude=()):
+def _store_settled(entry, name, catalog, parent, budget, exclude=(), allow=None):
     """Settle the entry's seats. An inherit seat whose parent the exclude list refuses becomes a real seat."""
     seats = entry["seats"]
     if catalog is not None and _seats_include_inherit(seats):
-        replacement = inherit_replacement(catalog, budget, name, exclude)
+        replacement = inherit_replacement(catalog, budget, name, exclude, allow)
         if replacement is not None:
             entry["seats"], notes = replacement
             entry["notes"] = [*entry.get("notes", []), *notes]
@@ -223,8 +264,8 @@ def cursor_note(name, seats, catalog, parent):
     return None
 
 
-def finish_entry(entry, name, catalog, parent, budget, exclude):
-    _store_settled(entry, name, catalog, parent, budget, exclude)
+def finish_entry(entry, name, catalog, parent, budget, exclude, allow=None):
+    _store_settled(entry, name, catalog, parent, budget, exclude, allow)
     attach_haiku_brief(entry, entry["seats"], parent)
     line = cursor_note(name, entry["seats"], catalog, parent)
     if line:
@@ -269,6 +310,7 @@ def resolve(config, catalog=None, names=None, parent=None, launches_seats=False)
         if name not in ROLES:
             raise RolesError(f"unknown role {name!r}")
         budget = seat_budget(config["budget"], decision.mode, name)
+        allow = role_allow(config, name)
         configured, skipped = configured_seats(config, name, exclude)
         if configured is None and name == PANEL_BACKUP_ROLE and name in config["roles"]:
             configured = []
@@ -281,7 +323,7 @@ def resolve(config, catalog=None, names=None, parent=None, launches_seats=False)
                 entry["notes"] = skipped
             if selection.notes:
                 entry["note"] = selection.notes[0]
-            finish_entry(entry, name, catalog, parent, budget, exclude)
+            finish_entry(entry, name, catalog, parent, budget, exclude, allow)
             result["roles"][name] = entry
             continue
         seats = configured
@@ -308,7 +350,7 @@ def resolve(config, catalog=None, names=None, parent=None, launches_seats=False)
         else:
             resolved, notes = [], []
             for seat in seats:
-                value, seat_notes, _ = resolve_seat(seat, catalog, budget, name, exclude)
+                value, seat_notes, _ = resolve_seat(seat, catalog, budget, name, exclude, allow)
                 if launches_seats and name == "skill tests" and runs_on_cursor(catalog, seam.launch_provider(value, parent)):
                     raise RolesError(seam.launch_refusal(f"the seat resolved to {seam.launch_provider(value, parent)}"))
                 resolved.append(value)
@@ -324,7 +366,7 @@ def resolve(config, catalog=None, names=None, parent=None, launches_seats=False)
             lines = opencode_allow_lines({name: list(configured)}, allow_for(config, name), catalog)
             if lines:
                 entry["notes"] = [*entry.get("notes", []), *lines]
-        finish_entry(entry, name, catalog, parent, budget, exclude)
+        finish_entry(entry, name, catalog, parent, budget, exclude, allow)
         result["roles"][name] = entry
     return result
 
