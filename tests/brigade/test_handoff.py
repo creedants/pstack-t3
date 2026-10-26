@@ -51,7 +51,7 @@ class HandoffTest(StoresTest, SourcesMixin, MoveTakeMixin, HandoffKindsMixin, To
 
     def assert_one_handed_ticket(self, name="engine"):
         self.assertEqual([row[2:] for row in self.rows(name, "rail.tsv")],
-                         [["waiting", "github (from app/core/T1)", "https://github.com/o/r/issues/7", "", "Fix the cache", "", "", "", "fix", ""]])
+                         [["waiting", "github (from app/core/T1)", "https://github.com/o/r/issues/7", "", "Fix the cache", "", "", "", "fix", "", ""]])
         log = (self.dir(name) / "log.tsv").read_text()
         self.assertTrue(log.endswith("\n"))
         self.assertTrue(all(len(line.split("\t")) == 5 for line in log.splitlines()))
