@@ -65,7 +65,7 @@ class ProjectLockTest(StoresBase, unittest.TestCase):
         self.assertEqual(err.strip(), "brigade: T1 would wait on itself through core/T1; nothing changed")
         self.assertEqual(self.files("engine"), engine_before)
 
-    def test_fire_waits_for_the_project_lock_so_a_dependency_set_back_to_waiting_in_between_is_not_fired_past(self):
+    def test_fire_holds_the_project_lock_through_its_dish_write_so_a_sibling_state_change_lands_after_it(self):
         self.open("core")
         self.open("engine")
         self.brigade("core", "ticket", "add", "--kind", "fix", "--summary", "core one")

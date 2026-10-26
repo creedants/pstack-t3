@@ -1,2 +1,0 @@
-- kind feature
-- `ticket add --after` and `ticket set --after` hold a waiting ticket until the ticket it names is done, across siblings; `watch` and `startable` name the hold, `fire` refuses the held ticket, and `ticket move` refuses it until `--after` is cleared
