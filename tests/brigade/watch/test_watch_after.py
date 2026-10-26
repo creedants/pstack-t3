@@ -28,11 +28,44 @@ class AfterWatchTest(BrigadeTest):
         self.brigade("ticket", "set", "T2", "--after", "T1")
         self.assertEqual(self.brigade("watch"), f"{IDLE}\nT2: waiting on T1")
 
-    def test_watch_says_nothing_about_a_waiting_ticket_once_its_dependency_is_done(self):
+    UNBLOCKED = "T2: unblocked; run fire --tickets=T2 --station=bug-fix --summary=two --timebox=60 --kind=fix"
+
+    def test_watch_prints_the_unblocked_line_for_a_waiting_ticket_once_its_dependency_is_done_on_every_watch(self):
         self.two_tickets()
         self.brigade("ticket", "set", "T2", "--after", "T1")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.assertEqual(self.brigade("watch"), f"{IDLE}\nno work in progress")
+        self.assertEqual(self.brigade("watch"), f"{IDLE}\n{self.UNBLOCKED}")
+        self.assertEqual(self.brigade("watch"), f"{IDLE}\n{self.UNBLOCKED}")
+
+    def test_watch_names_no_line_for_a_waiting_ticket_with_no_after_while_another_ticket_is_unblocked(self):
+        self.two_tickets()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "three")
+        self.brigade("ticket", "set", "T2", "--after", "T1")
+        self.brigade("ticket", "set", "T1", "--state", "done")
+        lines = self.brigade("watch").splitlines()
+        self.assertEqual(lines, [IDLE, self.UNBLOCKED])
+        self.assertFalse(any(line.startswith("T3") for line in lines))
+
+    def test_fire_refused_on_an_open_dependency_writes_nothing_and_watch_keeps_naming_the_wait(self):
+        self.two_tickets()
+        self.brigade("ticket", "set", "T2", "--after", "T1")
+        before = self.store_files()
+        self.assertEqual(self.brigade("fire", "--tickets", "T2", "--station", "bug-fix", "--summary", "two", "--timebox", "60",
+                                      code=1), "brigade: T2 is waiting on T1")
+        self.assertEqual(self.store_files(), before)
+        self.assertEqual(self.brigade("watch"), f"{IDLE}\nT2: waiting on T1")
+
+    def test_the_unblocked_fire_command_runs_through_the_shell_and_assigns_the_ticket(self):
+        self.queue()
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "one")
+        self.brigade("ticket", "add", "--kind", "fix", "--summary", "two")
+        self.brigade("ticket", "set", "T2", "--after", "T1")
+        self.brigade("ticket", "set", "T1", "--state", "done")
+        line = self.brigade("watch").splitlines()[-1]
+        ran = self.bash_unblocked(self.at, line)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertEqual(self.table_row(self.at, "dishes.tsv", "D1")["summary"], "two")
+        self.assertEqual(self.table_row(self.at, "rail.tsv", "T2")["state"], "assigned")
 
     def test_watch_names_a_dependency_that_was_dropped_and_how_to_stop_waiting(self):
         self.two_tickets()
