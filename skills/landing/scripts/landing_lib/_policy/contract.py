@@ -1,8 +1,6 @@
-import contextlib
 import json
 import os
 import shutil
-import sqlite3
 from pathlib import Path
 from landing_lib import seam
 from landing_lib._merge.forge import github_owner_repo
@@ -101,24 +99,6 @@ def size_note(contract):
         return ""
     return f"size limit {maximum} tokens via {contract.get('sizeBaseline') or seam.DEFAULT_BASELINE}"
 
-@contextlib.contextmanager
-def discard_refused_first_store(directory):
-    """Leave no database behind when a first init is refused, unless a concurrent init stored a contract in it."""
-    first_init = not (directory / "land.db").exists()
-    try:
-        yield
-    except seam.LandError:
-        if first_init:
-            try:
-                with seam.Store(directory) as store:
-                    if store.contract:
-                        raise
-            except (KeyError, sqlite3.Error):
-                pass
-            for name in ("land.db", "land.db-wal", "land.db-shm"):
-                (directory / name).unlink(missing_ok=True)
-        raise
-
 def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None,
          author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None, generated_map=None,
          size_max_tokens=None, size_baseline=None):
@@ -196,7 +176,7 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         if not base:
             raise seam.LandError(f"local mode lands on {lane}; pass --base <commit> to create it")
         lane_sha = seam.git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip()
-    with discard_refused_first_store(directory), seam.Store(directory) as store:
+    with seam.Store(directory) as store:
         with store.tx() as db:
             current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
             refuse_clash(current)
