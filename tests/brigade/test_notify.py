@@ -197,8 +197,13 @@ class NotifyTest(BrigadeTest):
         self.assertEqual(self.pings(), [["brigade: a decision is waiting for your answer"]] * len(names))
 
     def test_a_restaurant_named_with_a_bare_ipv4_address_or_a_host_and_port_pings_as_brigade(self):
-        """Defect: _name kept an address name, so a dotted IPv4 address or a host:port reached the notifier's argument."""
-        names = ("10.0.0.5", "192.168.1.20:8443", "build-box:8080")
+        """Defect: _name kept an address name, so a dotted IPv4 address or a host:port reached the notifier's argument.
+
+        The padded ports cover a port spelling longer than five digits. The internationalized host covers letters
+        outside ASCII. Both reached the notifier as a slug before _address_like read them.
+        """
+        names = ("10.0.0.5", "192.168.1.20:8443", "build-box:8080",
+                 "10.0.0.5:000022", "build-box:000080", "büro.example:8080")
         for name in names:
             directory = self.store / "bridge-kit" / re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
             self.outcome("open", "--project-root", str(self.project), "--name", name, at=directory)
