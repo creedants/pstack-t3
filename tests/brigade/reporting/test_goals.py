@@ -199,8 +199,8 @@ class ReportingTest(BrigadeTest):
         self.brigade("ticket", "add", "--summary", "a", "--kind", "fix", "--goal", "G1")
         self.brigade("ticket", "add", "--summary", "b", "--kind", "fix")
         rail = self.at / "rail.tsv"
-        self.assertEqual(rail.read_bytes().count(b"\tG1\n"), 1)
-        rail.write_bytes(rail.read_bytes().replace(b"\tG1\n", b"\tG1\r\n"))
+        self.assertEqual(rail.read_bytes().count(b"\tG1\t\n"), 1)
+        rail.write_bytes(rail.read_bytes().replace(b"\tG1\t\n", b"\tG1\r\t\n"))
         warning = (f"brigade: warning: T1 names goal 'G1\\r', {self.NO_GOAL_ROW}; "
                    "run ticket set T1 --goal G<n> or --no-goal\n")
         unassigned = ["liveness: every 600000 ms (default for milestones)", "kinds: fix 2 waiting", "goals: unassigned 2 waiting"]

@@ -1,10 +1,9 @@
-import fcntl
 import json
 import os
 import re
-from contextlib import contextmanager
 from pathlib import Path
 from brigade_lib import seam
+from brigade_lib._store.project_lock import project_lock
 from brigade_lib._store.restaurant import Restaurant, holder_prefix
 from brigade_lib._store.vocab import ADMIN_DIR, ADMIN_NAME, TABLES
 from brigade_lib.compact import effective_provider, sync_meta
@@ -120,21 +119,6 @@ def refuse_owned_intake(directory, project_root, sources):
             raise BrigadeError(f"{owner} already owns intake from {source}; move tickets to it instead")
 
 
-@contextmanager
-def _project_lock(parent):
-    """Exclusive lock on a project's store directory, held across a directory claim or move.
-
-    open and open --rename take it, so one target's creation and the other's move never interleave.
-    The lock is on the directory itself, so a killed holder releases it and leaves no lock file.
-    """
-    fd = os.open(parent, os.O_RDONLY)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        os.close(fd)
-
-
 def open_restaurant(root, project_root, name, reporting="milestones", intake=(), workers=None, admin=False, mode=None,
                   context_cap=None, coordinator_provider=None, pr_credit=None):
     project_root = Path(project_root).resolve()
@@ -144,7 +128,7 @@ def open_restaurant(root, project_root, name, reporting="milestones", intake=(),
     # The project directory is shared by every coordinator on this path slug.
     # The coordinator directory is the claim, so mkdir must fail when it exists.
     directory.parent.mkdir(parents=True, exist_ok=True)
-    with _project_lock(directory.parent):
+    with project_lock(directory.parent):
         try:
             directory.mkdir()
         except FileExistsError:
@@ -460,7 +444,7 @@ def rename_restaurant(root, args):
     if blocks:
         raise BrigadeError(refused + "; ".join(blocks))
     before = meta["restaurant"]
-    with _project_lock(parent):
+    with project_lock(parent):
         with store.guarded():
             marker = _reserve_target(directory, target, refused)
             prior = _prior_bytes(directory)

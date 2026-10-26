@@ -121,10 +121,10 @@ class LabelsMixin:
     def test_the_worked_store_holds_the_kind_and_goal_cells_its_tests_count(self):
         self.worked_store()
         self.assertEqual([(row[0], row[2], row[5], *row[10:]) for row in self.rows_of("rail.tsv")], [
-            ("T1", "done", "D1", "feature", "G1"), ("T2", "assigned", "D2", "fix", "G1"), ("T3", "assigned", "D2", "polish", "G2"),
-            ("T4", "waiting", "", "fix", "G1"), ("T5", "waiting", "", "polish", ""), ("T6", "assigned", "D3", "upkeep", "G2"),
-            ("T7", "assigned", "D4", "study", ""), ("T8", "waiting", "", "", ""), ("T9", "waiting", "", "feature", "G1"),
-            ("T10", "done", "D5", "polish", "")])
+            ("T1", "done", "D1", "feature", "G1", ""), ("T2", "assigned", "D2", "fix", "G1", ""), ("T3", "assigned", "D2", "polish", "G2", ""),
+            ("T4", "waiting", "", "fix", "G1", ""), ("T5", "waiting", "", "polish", "", ""), ("T6", "assigned", "D3", "upkeep", "G2", ""),
+            ("T7", "assigned", "D4", "study", "", ""), ("T8", "waiting", "", "", "", ""), ("T9", "waiting", "", "feature", "G1", ""),
+            ("T10", "done", "D5", "polish", "", "")])
         self.assertEqual([(row[0], row[2], row[4], *row[15:]) for row in self.rows_of("dishes.tsv")], [
             ("D1", "merged", "T1", "feature", "G1"), ("D2", "in-review", "T2,T3", "fix", "G1"), ("D3", "sent-back", "T6", "upkeep", "G2"),
             ("D4", "in-progress", "T7", "study", ""), ("D5", "merged", "T10", "polish", "")])

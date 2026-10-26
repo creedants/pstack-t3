@@ -43,13 +43,13 @@ class StoreOpenMixin:
         self.assertEqual(self.admin("ticket", "add", "--summary", "Fix the cache", ok=False),
                          "brigade: ticket add needs --kind <feature|fix|polish|upkeep|study>")
         self.assertEqual(self.admin("ticket", "add", "--summary", "Fix the cache", "--kind", "fix", "--goal", "G1"), "T1")
-        self.assertEqual(self.rows(".admin", "rail.tsv")[0][10:], ["fix", "G1"])
+        self.assertEqual(self.rows(".admin", "rail.tsv")[0][10:], ["fix", "G1", ""])
         self.assertEqual(self.admin("ticket", "set", "T1", "--no-goal"), "T1 unassigned")
         self.assertEqual(self.admin("ticket", "set", "T1", "--goal", "G1"), "T1 goal G1")
         self.assertEqual(self.admin("ticket", "move", "T1", "--to", "core"),
                          "T1 moved to core; no thread recorded for core; it leaves G1 here and arrives unassigned")
         self.brigade("core", "ticket", "take")
-        self.assertEqual(self.rows("core", "rail.tsv")[0][10:], ["fix", ""])
+        self.assertEqual(self.rows("core", "rail.tsv")[0][10:], ["fix", "", ""])
 
     def test_two_admin_opens_at_once_leave_one_store(self):
         argv = [sys.executable, str(SCRIPT), "--store", str(self.store), "open", "--admin",

@@ -21,7 +21,7 @@ class HandoffKindsMixin:
                          {"handoff": "app/core/T1", "summary": "Tidy the guide", "source": "user", "ref": "",
                           "priority": "", "paths": "", "decision": "", "kind": "polish"})
         self.assertEqual(self.rows("core", "rail.tsv")[0][2:],
-                         ["moved", "user", "", "to:engine", "Tidy the guide", "", "", "", "polish", "G1"])
+                         ["moved", "user", "", "to:engine", "Tidy the guide", "", "", "", "polish", "G1", ""])
         self.assertEqual(self.brigade("core", "ticket", "move", "T1", "--to", "engine"), said)
 
     def test_ticket_take_files_a_moved_ticket_with_its_kind_and_no_goal(self):
@@ -29,7 +29,7 @@ class HandoffKindsMixin:
         self.brigade("engine", "goal", "add", "--name", "docs", "--purpose", "p", "--done", "d")
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Tidy the guide")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
-                         ["waiting", "user (from app/core/T1)", "", "", "Tidy the guide", "", "", "", "polish", ""])
+                         ["waiting", "user (from app/core/T1)", "", "", "Tidy the guide", "", "", "", "polish", "", ""])
 
     def test_ticket_move_of_a_ticket_with_no_kind_and_no_goal_writes_the_seven_keys_the_handoff_had_before_kinds(self):
         self.open("core")
@@ -52,16 +52,16 @@ class HandoffKindsMixin:
         self.brigade("core", "ticket", "move", "T1", "--to", "engine")
         self.assertNotIn("kind", json.loads((self.dir("engine") / "inbox" / "app~core~T1.json").read_text()))
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Tidy the guide")
-        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", "", ""])
 
     def test_ticket_take_files_a_handoff_with_no_kind_key_as_a_ticket_with_no_kind_and_no_goal(self):
         self.assertEqual(self.take_handoff(), "T1 from app/core/T1: Tidy the guide")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
-                         ["waiting", "user (from app/core/T1)", "", "", "Tidy the guide", "low", "docs", "", "", ""])
+                         ["waiting", "user (from app/core/T1)", "", "", "Tidy the guide", "low", "docs", "", "", "", ""])
 
     def test_ticket_take_files_a_handoff_with_a_kind_as_a_ticket_of_that_kind(self):
         self.assertEqual(self.take_handoff(kind="upkeep"), "T1 from app/core/T1: Tidy the guide")
-        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["upkeep", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["upkeep", "", ""])
 
     def test_ticket_take_files_a_handoff_with_a_kind_that_is_none_of_the_five_as_a_ticket_with_no_kind_and_warns_on_standard_error(self):
         self.handed({"kind": "chore"})
@@ -70,7 +70,7 @@ class HandoffKindsMixin:
                          (0, "T1 from app/core/T1: Tidy the guide\n",
                           "brigade: warning: T1 came from app/core/T1 with kind 'chore', which is not one this version knows, "
                           "so it has no kind; run ticket set T1 --kind <feature|fix|polish|upkeep|study>\n"))
-        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", "", ""])
         again = self.run_brigade("engine", "ticket", "take")
         self.assertEqual((again.returncode, again.stdout, again.stderr), (0, "nothing handed to you\n", ""))
 
@@ -79,7 +79,7 @@ class HandoffKindsMixin:
         took = self.run_brigade("engine", "inbox", "take")
         self.assertEqual((took.returncode, took.stdout, took.stderr),
                          (0, "T1 from app/core/T1: Tidy the guide\n", self.unknown_kind("T1", "' fix '")))
-        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["", "", ""])
 
     def test_a_take_of_two_handoffs_with_unknown_kinds_prints_one_warning_for_each(self):
         self.handed({"kind": "chore"}, {"kind": "chore"})
@@ -87,14 +87,14 @@ class HandoffKindsMixin:
         self.assertEqual((took.returncode, took.stdout, took.stderr),
                          (0, "T1 from app/core/T1: Tidy the guide\nT2 from app/core/T2: Tidy the guide\n",
                           self.unknown_kind("T1", "'chore'") + self.unknown_kind("T2", "'chore'")))
-        self.assertEqual([row[10:] for row in self.rows("engine", "rail.tsv")], [["", ""], ["", ""]])
+        self.assertEqual([row[10:] for row in self.rows("engine", "rail.tsv")], [["", "", ""], ["", "", ""]])
 
     def test_ticket_move_of_a_ticket_with_a_bad_kind_cell_and_a_bad_goal_cell_warns_of_both_on_standard_error_and_again_on_a_second_move(self):
         self.open("core")
         self.open("engine")
         self.brigade("core", "ticket", "add", "--summary", "Tidy the guide", "--kind", "polish")
         rail = self.dir("core") / "rail.tsv"
-        rail.write_text(rail.read_text().replace("\tpolish\t\n", "\tchore\tG9\n"))
+        rail.write_text(rail.read_text().replace("\tpolish\t\t\n", "\tchore\tG9\t\n"))
         by_hand = "ticket set does not change this cell while T1 is moved; correct it in rail.tsv by hand\n"
         said = (0, "T1 moved to engine; no thread recorded for engine\n",
                 "brigade: warning: T1 has kind 'chore', which is not feature, fix, polish, upkeep, or study; it reads as no kind; " + by_hand
@@ -102,7 +102,7 @@ class HandoffKindsMixin:
         for _ in range(2):
             moved = self.run_brigade("core", "ticket", "move", "T1", "--to", "engine")
             self.assertEqual((moved.returncode, moved.stdout, moved.stderr), said)
-        self.assertEqual(self.rows("core", "rail.tsv")[0][10:], ["chore", "G9"])
+        self.assertEqual(self.rows("core", "rail.tsv")[0][10:], ["chore", "G9", ""])
         self.assertEqual(json.loads((self.dir("engine") / "inbox" / "app~core~T1.json").read_text()),
                          {"handoff": "app/core/T1", "summary": "Tidy the guide", "source": "user", "ref": "",
                           "priority": "", "paths": "", "decision": ""})
@@ -118,11 +118,11 @@ class HandoffKindsMixin:
                  "priority": "", "paths": "", "decision": "", "kind": kind}))
         self.assertEqual(self.brigade("engine", "ticket", "take"),
                          "T1 from app/core/T1: Tidy guide 1\nT2 from app/core/T2: Tidy guide 2")
-        self.assertEqual([row[10:] for row in self.rows("engine", "rail.tsv")], [["", ""], ["", ""]])
+        self.assertEqual([row[10:] for row in self.rows("engine", "rail.tsv")], [["", "", ""], ["", "", ""]])
 
     def test_ticket_take_ignores_a_goal_key_in_the_handoff(self):
         self.assertEqual(self.take_handoff(kind="fix", goal="G1"), "T1 from app/core/T1: Tidy the guide")
-        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["fix", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][10:], ["fix", "", ""])
 
     def test_ticket_set_with_no_flag_on_a_moved_ticket_prints_the_moved_refusal(self):
         self.handoff()

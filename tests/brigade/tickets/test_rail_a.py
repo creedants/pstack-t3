@@ -90,10 +90,10 @@ class RailAMixin:
             (self.at / "rail.tsv").write_text("id\n" + "\t".join(["T1", stamp, "waiting", "user", "", "", "s", *extra]) + "\n")
             self.assertEqual(self.brigade("ticket", "list"), f"T1 waiting {'low' if extra else 'normal'} [user] s", extra)
 
-    def test_a_rail_row_with_six_fields_or_thirteen_is_malformed(self):
+    def test_a_rail_row_with_six_fields_or_fourteen_is_malformed(self):
         self.open()
         stamp = "2026-10-01T00:00:00+00:00"
-        for fields in (["T1", stamp, "waiting", "user", "", ""], ["T1", stamp, "waiting", "user", "", "", "s", *[""] * 6]):
+        for fields in (["T1", stamp, "waiting", "user", "", ""], ["T1", stamp, "waiting", "user", "", "", "s", *[""] * 7]):
             (self.at / "rail.tsv").write_text("id\n" + "\t".join(fields) + "\n")
             self.assertEqual(self.brigade("ticket", "list", ok=False),
                              "brigade: bridge-kit/perf/rail.tsv line 2 is malformed; fix or remove it")
@@ -154,9 +154,9 @@ class RailAMixin:
         self.assertEqual(self.brigade("ticket", "set", "T1", "--priority", "low"), "T1 priority low")
         dishes[11], rail[7] = "90", "low"
         self.assertEqual((self.at / "dishes.tsv").read_text().splitlines()[1].split("\t"), [*dishes, "", ""])
-        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[1].split("\t"), [*rail, "", ""])
+        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[1].split("\t"), [*rail, "", "", ""])
         self.assertEqual((self.at / "dishes.tsv").read_text().splitlines()[0].split("\t")[-3:], ["reported", "kind", "goal"])
-        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[0].split("\t")[-3:], ["decision", "kind", "goal"])
+        self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[0].split("\t")[-4:], ["decision", "kind", "goal", "after"])
 
     def test_a_store_with_no_goals_table_runs_status_watch_startable_ticket_list_and_close_and_gains_no_table(self):
         self.fired_bug_fix()

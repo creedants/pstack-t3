@@ -9,8 +9,9 @@ from brigade_lib._items.rounds import record_escalation
 from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths, fired_line, holder, missing_checkout_paths, refusal_kind, refill_of, release_lease, running_workers, worker_cap
 from brigade_lib.reviews import fix_round_refusal
 from brigade_lib.shared import BrigadeError, slug
+from brigade_lib._store.project_lock import project_lock
 from brigade_lib.store import KIND_CHOICE, STATION_KIND
-from brigade_lib.tickets import ActsOn, Label, paths_of, priority_of, quoted_paths, read_labels, tracked_paths
+from brigade_lib.tickets import ActsOn, Label, after_holds, paths_of, priority_of, quoted_paths, read_labels, read_waits, tracked_paths
 
 BROAD_DIRECTORY_FILES = 5
 
@@ -93,7 +94,7 @@ def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, bran
             restaurant.log("ticket", ident, "blocked", note)
 
 
-def unfireable(restaurant, ids):
+def unfireable(restaurant, ids, waits=None):
     # A ticket fired again is the same work, so an item that owes its round decision holds its tickets.
     for dish in restaurant.rows("dishes.tsv"):
         held = [ident for ident in ids if ident in dish["tickets"].split(",")]
@@ -104,6 +105,10 @@ def unfireable(restaurant, ids):
         _, ticket = restaurant.find("rail.tsv", ident)
         if ticket["state"] != "waiting":
             return f"{ident} is {ticket['state']}, not waiting"
+    held = after_holds(waits, restaurant.rows("rail.tsv")) if waits is not None else {}
+    for ident in ids:
+        if ident in held:
+            return f"{ident} is {held[ident]}"
     return None
 
 
@@ -200,10 +205,11 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
         meta = restaurant.meta
         project_root = meta.get("projectRoot", "")
         policy = doc_policy(meta)
+        waits = read_waits(restaurant)
         prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item, policy)
         with restaurant.checked():
             restaurant.fence()
-            refusal = unfireable(restaurant, ids)
+            refusal = unfireable(restaurant, ids, waits)
             if refusal:
                 raise BrigadeError(refusal)
             gate = prepared.decide()
@@ -234,64 +240,66 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason,
                                kind, ride_along, doc_item)
             raise BrigadeError(f"nothing fired: {error}") from error
-        prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item, policy)
-        with restaurant.checked():
-            refusal = unfireable(restaurant, ids)
-            gate = prepared.decide()
-            if not refusal and isinstance(gate, DocRefused):
-                refusal = gate.line
-            current = restaurant.next_id("dishes.tsv")
-            label = None
-            if not refusal:
-                label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
-            if label:
-                hold = spend_hold(restaurant, label, ids)
-                if hold:
-                    label, refusal = None, hold.words
-            full = None if refusal else workers_full(restaurant)
-            if label and not full and current == dish:
-                write_lead_kind(restaurant, ids, label.kind)
-                restaurant.append("dishes.tsv", {"id": dish, "at": seam.now(), "state": "in-progress", "station": station,
-                                                 "tickets": ",".join(ids), "task": task, "thread": thread,
-                                                 "branch": branch, "summary": summary, "timebox": timebox,
-                                                 "lease": lease, "paths": leased, "kind": label.kind, "goal": label.goal})
-                restaurant.log("dish", dish, "in-progress", summary)
-                gate.record(restaurant, dish)
-                if reason:
-                    record_escalation(restaurant, dish, reason)
-                record_fire_paths(restaurant, ids, paths)
-                rows = restaurant.rows("rail.tsv")
-                for row in rows:
-                    if row["id"] in ids:
-                        row["state"], row["dish"] = "assigned", dish
-                restaurant.save_rows("rail.tsv", rows)
-                for row in rows:
-                    if row["id"] in ids:
-                        restaurant.log("ticket", row["id"], "assigned", row["summary"])
-                if paths:
-                    for stale in missing_checkout_paths(restaurant.meta.get("projectRoot", ""),
-                                                        [part for part in paths.split(",") if part]):
-                        print(f"fire: {stale} is not in the checkout; a stale ticket path leases nothing real",
-                              file=sys.stderr)
-                    fired = [row for row in rows if row["id"] in ids]
-                    try:
-                        with contextlib.ExitStack() as output:
-                            try:
-                                advisory = output.enter_context(open(
-                                    sys.stderr.fileno(), "w", encoding=sys.stderr.encoding,
-                                    errors="backslashreplace", closefd=False))
-                            except (AttributeError, io.UnsupportedOperation):
-                                advisory = sys.stderr
-                            for line in broad_path_lines(fired, paths, tracked_paths(restaurant.meta.get("projectRoot", ""))):
-                                if advisory is not None:
-                                    print(line, file=advisory)
-                    except (OSError, ValueError):
-                        pass
-                return fired_line(dish, lease, holder(restaurant, dish), added)
-            if full and not refusal:
-                record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
-                               doc_item)
-                refusal = full
+        with project_lock(restaurant.dir.parent):
+            waits = read_waits(restaurant)
+            prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item, policy)
+            with restaurant.checked():
+                refusal = unfireable(restaurant, ids, waits)
+                gate = prepared.decide()
+                if not refusal and isinstance(gate, DocRefused):
+                    refusal = gate.line
+                current = restaurant.next_id("dishes.tsv")
+                label = None
+                if not refusal:
+                    label, refusal = checked_fire_label(restaurant, ids, station, kind, ride_along)
+                if label:
+                    hold = spend_hold(restaurant, label, ids)
+                    if hold:
+                        label, refusal = None, hold.words
+                full = None if refusal else workers_full(restaurant)
+                if label and not full and current == dish:
+                    write_lead_kind(restaurant, ids, label.kind)
+                    restaurant.append("dishes.tsv", {"id": dish, "at": seam.now(), "state": "in-progress", "station": station,
+                                                     "tickets": ",".join(ids), "task": task, "thread": thread,
+                                                     "branch": branch, "summary": summary, "timebox": timebox,
+                                                     "lease": lease, "paths": leased, "kind": label.kind, "goal": label.goal})
+                    restaurant.log("dish", dish, "in-progress", summary)
+                    gate.record(restaurant, dish)
+                    if reason:
+                        record_escalation(restaurant, dish, reason)
+                    record_fire_paths(restaurant, ids, paths)
+                    rows = restaurant.rows("rail.tsv")
+                    for row in rows:
+                        if row["id"] in ids:
+                            row["state"], row["dish"] = "assigned", dish
+                    restaurant.save_rows("rail.tsv", rows)
+                    for row in rows:
+                        if row["id"] in ids:
+                            restaurant.log("ticket", row["id"], "assigned", row["summary"])
+                    if paths:
+                        for stale in missing_checkout_paths(restaurant.meta.get("projectRoot", ""),
+                                                            [part for part in paths.split(",") if part]):
+                            print(f"fire: {stale} is not in the checkout; a stale ticket path leases nothing real",
+                                  file=sys.stderr)
+                        fired = [row for row in rows if row["id"] in ids]
+                        try:
+                            with contextlib.ExitStack() as output:
+                                try:
+                                    advisory = output.enter_context(open(
+                                        sys.stderr.fileno(), "w", encoding=sys.stderr.encoding,
+                                        errors="backslashreplace", closefd=False))
+                                except (AttributeError, io.UnsupportedOperation):
+                                    advisory = sys.stderr
+                                for line in broad_path_lines(fired, paths, tracked_paths(restaurant.meta.get("projectRoot", ""))):
+                                    if advisory is not None:
+                                        print(line, file=advisory)
+                        except (OSError, ValueError):
+                            pass
+                    return fired_line(dish, lease, holder(restaurant, dish), added)
+                if full and not refusal:
+                    record_blocked(restaurant, ids, "workers", station, summary, paths, timebox, branch, reason, kind, ride_along,
+                                   doc_item)
+                    refusal = full
         if lease:
             release_lease(restaurant, lease)
         if refusal:

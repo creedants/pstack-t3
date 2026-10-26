@@ -155,7 +155,7 @@ class MoveTakeMixin:
                           "priority": "urgent", "paths": "docs,src/cache.py", "decision": "yes", "kind": "fix"})
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Fix the cache")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
-                         ["waiting", "user (from app/core/T1)", "", "", "Fix the cache", "urgent", "docs,src/cache.py", "yes", "fix", ""])
+                         ["waiting", "user (from app/core/T1)", "", "", "Fix the cache", "urgent", "docs,src/cache.py", "yes", "fix", "", ""])
         self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting urgent fix [user (from app/core/T1)] Fix the cache")
 
     def test_a_moved_ticket_with_an_empty_priority_cell_reads_the_default_of_its_source_after_ticket_take(self):
@@ -164,7 +164,7 @@ class MoveTakeMixin:
         self.brigade("core", "ticket", "add", "--kind", "fix", "--summary", "Sync", "--source", "upstream")
         self.brigade("core", "ticket", "move", "T1", "--to", "engine")
         self.brigade("engine", "ticket", "take")
-        self.assertEqual(self.rows("engine", "rail.tsv")[0][7:], ["", "", "", "fix", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[0][7:], ["", "", "", "fix", "", ""])
         self.assertEqual(self.brigade("engine", "ticket", "list"), "T1 waiting urgent fix [upstream (from app/core/T1)] Sync")
 
     def test_ticket_take_files_a_handoff_written_without_priority_paths_and_decision(self):
@@ -176,6 +176,6 @@ class MoveTakeMixin:
             {"handoff": "app/core/T1", "summary": "Tidy the guide", "source": "report", "ref": "core/reports/D1.md#1"}))
         self.assertEqual(self.brigade("engine", "ticket", "take"), "T1 from app/core/T1: Tidy the guide")
         self.assertEqual(self.rows("engine", "rail.tsv")[0][2:],
-                         ["waiting", "report (from app/core/T1)", "core/reports/D1.md#1", "", "Tidy the guide", "", "", "", "", ""])
+                         ["waiting", "report (from app/core/T1)", "core/reports/D1.md#1", "", "Tidy the guide", "", "", "", "", "", ""])
         self.assertEqual(self.brigade("engine", "ticket", "list"),
                          "T1 waiting low [report (from app/core/T1)] Tidy the guide core/reports/D1.md#1")

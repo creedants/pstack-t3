@@ -31,7 +31,7 @@ class SourcesMixin:
             (self.dir(name) / "reports" / "D1.md").write_text(body)
             self.assertEqual(self.brigade(name, "ticket", "add", "--from-report", "reports/D1.md"),
                              f"T2 added from {name}/reports/D1.md#1: Correctness: Shared text.")
-        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Correctness: Shared text.", "", "", "", "polish", ""])
+        self.assertEqual(self.rows("engine", "rail.tsv")[1][2:], ["waiting", "report", "engine/reports/D1.md#1", "", "Correctness: Shared text.", "", "", "", "polish", "", ""])
 
     def test_a_sibling_cannot_claim_a_source_another_owns(self):
         self.open("docs", "--intake", "github")

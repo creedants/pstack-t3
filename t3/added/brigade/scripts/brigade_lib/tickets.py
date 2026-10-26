@@ -1,4 +1,5 @@
 """Patch a name in the _tickets submodule that reads it; patching it here does not reach callers."""
+from brigade_lib._tickets.after import Rails, after_cell, after_change, after_holds, after_ready, read_waits
 from brigade_lib._tickets.labels import ActsOn, EVERY_ROW, Fault, GOALS_ONLY, Goal, Label, LabelCounts, Labels, Tally, count_labels, frozen_label, in_flight_tickets, label_words, read_goal, read_label, read_labels, whole_share
 from brigade_lib._tickets.goals import add_goal, goal_share, goal_work, open_goal, set_goal
 from brigade_lib._tickets.pairs import CAP_WORDS, REVIEW_WORDS, a_mode, cap_pairs, review_pairs, setting_pairs
