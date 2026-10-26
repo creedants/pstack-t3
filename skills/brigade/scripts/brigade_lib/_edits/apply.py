@@ -37,6 +37,21 @@ def _registered(root):
             for item in listing.stdout.split(b"\0") if item.startswith(b"worktree ")}
 
 
+def _ignored(dish, root, paths):
+    """The paths git's ignore rules leave out of the worktree, so any project's rules count.
+
+    A path git tracks is never ignored, so a build that changes a tracked path is still staged. Empty when paths is
+    empty or git names none.
+    """
+    if not paths:
+        return set()
+    data = b"\0".join(os.fsencode(path) for path in paths) + b"\0"
+    found = _git(root, "check-ignore", "--stdin", "-z", data=data)
+    if found.returncode not in (0, 1):
+        raise BrigadeError(f"{dish}: cannot ask git which paths are ignored: {found.returncode}")
+    return {os.fsdecode(item) for item in found.stdout.split(b"\0") if item}
+
+
 def _oneline(path):
     """Show a path on one line, so a refusal that names a path with a newline stays one line."""
     return str(path).replace("\n", "\\n")
@@ -193,9 +208,10 @@ def _apply_in(absolute, dish, name, changed, tree, from_sha, full, branch, build
     for path in set(prepared) | set(built):
         if prepared.get(path) != built.get(path):
             wanted.add(path)
-    ordered = sorted(wanted)
     if _git(absolute, "reset", "-q", full).returncode:
         raise BrigadeError(f"{dish}: cannot reset the index to {full}")
+    wanted -= _ignored(dish, absolute, sorted(wanted))
+    ordered = sorted(wanted)
     data = b"\0".join(os.fsencode(f":(literal){path}") for path in ordered) + (b"\0" if ordered else b"")
     staged = _git(absolute, "add", "-A", "--pathspec-from-file", "-",
                   "--pathspec-file-nul", data=data)
