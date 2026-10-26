@@ -29,6 +29,8 @@ from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
 from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
 
+WEBHOOK_SCHEDULE = "intake-webhook"
+
 @dataclass(frozen=True)
 class Run:
     argv: tuple
@@ -100,6 +102,7 @@ class Snapshot:
     report_gaps: tuple
     trunk: object
     round_budget: int
+    webhook_intake: bool = False
 
 
 def dish_by_id(snapshot, ident):
@@ -242,7 +245,8 @@ def load_snapshot(restaurant, moment):
         tuple(seam.events_since(restaurant, since).values()), seam.counts(restaurant), tuple(progress),
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
         tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
-        store_path(restaurant.dir), tuple(gaps), trunk, round_budget_of(meta))
+        store_path(restaurant.dir), tuple(gaps), trunk, round_budget_of(meta),
+        webhook_intake=WEBHOOK_SCHEDULE in (meta.get("schedules") or {}))
 
 
 def inbox_ready(snapshot):

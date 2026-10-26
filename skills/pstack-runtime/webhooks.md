@@ -17,6 +17,13 @@ Read this file before you create a webhook schedule, ask for a signing secret, o
 - A missing `webhookUrl` means this environment has no T3 Connect managed tunnel. Tell the user to enable T3 Connect remote access.
 - Never invent an endpoint, share a local path as the task URL, or present another tunnel as the task's URL.
 
+## Filters, replay keys, and delivery age
+
+- A webhook schedule accepts `filters`, `dedupe`, and `maxDeliveryAgeMinutes` inside `schedule`. Keep `prompt` outside `schedule`.
+- `filters` is an array of objects with `path` and `op`. The `equals`, `notEquals`, and `startsWith` ops take a string `value`. The `in` op takes an array of strings as `value`. The `exists` op does not require `value`.
+- `dedupe` accepts optional `replayKey` and `coalesceKey` strings and an optional `coalesceWindowSeconds` number.
+- `maxDeliveryAgeMinutes` accepts a number. The tool schema does not specify when age starts or how an offline backlog is handled. Keep polling for issues that do not produce a run.
+
 ## Signature
 
 - The fields are `header`, `encoding` (`hex` or `base64`), `prefix`, and `secretRef`.
