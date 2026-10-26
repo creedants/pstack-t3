@@ -128,7 +128,15 @@ def apply_review(root, dish, name, edits, from_sha, branch, worktree, build, set
         target = Path(worktree).resolve()
         _refuse_inside(root, dish, target)
     absolute = str(target)
-    if _git(root, "branch", "--", branch, full).returncode:
+    try:
+        branched = _git(root, "branch", "--", branch, full)
+    except BrigadeError as error:
+        if made:
+            shutil.rmtree(target, ignore_errors=True)
+            if os.path.lexists(target):
+                raise BrigadeError(f"{error}; cleanup incomplete: directory {_oneline(target)}") from None
+        raise
+    if branched.returncode:
         left = []
         if made:
             shutil.rmtree(target, ignore_errors=True)
