@@ -117,6 +117,27 @@ class ValidateAllowTest(unittest.TestCase):
         self.assertEqual(inherit_validated.returncode, 0, inherit_validated.stdout)
         self.assertEqual(inherit_validated.stdout, "ok\n")
 
+    def test_validate_refuses_inherit_seat_show_refuses(self):
+        model = {
+            "id": "variant-model",
+            "options": [{"id": "variant", "type": "select", "options": [{"id": "none"}, {"id": "high"}, {"id": "max"}]}],
+            "cost": 0,
+        }
+        catalog = opencode_catalog(model)
+        roles_file = {
+            "version": 1,
+            "budget": "default",
+            "mode": "light",
+            "roles": {"bug-fix": ["inherit"]},
+            "exclude": [{"options": {"variant": "none"}}],
+        }
+        parent = f"{GO}/variant-model"
+        shown = run_show(catalog, roles_file, parent)
+        self.assertEqual(shown.returncode, 2, shown.stderr)
+        validated = run_validate(catalog, roles_file, parent)
+        self.assertEqual(validated.returncode, 1, validated.stdout)
+        self.assertIn("variant=none", validated.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

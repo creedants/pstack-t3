@@ -59,6 +59,18 @@ def _show(catalog, roles_file, parent=PARENT, brief_mode="light", role="bug-fix"
     return completed
 
 
+def _validate(catalog, roles_file, parent=PARENT):
+    with tempfile.TemporaryDirectory() as directory:
+        repo = Repo(directory)
+        path = repo.directory / "catalog.json"
+        repo.put(path, catalog)
+        repo.put(repo.user, roles_file)
+        completed = repo.run(
+            "validate", "--catalog", str(path), "--parent", parent,
+        )
+    return completed
+
+
 class VariantCapTest(unittest.TestCase):
     def test_light_caps_variant_max_to_medium(self):
         catalog = _catalog(["low", "medium", "high", "max"])
@@ -119,6 +131,20 @@ class VariantCapTest(unittest.TestCase):
             entry["info"],
             [f"inherit made explicit as {PARENT} so the small budget applies"],
         )
+
+    def test_validate_refuses_variant_seat_show_refuses(self):
+        catalog = _catalog(["none", "high", "max"])
+        roles_file = {
+            "mode": "light",
+            "roles": {"bug-fix": [_seat("max")]},
+            "exclude": [{"options": {"variant": "none"}}],
+        }
+        shown = _show(catalog, roles_file)
+        self.assertEqual(shown.returncode, 2, shown.stderr)
+        self.assertEqual(shown.stdout, "")
+        validated = _validate(catalog, roles_file)
+        self.assertEqual(validated.returncode, 1, validated.stdout)
+        self.assertIn("variant=none", validated.stdout)
 
 
 if __name__ == "__main__":
