@@ -38,4 +38,4 @@ The webhook URL, the signing secret, and any token never go into the store, a br
 
 ## Fallback
 
-The webhook is a nightly-first feature with a polling fallback. When `schedule_task` returns no `webhookUrl`, T3 Connect remote access is off. When `schedule_task` refuses a webhook schedule, the host has no webhook trigger. In either case keep the polling intake schedule only. Nothing is lost, because polling files every issue. Never remove the polling schedule while the webhook is on.
+Polling is the fallback. When `schedule_task` returns no `webhookUrl`, T3 Connect remote access is off. When `schedule_task` refuses the webhook schedule after you checked its fields, do not retry. In either case keep the polling intake schedule only. Nothing is lost, because polling files every issue. Never remove the polling schedule while the webhook is on.
