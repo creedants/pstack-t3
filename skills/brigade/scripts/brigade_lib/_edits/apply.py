@@ -63,16 +63,23 @@ def _cleanup(root, worktree, branch, added, made):
     """Undo what this run created and return what could not be undone. It prunes nothing else."""
     left = []
     if added:
-        _git(root, "worktree", "unlock", worktree)
-        removed = _git(root, "worktree", "remove", "--force", worktree)
-        if removed.returncode:
+        try:
+            _git(root, "worktree", "unlock", worktree)
+            failed = _git(root, "worktree", "remove", "--force", worktree).returncode
+        except BrigadeError:
+            failed = True
+        if failed:
             left.append(f"worktree {_oneline(worktree)}")
     if made:
         if not left:
             shutil.rmtree(worktree, ignore_errors=True)
         if os.path.lexists(worktree):
             left.append(f"directory {_oneline(worktree)}")
-    if _tip(root, branch) is not None and _git(root, "branch", "-D", branch).returncode:
+    try:
+        failed = _tip(root, branch) is not None and _git(root, "branch", "-D", branch).returncode
+    except BrigadeError:
+        failed = True
+    if failed:
         left.append(f"branch {_oneline(branch)}")
     return left
 
@@ -122,23 +129,27 @@ def apply_review(root, dish, name, edits, from_sha, branch, worktree, build, set
         _refuse_inside(root, dish, target)
     absolute = str(target)
     if _git(root, "branch", "--", branch, full).returncode:
+        left = []
         if made:
             shutil.rmtree(target, ignore_errors=True)
+            if os.path.lexists(target):
+                left.append(f"directory {_oneline(target)}")
+        suffix = f"; cleanup incomplete: {', '.join(left)}" if left else ""
         if _tip(root, branch) is not None:
-            raise BrigadeError(f"{dish}: branch {_oneline(branch)} already exists")
-        raise BrigadeError(f"{dish}: cannot create branch {_oneline(branch)}")
-    added = _git(root, "worktree", "add", absolute, branch)
-    if added.returncode:
-        detail = (added.stderr or added.stdout).decode(errors="replace").strip().splitlines()
-        registered = _registered(root)
-        owned = registered is None or target.resolve() in registered
-        left = _cleanup(root, absolute, branch, owned, True)
-        raise BrigadeError(f"{dish}: cannot create worktree: {detail[0] if detail else added.returncode}"
-                           + (f"; cleanup incomplete: {', '.join(left)}" if left else ""))
+            raise BrigadeError(f"{dish}: branch {_oneline(branch)} already exists{suffix}")
+        raise BrigadeError(f"{dish}: cannot create branch {_oneline(branch)}{suffix}")
+    added, directory = False, made
     try:
+        add = _git(root, "worktree", "add", absolute, branch)
+        if add.returncode:
+            detail = (add.stderr or add.stdout).decode(errors="replace").strip().splitlines()
+            registered = _registered(root)
+            added, directory = registered is None or target.resolve() in registered, True
+            raise BrigadeError(f"{dish}: cannot create worktree: {detail[0] if detail else add.returncode}")
+        added, directory = True, False
         return _apply_in(absolute, dish, name, changed, tree, from_sha, full, branch, build, setup)
     except BaseException as error:
-        left = _cleanup(root, absolute, branch, True, False)
+        left = _cleanup(root, absolute, branch, added, directory)
         if left and isinstance(error, BrigadeError):
             raise BrigadeError(f"{error}; cleanup incomplete: {', '.join(left)}") from None
         raise
