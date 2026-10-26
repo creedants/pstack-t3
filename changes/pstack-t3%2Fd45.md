@@ -1,0 +1,3 @@
+- kind fix
+- cap a `variant` reasoning ladder at the budget level, so light mode lowers `variant: max` to the cap
+- pass the role's OpenCode allow list to `validate`, so it names the same substitute and refusal `show` names
