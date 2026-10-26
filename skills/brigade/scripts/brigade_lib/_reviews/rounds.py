@@ -223,19 +223,18 @@ def report_says(items, restaurant):
     return line
 
 
-def send_back_section(rows, now, restaurant=None):
+def send_back_section(rows, now, restaurant):
     """The `## Send-back reasons` lines for these pass.tsv rows.
 
     The earliest record comes only from the pass.tsv rows this function is handed, which the caller passes whole.
-    The restaurant is None while the closeout's caller passes no store. The class is read from each report at
-    build time, never written to a table.
+    The class is read from each report at build time, never written to a table.
     """
     heading, sentence = window_phrases(earliest_record(rows), now, SEND_BACK_DAYS)
     cutoff = _at_utc(now) - timedelta(days=SEND_BACK_DAYS)
     window = send_back_window(rows, cutoff)
     lines = [f"## Send-back reasons ({heading})", "",
              reason_summary(reason_counts(window)) or f"No send-backs {sentence}.", ""]
-    derived = report_says(window, restaurant) if restaurant is not None else ""
+    derived = report_says(window, restaurant)
     if derived:
         lines.append(derived)
         lines.append("")

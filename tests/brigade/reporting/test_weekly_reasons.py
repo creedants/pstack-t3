@@ -114,15 +114,23 @@ class WeeklyReasonsTest(BrigadeTest):
                           "D1 recorded scope, report says other",
                           ""])
 
-    def test_a_section_with_no_classed_report_matches_the_store_free_call(self):
+    def test_a_section_with_no_classed_report_matches_the_base_shape(self):
         self.fired_bug_fix()
         self.append_pass(self.days_ago(1), reason="scope")
         report_store = self.report_store()
         rows = self.pass_rows()
         now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
-        with_store = send_back_section(rows, now, report_store)
-        self.assertEqual(with_store, send_back_section(rows, now))
-        self.assertIn("\n".join(with_store), self.brigade("close", "--dry-run"))
+        section = ["## Send-back reasons (over the 24 hours this store has records for)", "", "scope 1", ""]
+        self.assertEqual(send_back_section(rows, now, report_store), section)
+        self.assertIn("\n".join(section), self.brigade("close", "--dry-run"))
+
+    def test_the_closeout_prints_the_report_class_beside_the_recorded_reason(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md", "Findings.\n\nReason: wrong-behavior\n")
+        self.brigade("pass", "record", "D1", "--sha", "abc", "--verdict", "send-back", "--reason", "scope",
+                     "--author", CLAUDE, "--verifier", CODEX, "--report", "D1-review-1.md")
+        self.assertIn("report says: wrong-behavior 1; D1 recorded scope, report says wrong-behavior",
+                      self.brigade("close", "--dry-run"))
 
     def test_excluded_rows_count_no_report_class(self):
         self.fired_bug_fix()
@@ -138,7 +146,6 @@ class WeeklyReasonsTest(BrigadeTest):
         now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
         section = ["## Send-back reasons (last 7 days)", "", "scope 1", ""]
         self.assertEqual(send_back_section(rows, now, report_store), section)
-        self.assertEqual(send_back_section(rows, now), section)
 
     def test_an_empty_recorded_reason_disagrees_by_name(self):
         self.fired_bug_fix()
