@@ -108,7 +108,7 @@ _ADDRESS = re.compile(rf"{_OCTET}(?:[.-]{_OCTET}){{3}}|[a-z0-9.-]+:\d{{1,5}}")
 
 
 def _address_like(text):
-    """A bare IPv4 address or a host:port, in dotted form or in the hyphenated slug form."""
+    """A bare IPv4 address, in dotted or hyphenated form, or a host:port."""
     return bool(_ADDRESS.fullmatch(text.lower()))
 
 
