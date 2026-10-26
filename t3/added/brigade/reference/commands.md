@@ -16,7 +16,7 @@ $B set --autofire off|urgent|normal|low      # the lowest ticket priority starta
 $B set --reports-to <thread>                 # the executive admin this restaurant reports through
 $B set --mode light|full                     # this restaurant's mode from the next brief
 $B set --pr-credit on|off                    # whether pull requests credit the models that did the work
-$B set --build-command "<command>" --check-command "<command>"   # the two commands edits verify runs
+$B set --build-command "<command>" --check-command "<command>"   # the build and check commands edits verify runs after the landing contract's setup command
 $B set --cap KIND=N[,KIND=N]                 # the cap on items of that kind holding a worker slot
 $B set --review KIND=full|light[,KIND=MODE]   # the default mode for a new item of that kind
 $B set --cooldown-minutes <N>                 # the minutes a cooled seat stays out of a launch; "" clears it to 60
@@ -54,7 +54,7 @@ $B pass record D2 --sha <head> --verdict pass|send-back|blocked|pass-with-edits 
 $B pass check D2 --sha <head> [--json]       # exits 1 unless that SHA passed. --json prints verdict, author, verifier, note, and crossFamily
 $B pass stats [--last N]   # first-pass rate overall and per author model over the last N items; default 20
 $B credit D2 [--coordinator <provider/model>]   # credit line for the PR body when prCredit is on; otherwise prints the off line
-$B edits verify D2 --from <reviewed sha> --to <head>   # exits 1 when a compared path differs or the build or check command fails
+$B edits verify D2 --from <reviewed sha> --to <head>   # runs the landing contract's setup command in the replay copy after the edits are applied and before the build and check commands, when the contract records one. Exits 1 when a compared path differs, the setup, build, or check command fails, or the setup changes a path the reviewed commit holds, and prints a `FAIL setup` line when the setup fails or changes such a path
 $B edits apply D2 --report <D2-review-1.md> --from <reviewed sha> --branch <new branch> [--worktree <path>]   # applies the report's edits to a new branch from the reviewed commit in a new git worktree, runs the contract's setup and the build command there, commits once, and prints the head and the worktree path. Exits 1 and leaves no branch or worktree when an old text does not occur exactly once, a path is generated or not a file at the reviewed commit, the contract's generated paths cannot be read, a `--worktree` path exists or lies inside the checkout, a registered worktree, or the git directory, or the setup, build, or commit fails (a commit hook that rejects, or that adds a path no edit or build names, fails it). A cleanup that cannot finish says what remains. A refusal prints one line, and a failed setup or build prints the command's output first. The command's own writes go to the new worktree and to git's records of that worktree and branch. The setup and build run the edited code with your access, as `edits verify` and a fix worker's test runs do, so read the edits before you apply them. It never pushes and records no verdict
 $B 86 add --question "..." --options "a, b" --default "a" [--dish D2]   # prints Q<n>
 $B 86 add --dish D2 --round-budget           # the decision D2 owes at its stored roundBudget send-backs. prints Q<n>
