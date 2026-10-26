@@ -2,7 +2,7 @@
 
 Which restaurant to open. This names the store directory. Record it with open. Before open creates it the summary prints the lines and a not saved line and writes nothing.
 
-Who lands work. Options are `merge`, `human`, `push`, and `local`. For a repository with a remote, choose `merge`. Record it with `land.py init --mode` or `land.py mode`. When the repository already has a landing contract, its mode applies and onboard reports it as configured.
+Who lands work. Options are `merge`, `human`, `push`, and `local`. For a GitHub repository, choose `merge` or `human`. For a remote that is not GitHub or has no pull requests, choose `push`. For a repository with no remote, choose `local`. Push and local have no pull request or CI behind the queue, so record one check for them with `land.py init --check`; `land.py init` and `land.py status` warn while those modes have none. Record it with `land.py init --mode` or `land.py mode`. When the repository already has a landing contract, its mode applies and onboard reports it as configured.
 
 How often the coordinator replies. Options are `milestones`, `every-turn`, and `digest`. Recommend `milestones`. Record it with `open --reporting` or `set --reporting`. A missing key reads as `milestones` and is never missing.
 

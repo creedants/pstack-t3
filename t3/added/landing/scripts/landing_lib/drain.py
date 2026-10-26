@@ -151,3 +151,11 @@ def status(store, ident=None):
         parts.append(f"changes in flight: {leases + reserved} of {contract['cap']}")
     paused = f" Paused: {contract['paused']}" if contract.get("paused") else ""
     return f"{contract['mode']} mode onto {seam.trunk_ref(contract)}. " + (", ".join(parts) or "empty") + "." + paused
+
+
+def no_checks_note(contract):
+    """A warning that push or local mode has no checks, so nothing gates a landing. Empty otherwise."""
+    mode = contract.get("mode")
+    if mode not in ("push", "local") or contract.get("checks"):
+        return ""
+    return f"Warning: {mode} mode has no checks, so nothing gates a landing. Add one with land.py init again with --check <command>."

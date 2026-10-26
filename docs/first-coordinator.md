@@ -57,13 +57,15 @@ python3 skills/brigade/scripts/brigade.py --at $RESTAURANT set --thread $THREAD
 
 ## 5. Write the landing contract
 
-The queue needs a contract before any work can be fired. The `local` and `push` modes are frozen, per [the guide](guide/coordinator.md). Push mode is supported and frozen. This walkthrough uses push mode.
+The queue needs a contract before any work can be fired. The mode says how the queue lands work. Use `merge` or `human` for a GitHub repository, which land through pull requests. Use `push` for a remote that is not GitHub or has no pull requests. Use `local` for a repository with no remote. The [guide](guide/coordinator.md) has the detail. This walkthrough uses push mode.
 
 ```sh
-python3 skills/landing/scripts/land.py --repo ~/my-repo init --trunk main --mode push --remote origin
+python3 skills/landing/scripts/land.py --repo ~/my-repo init --trunk main --mode push --remote origin --check "test -s a.txt"
 ```
 
 The command prints the landing store path. That store holds the contract, the queue, and the lease table.
+
+`--check` names a command the queue runs on every candidate before it lands. Push and local mode have no pull request or CI behind the queue, so the checks are the only gate. Without one, `init` and `status` print a warning that nothing gates a landing. Use your project's test command in place of `test -s a.txt`.
 
 ## 6. File a ticket
 
@@ -119,7 +121,7 @@ The unit cannot move to merged until it has a pass at this commit.
 
 ## 10. Submit and land
 
-Submit the reviewed commit to the queue, then drain the queue. The queue runs the contract's checks and pushes trunk to `origin`. This walkthrough sets no check, so the contract's check list is empty.
+Submit the reviewed commit to the queue, then drain the queue. The queue runs the contract's checks and pushes trunk to `origin`. This walkthrough sets one check, `test -s a.txt`, and the queue runs it before it pushes.
 
 ```sh
 python3 skills/landing/scripts/land.py --repo ~/my-repo submit --holder smoke/D1 --branch smoke/d1 --sha $SHA --lease L1 --reviewer claude/claude-opus-5-5 --owner smoke/@1

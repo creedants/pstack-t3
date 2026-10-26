@@ -239,6 +239,8 @@ def _commands(layout):
                 "push",
                 "--remote",
                 "origin",
+                "--check",
+                "test -s a.txt",
             ),
             CHECKOUT,
         ),

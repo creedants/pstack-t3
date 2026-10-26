@@ -106,10 +106,13 @@ def run(argv):
             return None, subprocess.run(command).returncode
     if args.command == "init":
         pr_item_line = None if args.pr_item_line is None else args.pr_item_line == "on"
-        return init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
+        text = init(args.repo, args.trunk, args.mode, args.remote, args.base, args.check, args.setup, args.batch, args.timeout,
                     args.merge_method, args.cap, args.generated, args.rebuild, args.author_policy, pr_item_line,
                     args.heartbeat_ms, args.merge_heartbeat_ms, args.generated_map,
-                    size_max_tokens=args.max_file_tokens, size_baseline=args.size_baseline), 0
+                    size_max_tokens=args.max_file_tokens, size_baseline=args.size_baseline)
+        with Store.for_repo(args.repo) as store:
+            warning = no_checks_note(store.contract)
+        return (f"{text}\n{warning}" if warning else text), 0
     if args.command == "size":
         if args.staged and args.all:
             raise LandError("size takes --staged or --all, not both")
@@ -187,7 +190,7 @@ def run(argv):
             item_note = pr_item_line_note(store.contract)
             heartbeat = heartbeat_note(store.contract)
             size = size_note(store.contract)
-            text = " ".join(part for part in (note, policy_note, item_note, heartbeat, size) if part)
+            text = " ".join(part for part in (note, policy_note, item_note, heartbeat, size, no_checks_note(store.contract)) if part)
             if text:
                 line = f"{line} {text}"
             return line, 0
