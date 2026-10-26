@@ -1,0 +1,2 @@
+- kind fix
+- `brigade.py edits apply` asks git which paths the worktree's ignore rules leave out, and stages and commits only the paths git does not ignore. A build that writes an ignored `__pycache__` directory or an ignored `*.log` file no longer makes it exit 1 with `cannot stage: 1`, and it still stages a build output that git tracks or would track.
