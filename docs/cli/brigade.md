@@ -94,7 +94,7 @@ add, list, update, move, take, or record paths on tickets on the rail
 ## brigade.py ticket add
 
 ```text
-brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n>]
+brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-run] [--source SOURCE] [--ref REF] [--request REQUEST] [--again] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n>] [--after AFTER]
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -111,6 +111,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the kind of work; a ticket added with --summary is refused without it |
 | `--goal G<n>` |  |  |  | with --summary: the goal this ticket belongs to, which must be open or paused; without it the ticket is unassigned |
+| `--after AFTER` |  |  |  | T\<n> or \<sibling>/T\<n> to wait for; "" clears it |
 
 Give exactly one of `--summary`, `--from-report`.
 
@@ -127,7 +128,7 @@ brigade.py [flags] ticket list [--state STATE]
 ## brigade.py ticket set
 
 ```text
-brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n> | --no-goal] id
+brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PATHS] [--decision] [--kind KIND] [--goal G<n> | --no-goal] [--after AFTER] id
 ```
 
 | Argument | Required | Choices | Default | Help |
@@ -140,6 +141,7 @@ brigade.py [flags] ticket set [--state STATE] [--priority PRIORITY] [--paths PAT
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | replaces the kind of a waiting ticket; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
 | `--goal G<n>` |  |  |  | replaces the goal of a waiting ticket with one that is open or paused; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
 | `--no-goal` |  |  |  | clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state, and on a waiting ticket that an item in flight names |
+| `--after AFTER` |  |  |  | T\<n> or \<sibling>/T\<n> to wait for; "" clears it |
 
 Give at most one of `--goal`, `--no-goal`.
 

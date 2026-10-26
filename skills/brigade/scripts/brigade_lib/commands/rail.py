@@ -27,7 +27,7 @@ from brigade_lib.leases import holding_blocks
 from brigade_lib.reports import item_report
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import GOAL_STATES, KINDS, NOTHING_HANDED, PRIORITIES_BY_RANK, TICKET_STATES
-from brigade_lib.tickets import EVERY_ROW, GOALS_ONLY, Assign, Drop, add_goal, add_ticket, file_follow_ups, finish_request, follow_ups, frozen_label, in_flight_tickets, count_labels, move_ticket, open_goal, read_labels, record_paths, set_goal, sibling_rails, sweep_tickets, take_inbox, take_tickets, ticket_paths, tracked_paths
+from brigade_lib.tickets import EVERY_ROW, GOALS_ONLY, Assign, Drop, add_goal, add_ticket, after_change, file_follow_ups, finish_request, follow_ups, frozen_label, in_flight_tickets, count_labels, move_ticket, open_goal, read_labels, read_waits, record_paths, set_goal, sibling_rails, sweep_tickets, take_inbox, take_tickets, ticket_paths, tracked_paths
 from brigade_lib.reporting import goal_lines
 from brigade_lib.wake import ticket_lines
 
@@ -67,6 +67,7 @@ def register_ticket(sub):
     a.add_argument("--goal", metavar="G<n>",
                    help="with --summary: the goal this ticket belongs to, which must be open or paused; without it the "
                         "ticket is unassigned")
+    a.add_argument("--after", help='T<n> or <sibling>/T<n> to wait for; "" clears it')
     a = t.add_parser("list")
     a.add_argument("--state", choices=TICKET_STATES)
     a = t.add_parser("set")
@@ -85,6 +86,7 @@ def register_ticket(sub):
     goal.add_argument("--no-goal", action="store_true",
                       help="clears the goal of a waiting ticket, so it is unassigned; refused on a ticket in another state, "
                            "and on a waiting ticket that an item in flight names")
+    a.add_argument("--after", help='T<n> or <sibling>/T<n> to wait for; "" clears it')
     a = t.add_parser("move", help="hand a waiting ticket to a sibling coordinator through its inbox")
     a.add_argument("id")
     a.add_argument("--to", required=True, help="the sibling's directory name")
@@ -182,6 +184,8 @@ def handle_ticket(restaurant, args):
             raise BrigadeError("--from-report takes no --priority, nonempty --paths, or --decision")
         if args.kind or args.goal is not None:
             raise BrigadeError("--from-report takes no --kind or --goal; each ticket's kind and goal follow from the report's item")
+        if args.after is not None:
+            raise BrigadeError("--from-report takes no --after")
         name = item_report(restaurant, args.from_report)
         try:
             found = follow_ups((restaurant.dir / "reports" / name).read_text(encoding="utf-8"))
@@ -208,6 +212,8 @@ def handle_ticket(restaurant, args):
             raise BrigadeError("--confirm needs --drop or --goal")
         if (args.drop or args.goal is not None) and args.confirm is None:
             raise BrigadeError("--drop or --goal needs --confirm")
+    if getattr(args, "after", None) is not None:
+        args.waits = read_waits(restaurant, args.after)
     rails = None
     if args.action == "move" or args.action == "add" and args.ref:
         rails = sibling_rails(restaurant)
@@ -256,7 +262,8 @@ def handle_locked(restaurant, args, view):
         if args.action == "add":
             return add_ticket(restaurant, args.summary, args.source, args.ref, args.request, rails, again=args.again,
                               priority=args.priority or "", paths=args.paths, decision=args.decision,
-                              kind=args.kind or "", goal=args.goal)
+                              kind=args.kind or "", goal=args.goal, after=args.after or "",
+                              waits=getattr(args, "waits", None))
         if args.action == "move":
             return move_ticket(restaurant, args.id, args.to, rails)
         if args.action == "take":
@@ -297,6 +304,9 @@ def handle_locked(restaurant, args, view):
         if args.no_goal:
             changes["goal"] = ""
             said.append("unassigned")
+        if args.after is not None:
+            changes["after"], word = after_change(restaurant, ticket, args.waits, args.after)
+            said.append(word)
         if not said:
             raise BrigadeError("ticket set needs --state, --priority, --paths, --decision, --no-decision, --kind, --goal, or --no-goal")
         restaurant.update("rail.tsv", args.id, "ticket", **changes)

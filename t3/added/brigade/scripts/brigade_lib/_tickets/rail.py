@@ -1,9 +1,10 @@
 import json
 import re
 from brigade_lib import seam
+from brigade_lib._tickets.after import after_cell, sibling_named
 from brigade_lib._tickets.goals import open_goal
 from brigade_lib._tickets.labels import ActsOn, GOALS_ONLY, read_labels
-from brigade_lib.shared import BrigadeError, clean, same_text, slug
+from brigade_lib.shared import BrigadeError, clean, same_text
 from brigade_lib.store import KIND_CHOICE, KINDS, LIVE_TICKET_STATES, NOTHING_HANDED, Restaurant, intake_owner, refuse_owned_intake, siblings
 
 def intake_list(text):
@@ -97,7 +98,7 @@ def refuse_live_ref(restaurant, ref, rails):
 
 
 def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=False, priority="", paths=(), decision=False,
-               kind="", goal=None):
+               kind="", goal=None, after="", waits=None):
     source, ref, request = clean(source), clean(ref), clean(request)
     meta = restaurant.meta
     if request:
@@ -126,27 +127,18 @@ def add_ticket(restaurant, summary, source, ref, request="", rails=None, again=F
             raise BrigadeError(f"ticket add needs --kind {KIND_CHOICE}")
         if goal is not None:
             open_goal(read_labels(restaurant, GOALS_ONLY), goal)
-        return append_ticket(restaurant, summary, source, ref, priority, paths, decision, kind, goal or "")
+        cell = after_cell(waits, restaurant.rows("rail.tsv"), after)
+        return append_ticket(restaurant, summary, source, ref, priority, paths, decision, kind, goal or "", cell)
 
 
-def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False, kind="", goal=""):
+def append_ticket(restaurant, summary, source, ref, priority="", paths=(), decision=False, kind="", goal="", after=""):
     ident = restaurant.next_id("rail.tsv")
     restaurant.append("rail.tsv", {"id": ident, "at": seam.now(), "state": "waiting", "source": source,
                                    "ref": ref, "summary": summary, "priority": priority,
                                    "paths": ",".join(paths), "decision": "yes" if decision else "",
-                                   "kind": kind, "goal": goal})
+                                   "kind": kind, "goal": goal, "after": after})
     restaurant.log("ticket", ident, "waiting", summary)
     return ident
-
-
-def sibling_named(restaurant, to):
-    """A sibling's directory name and restaurant.json, found by directory name or restaurant name."""
-    meta = restaurant.meta
-    names = siblings(restaurant.dir, meta.get("projectRoot"))
-    name = to if to in names else next((n for n in names if slug(names[n].get("restaurant") or n) == slug(to)), None)
-    if name is None:
-        raise BrigadeError(f"{to} is not a sibling coordinator on {meta.get('projectRoot')}")
-    return name, names[name]
 
 
 def tell(name, meta):
@@ -164,6 +156,9 @@ def move_ticket(restaurant, ident, to, rails):
     if row["state"] not in ("waiting", "moved"):
         raise BrigadeError(f"{ident} is {row['state']}; only a waiting ticket moves")
     if row["state"] == "waiting":
+        if row["after"]:
+            raise BrigadeError(f"{ident} waits on {row['after']}; ticket move does not carry it; "
+                               f"run ticket set {ident} --after '' first")
         # State and destination commit in one rewrite, so the ref stays live here from this point on.
         row["state"], row["dish"] = "moved", destination
         restaurant.save_rows("rail.tsv", rows)
