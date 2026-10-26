@@ -106,7 +106,7 @@ def delete_landing_branch(store, branch, entry):
 def clean_bounced(store, entry, reason, state=""):
     """Close the entry's PR with the reason, then delete its landing branch. Returns the warnings joined, or "".
 
-    Both steps run when one fails. Each failure prints one warning line. An already closed PR and a branch `remote_branch_is_gone` reports gone are not failures."""
+    In local and push mode an entry with no pull request has no landing branch, so only the close runs. Otherwise both steps run when one fails. Each failure prints one warning line. An already closed PR and a branch `remote_branch_is_gone` reports gone are not failures."""
     warnings = []
     results = [close_pr_with_reason(store, entry["pr"], reason, state)]
     # Local and push modes never push a landing branch for an entry without a pull request.
