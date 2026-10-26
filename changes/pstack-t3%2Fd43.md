@@ -1,0 +1,5 @@
+- kind feature
+- A review report can end its blockers with one `Reason: <class>` line, where the class is one of the `pass record --reason` reasons
+- `pass record --reason` stays required on a send-back and stays the value the closeout counts
+- `brigade.py pass stats` prints a `report says:` line under its send-backs line, counting the classes the counted send-backs' reports name in reason order plus `not in report`, and naming each send-back whose report disagrees with its recorded reason as `D<n> recorded <reason>, report says <class>`
+- The class is read from each report when the line prints, so `pass.tsv` gains no column and no row is rewritten. A report that is missing, unreadable, a link, a directory, or names an unknown class contributes no class, its send-back counts as `not in report`, and the command still prints
