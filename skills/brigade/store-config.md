@@ -58,7 +58,7 @@ When the key is set, the command runs once, after the triggering command has fin
 - `86 add` parks a new decision. It does not run when `86 add` returns the open decision that already exists for the same dish.
 - `next --failure stuck` runs, which is how a wake reports a paused queue or a provider failure. `next` writes nothing, and the ping fires on the flag alone.
 
-The command runs with the line as its last argument, one word after the words you set. The line is not sent on standard input, and standard input, output, and error go to `/dev/null`. The line names the restaurant and says that a decision is waiting or that work is stuck. It never holds the question text. It is filtered so it carries no thread id, path, email, token, or URL, and it is cut at 200 characters. A restaurant name the filter would change prints as `brigade`.
+The command runs with the line as its last argument, one word after the words you set. The line is not sent on standard input, and standard input, output, and error go to `/dev/null`. The line names the restaurant and says that a decision is waiting or that work is stuck. It never holds the question text. The only variable part is the restaurant name, and a filter replaces a name that looks like a thread id, path, email, token, or URL with `brigade`. The line is cut at 200 characters. A restaurant name the filter would change prints as `brigade`.
 
 The command gets about 10 seconds. A failure, a missing command, or a timeout prints one `brigade: warning:` line on standard error. It never changes the exit status, the printed result, or the stored result of the command that triggered it. A command that fails before it writes anything never pings.
 
