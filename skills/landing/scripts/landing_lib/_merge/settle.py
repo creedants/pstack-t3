@@ -108,8 +108,11 @@ def clean_bounced(store, entry, reason, state=""):
 
     Both steps run when one fails. Each failure prints one warning line. An already closed PR and a branch `remote_branch_is_gone` reports gone are not failures."""
     warnings = []
-    for _done, warning in (close_pr_with_reason(store, entry["pr"], reason, state),
-                           delete_landing_branch(store, seam.human_branch(entry), entry)):
+    results = [close_pr_with_reason(store, entry["pr"], reason, state)]
+    # Local and push modes never push a landing branch for an entry without a pull request.
+    if store.contract["mode"] not in ("local", "push") or entry["pr"]:
+        results.append(delete_landing_branch(store, seam.human_branch(entry), entry))
+    for _done, warning in results:
         if warning:
             warnings.append(warning)
             print(f"warning: {warning}")
