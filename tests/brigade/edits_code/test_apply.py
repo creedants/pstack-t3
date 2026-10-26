@@ -254,11 +254,12 @@ class ApplyTest(BrigadeTest):
         self.contract()
         reviewed = self.edits_store()
         self.one_edit()
-        other = self.root / "wt-other"
-        self.git("worktree", "add", "-q", "-b", "other", other)
-        self.addCleanup(lambda: subprocess.run(["git", "-C", str(self.project), "worktree", "remove", "--force",
-                                                str(other)], capture_output=True))
-        for target in (self.project / "nested", other / "nested", self.project / ".git" / "nested"):
+        other, line = self.root / "wt-other", self.root / "wt-line\nbreak"
+        for name, path in (("other", other), ("linebreak", line)):
+            self.git("worktree", "add", "-q", "-b", name, path)
+            self.addCleanup(subprocess.run, ["git", "-C", str(self.project), "worktree", "remove", "--force", str(path)],
+                            capture_output=True)
+        for target in (self.project / "nested", other / "nested", line / "nested", self.project / ".git" / "nested"):
             with self.subTest(str(target.parent.name)):
                 before, status = self.standing(), self.status()
                 code, out, err = self.apply(*self.edit_args(reviewed, "d1-inside", target))
@@ -313,5 +314,41 @@ class ApplyTest(BrigadeTest):
         code, out, err = self.apply(*self.edit_args(reviewed, "d1-hook", target))
         self.assertEqual(code, 1, err)
         self.assertIn("cannot commit", err)
+        self.assertEqual(self.standing(), before)
+        self.assertFalse(target.exists())
+
+    def test_apply_cleans_up_a_failed_add_fails_when_the_worktree_stays_registered(self):
+        # Processes: git builds the fixture project; edits apply runs a post-checkout hook that rejects the new worktree.
+        self.contract()
+        reviewed = self.edits_store()
+        self.one_edit()
+        hook = self.project / ".git" / "hooks" / "post-checkout"
+        hook.write_text("#!/bin/sh\necho hook says no\nexit 44\n")
+        hook.chmod(0o755)
+        before = self.standing()
+        target = self.root / "wt-checkout-hook"
+        code, out, err = self.apply(*self.edit_args(reviewed, "d1-checkout-hook", target))
+        self.assertEqual(code, 1, err)
+        self.assertIn("cannot create worktree", err)
+        self.assertNotIn("cleanup incomplete", err)
+        self.assertEqual(self.standing(), before)
+        self.assertFalse(target.exists())
+
+    def test_apply_commits_only_edited_and_built_paths_fails_when_a_commit_hook_stages_a_file(self):
+        # Processes: git and land build the fixture project and its contract; edits apply commits through a pre-commit hook that stages setup output.
+        setup = f"{shlex.quote(sys.executable)} tools/setup.py"
+        self.init_landing("--setup", setup)
+        self.landing_env()
+        reviewed = self.edits_store(**{"tools/setup.py": 'import pathlib\npathlib.Path("setup-out.txt").write_text("setup\\n")\n'})
+        self.one_edit()
+        hook = self.project / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\ngit add setup-out.txt\n")
+        hook.chmod(0o755)
+        before = self.standing()
+        target = self.root / "wt-hook-stage"
+        code, out, err = self.apply(*self.edit_args(reviewed, "d1-hook-stage", target))
+        self.assertEqual(code, 1, err)
+        self.assertEqual(len(err.strip().splitlines()), 1)
+        self.assertIn("setup-out.txt", err)
         self.assertEqual(self.standing(), before)
         self.assertFalse(target.exists())
