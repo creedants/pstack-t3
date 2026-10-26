@@ -27,7 +27,7 @@ from brigade_lib.leases import block_inputs, entry_line, fire_command, recheck_b
 from brigade_lib.reviews import round_debt
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import LEASED_STATES, OPEN_LINES, OPEN_RUN_MINUTES
-from brigade_lib.tickets import after_holds, handed_count, handoff_id, inbox_file, read_waits, sibling_rails, taken_row
+from brigade_lib.tickets import after_holds, after_ready, handed_count, handoff_id, inbox_file, read_waits, sibling_rails, taken_row
 from brigade_lib._watch.progress import dish_progress, open_item_decisions
 from brigade_lib._watch.runs import _idle_completed, _idle_line, _read_worker_runs, _worker_skip
 from brigade_lib._watch.seats import skip_lines
@@ -86,6 +86,8 @@ def watch(restaurant):
         inputs = block_inputs(restaurant)
         waiting = after_holds(waits, restaurant.rows("rail.tsv"))
         inputs = ([entry for entry in inputs[0] if entry[0] not in waiting], *inputs[1:])
+        ready = after_ready(restaurant.rows("rail.tsv"), waiting, {entry[0] for entry in inputs[0]})
+        inputs = ([*inputs[0], *ready], *inputs[1:])
         workers = workers_line(restaurant.meta, inputs[1])
         # A skipped seat is a restaurant-wide fact, not a dish line, so it sits between the two.
         skipped = skip_lines(restaurant)

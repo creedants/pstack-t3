@@ -157,3 +157,23 @@ def after_change(restaurant, ticket, rails, given):
         raise BrigadeError(f"{ticket['id']} is {ticket['state']}; --after changes a waiting ticket only")
     cell = after_cell(rails, restaurant.rows("rail.tsv"), given, ticket["id"])
     return cell, (f"after {cell}" if cell else "no after")
+
+
+AFTER_STATION = {"feature": "feature", "fix": "bug-fix", "study": "investigation", "polish": "refactoring", "upkeep": "refactoring"}
+
+
+def after_ready(rows, held, blocked):
+    """Call under the lock. (ticket id, note) for each waiting --after ticket whose dependency is done and that has no block note.
+
+    The note has the shape a blocked ticket's note has, so watch prints the same unblocked line and fire command for it.
+    """
+    ready = []
+    for row in rows:
+        if row["state"] != "waiting" or not row["after"] or row["id"] in held or row["id"] in blocked or row["decision"]:
+            continue
+        note = {"tickets": [row["id"]], "station": AFTER_STATION.get(row["kind"], "bug-fix"), "summary": row["summary"],
+                "paths": row["paths"], "timebox": 60}
+        if row["kind"]:
+            note["work"] = row["kind"]
+        ready.append((row["id"], note))
+    return ready
