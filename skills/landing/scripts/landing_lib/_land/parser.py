@@ -138,8 +138,8 @@ def build_parser(description, exclusive_cap=_DEFAULT_EXCLUSIVE_CAP, modes=_DEFAU
     p.add_argument("--sha", required=True, help="the exact SHA the review passed")
     p.add_argument("--lease", required=True)
     p.add_argument("--reviewer", required=True, help="provider/model of the reviewer that passed this SHA")
-    p.add_argument("--title", default="", help="human mode: the PR title (default: the last commit subject)")
-    p.add_argument("--body-file", default="", help="human mode: a file holding the PR body")
+    p.add_argument("--title", default="", help="the PR title in merge and human mode (default: the last commit subject)")
+    p.add_argument("--body-file", default="", help="a file holding the PR body in merge and human mode")
     p.add_argument("--owner", help=owner_help)
 
     p = sub.add_parser("share", help="set a holder prefix's share of the cap")

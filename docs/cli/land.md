@@ -225,8 +225,8 @@ queue a reviewed commit for landing
 | `--sha SHA` | yes |  |  | the exact SHA the review passed |
 | `--lease LEASE` | yes |  |  |  |
 | `--reviewer REVIEWER` | yes |  |  | provider/model of the reviewer that passed this SHA |
-| `--title TITLE` |  |  |  | human mode: the PR title (default: the last commit subject) |
-| `--body-file BODY_FILE` |  |  |  | human mode: a file holding the PR body |
+| `--title TITLE` |  |  |  | the PR title in merge and human mode (default: the last commit subject) |
+| `--body-file BODY_FILE` |  |  |  | a file holding the PR body in merge and human mode |
 | `--owner OWNER` |  |  |  | \<holder prefix>@\<generation> of the coordinator writing; refused below that prefix's floor |
 
 ## land.py share

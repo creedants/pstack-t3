@@ -12,7 +12,7 @@ Type this in any thread.
 $brigade open a standing coordinator for <project> focused on <goal>.
 ```
 
-The opener asks who lands the work, unless you already named a mode. It recommends `merge` when the repository has a remote. The mode belongs to the repository. Every coordinator on that repository shares it. If the repository already has a landing contract, the opener tells you its mode. Choosing another mode switches it for every coordinator on that repository.
+The opener asks who lands the work, unless you already named a mode. Pick the mode that fits the repository. Use `merge` or `human` for a GitHub repository. Use `push` for a remote that is not GitHub or has no pull requests. Use `local` for a repository with no remote. Push and local mode have no pull request or CI behind the queue, so give `land.py init` one `--check`. Without one, `init` and `status` warn that nothing gates a landing. The mode belongs to the repository. Every coordinator on that repository shares it. If the repository already has a landing contract, the opener tells you its mode. Choosing another mode switches it for every coordinator on that repository.
 
 The opener also asks how often the coordinator replies, unless you already named a level. It recommends `milestones`.
 
@@ -22,10 +22,11 @@ The opener also asks how often the coordinator replies, unless you already named
 
 ### What is frozen
 
-Two pieces are frozen. A frozen piece keeps the tests it has and gets no new work. A fix for data loss or for a broken install still lands.
+One piece is frozen. A frozen piece keeps the tests it has and gets no new work. A fix for data loss or for a broken install still lands.
 
 - **The executive admin.** The `brigade-admin` skill, opened with `$brigade-admin`.
-- **The `local` and `push` landing modes.** The `merge` and `human` modes are not frozen.
+
+All four landing modes take new work.
 
 ### Give it work
 
