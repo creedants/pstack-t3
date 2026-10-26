@@ -36,6 +36,8 @@ def settled_entry(store, branch):
 
 def prune(store, dry_run=False):
     """Close the open PR and delete the remote branch of every settled entry with a canonical branch still on the remote. A canonical branch names landing/e<n> or landing/q<n> with n in [1-9][0-9]* in ASCII and no leading zero. A branch with another name is left alone. A branch whose entry is missing or still in flight is left alone. Each line names one action and --dry-run prints one line per settled branch and acts on none. A failed close or delete prints a warning line and leaves the entry state alone."""
+    if store.contract["mode"] == "local":
+        return ""
     remote, repo = store.contract["remote"], store.repo
     listed = seam.git("ls-remote", "--heads", remote, "refs/heads/landing/*", cwd=repo, check=False)
     if listed.returncode != 0:

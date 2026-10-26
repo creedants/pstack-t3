@@ -156,6 +156,10 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         reason = refused_forge(repo, remote, mode)
         if reason:
             raise seam.LandError(reason)
+        if mode == "push":
+            listed = seam.git("ls-remote", "--heads", remote, f"refs/heads/{trunk}", cwd=repo, check=False)
+            if listed.returncode == 0 and not listed.stdout.strip():
+                raise seam.LandError(f"{remote} has no {trunk} branch; push a first commit to {remote} {trunk} and run land.py init again")
         seam.git("fetch", remote, trunk, cwd=repo)
     # A bad generated path must be refused before the store exists, so a first init leaves no database.
     if generated is not None:
@@ -165,6 +169,13 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         seam.parse_map(generated_map, early_roots)
     # A refused size flag must fail the same way.
     baseline_to_store = size_baseline_value(size_baseline, stored.get("sizeBaseline"))
+    # A local lane without a base is refused, and a base is resolved, before the store is written.
+    lane = trunk_ref({"mode": mode, "trunk": trunk, "remote": remote})
+    lane_sha = None
+    if mode == "local" and seam.git("rev-parse", "--verify", "--quiet", lane, cwd=repo, check=False).returncode != 0:
+        if not base:
+            raise seam.LandError(f"local mode lands on {lane}; pass --base <commit> to create it")
+        lane_sha = seam.git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip()
     with seam.Store(directory) as store:
         with store.tx() as db:
             current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
@@ -194,10 +205,8 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                 db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeMaxTokens', ?)", (json.dumps(size_max_tokens),))
             if baseline_to_store is not None:
                 db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeBaseline', ?)", (json.dumps(baseline_to_store),))
-        if mode == "local" and seam.git("rev-parse", "--verify", "--quiet", trunk_ref(wanted), cwd=repo, check=False).returncode != 0:
-            if not base:
-                raise seam.LandError(f"local mode lands on {trunk_ref(wanted)}; pass --base <commit> to create it")
-            seam.git("update-ref", trunk_ref(wanted), seam.git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip(), "", cwd=repo)
+        if lane_sha:
+            seam.git("update-ref", lane, lane_sha, "", cwd=repo)
         note = f"{'updated' if current else 'created'} {directory}"
         settings = generated_note(wanted["generated"], wanted["rebuild"])
         return f"{note}. {settings}" if settings else note
