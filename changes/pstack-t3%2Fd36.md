@@ -1,0 +1,3 @@
+- kind fix
+- `brigade.py edits apply` creates its branch with `git branch` before it adds the worktree, so it owns the branch from that moment and deletes it on any later failure. Before, it deleted the branch only when its tip still equalled the reviewed commit, so a post-checkout hook that committed and then failed left the branch behind. A branch that existed before the call is still refused and never deleted
+- the refusals for an invalid branch name, an existing branch, and an existing worktree path, and the entries of the `cleanup incomplete` list, print a newline in a name as `\n`, so each stays on one line

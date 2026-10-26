@@ -59,21 +59,21 @@ def _refuse_inside(root, dish, target):
             raise BrigadeError(f"{dish}: worktree {_oneline(target)} is inside {_oneline(place)}")
 
 
-def _cleanup(root, worktree, branch, added, made, new_branch):
+def _cleanup(root, worktree, branch, added, made):
     """Undo what this run created and return what could not be undone. It prunes nothing else."""
     left = []
     if added:
         _git(root, "worktree", "unlock", worktree)
         removed = _git(root, "worktree", "remove", "--force", worktree)
         if removed.returncode:
-            left.append(f"worktree {worktree}")
+            left.append(f"worktree {_oneline(worktree)}")
     if made:
         if not left:
             shutil.rmtree(worktree, ignore_errors=True)
         if os.path.lexists(worktree):
-            left.append(f"directory {worktree}")
-    if new_branch and _tip(root, branch) is not None and _git(root, "branch", "-D", branch).returncode:
-        left.append(f"branch {branch}")
+            left.append(f"directory {_oneline(worktree)}")
+    if _tip(root, branch) is not None and _git(root, "branch", "-D", branch).returncode:
+        left.append(f"branch {_oneline(branch)}")
     return left
 
 
@@ -109,30 +109,36 @@ def apply_review(root, dish, name, edits, from_sha, branch, worktree, build, set
     if all(data == contents[path] for path, data in changed.items()):
         raise BrigadeError(f"{dish}: edits change nothing at {from_sha}")
     if _git(root, "check-ref-format", "--branch", branch).returncode:
-        raise BrigadeError(f"{dish}: {branch} is not a valid branch name")
+        raise BrigadeError(f"{dish}: {_oneline(branch)} is not a valid branch name")
     if _tip(root, branch) is not None:
-        raise BrigadeError(f"{dish}: branch {branch} already exists")
+        raise BrigadeError(f"{dish}: branch {_oneline(branch)} already exists")
     made = worktree is None
     if made:
         target = Path(tempfile.mkdtemp(prefix=f"brigade-{dish}-edits-"))
     else:
         if os.path.lexists(worktree):
-            raise BrigadeError(f"{dish}: worktree {worktree} already exists")
+            raise BrigadeError(f"{dish}: worktree {_oneline(worktree)} already exists")
         target = Path(worktree).resolve()
         _refuse_inside(root, dish, target)
     absolute = str(target)
-    added = _git(root, "worktree", "add", "-b", branch, absolute, full)
+    if _git(root, "branch", "--", branch, full).returncode:
+        if made:
+            shutil.rmtree(target, ignore_errors=True)
+        if _tip(root, branch) is not None:
+            raise BrigadeError(f"{dish}: branch {_oneline(branch)} already exists")
+        raise BrigadeError(f"{dish}: cannot create branch {_oneline(branch)}")
+    added = _git(root, "worktree", "add", absolute, branch)
     if added.returncode:
         detail = (added.stderr or added.stdout).decode(errors="replace").strip().splitlines()
         registered = _registered(root)
         owned = registered is None or target.resolve() in registered
-        left = _cleanup(root, absolute, branch, owned, True, _tip(root, branch) == full)
+        left = _cleanup(root, absolute, branch, owned, True)
         raise BrigadeError(f"{dish}: cannot create worktree: {detail[0] if detail else added.returncode}"
                            + (f"; cleanup incomplete: {', '.join(left)}" if left else ""))
     try:
         return _apply_in(absolute, dish, name, changed, tree, from_sha, full, branch, build, setup)
     except BaseException as error:
-        left = _cleanup(root, absolute, branch, True, False, True)
+        left = _cleanup(root, absolute, branch, True, False)
         if left and isinstance(error, BrigadeError):
             raise BrigadeError(f"{error}; cleanup incomplete: {', '.join(left)}") from None
         raise
