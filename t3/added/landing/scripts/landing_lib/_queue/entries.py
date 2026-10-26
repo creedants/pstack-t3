@@ -62,8 +62,8 @@ def publish(store, base, candidate):
         if remote_trunk(store) != base:
             return "trunk moved during landing"
         # drain.py appends ". Fix it, then run land.py resume" to this text.
-        reason = seam.git_reason(result.stderr)
-        raise seam.Infrastructure(f"push rejected: {reason}. Either change the remote or its branch protection so it accepts this push, or switch with land.py mode human")
+        reason = seam.git_reason(result.stderr, compact=True)
+        raise seam.Infrastructure(f"push rejected: {reason}. Change the remote or its branch protection so it accepts this push. Selecting human mode with land.py mode human requires an empty queue")
     seam.git("fetch", contract["remote"], contract["trunk"], cwd=repo)
     return None
 

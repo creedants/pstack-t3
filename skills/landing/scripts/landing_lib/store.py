@@ -427,20 +427,25 @@ def identity_change(store):
             f"check git config --show-origin user.email in {seam.one_line(str(store.repo))}, then run land.py resume")
 
 
-def git_reason(stderr):
+def git_reason(stderr, compact=False):
     """The useful line of a git failure: what the remote said, else the last line.
 
-    Each remote line loses every leading "remote:" prefix, and one prefix is put back. URL userinfo is removed,
-    and trailing periods and spaces are stripped.
+    URL userinfo is removed in both modes. With compact, each remote line loses every leading "remote:" prefix,
+    one prefix is put back in front of the joined lines, and trailing periods and spaces are stripped.
     """
     lines = [line.strip() for line in stderr.strip().splitlines() if line.strip()]
-    remote = []
-    for line in lines:
-        if not line.startswith("remote:"):
-            continue
-        while line.startswith("remote:"):
-            line = line[len("remote:"):].strip()
-        if line:
-            remote.append(line)
-    reason = f"remote: {' '.join(remote)}" if remote else (lines[-1] if lines else "no output")
-    return re.sub(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@", r"\1", reason).rstrip(". ")
+    if compact:
+        remote = []
+        for line in lines:
+            if not line.startswith("remote:"):
+                continue
+            while line.startswith("remote:"):
+                line = line[len("remote:"):].strip()
+            if line:
+                remote.append(line)
+        reason = f"remote: {' '.join(remote)}" if remote else (lines[-1] if lines else "no output")
+    else:
+        remote = [line for line in lines if line.startswith("remote:") and line != "remote:"]
+        reason = " ".join(remote) if remote else (lines[-1] if lines else "no output")
+    reason = re.sub(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/\s?#]*@", r"\1", reason)
+    return reason.rstrip(". ") if compact else reason
