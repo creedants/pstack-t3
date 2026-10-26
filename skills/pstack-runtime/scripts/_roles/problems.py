@@ -2,7 +2,8 @@
 
 
 from _roles.base import INHERIT, PANEL_BACKUP_ROLE, RolesError
-from _roles.config import inherit_parent
+from _roles.config import ModeDecision, inherit_parent
+from _roles.mode import effective_mode, seat_budget
 from _roles.panel import panel_shortfall, panel_verdicts
 from _roles.resolve import cursor_note, resolve_seat, role_allow
 from _roles.seats import check_option_values, exclude_label, exclude_reason, find_model, model_matches, models_of, options_of, provider_matches, providers_by_id, runnable
@@ -87,16 +88,20 @@ def exclude_option_problems(number, rule, catalog):
 
 
 def validate(config, catalog, exclude=(), backups=None):
+    """Each seat settles on the budget show uses, so validate refuses what show refuses."""
     backups = backups or {}
     problems = excluded_problems(config["roles"], exclude)
     problems.extend(backup_problems(backups, catalog, exclude))
     for number, rule in enumerate(exclude, 1):
         problems.extend(exclude_option_problems(number, rule, catalog))
     skill_seats = None
+    decision = effective_mode(config)
+    mode = decision.mode if isinstance(decision, ModeDecision) else decision
     for name, seats in config["roles"].items():
         seats = [seat for seat in seats if exclude_reason(seat, exclude, name) is None]
+        budget = seat_budget(config["budget"], mode, name)
         if name == PANEL_BACKUP_ROLE:
-            verdicts = panel_verdicts(seats, catalog, config["budget"], exclude=exclude)
+            verdicts = panel_verdicts(seats, catalog, budget, exclude=exclude)
             problems.extend(f"{name}: {problem}" for verdict in verdicts for problem in verdict.problems)
             shortfall = panel_shortfall([verdict.seat for verdict in verdicts if verdict.seat is not None])
             if shortfall is not None:
@@ -107,7 +112,7 @@ def validate(config, catalog, exclude=(), backups=None):
         allow = role_allow(config, name) if "allowByFile" in config else None
         for seat in seats:
             try:
-                value, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name, exclude, allow)
+                value, _, seat_problems = resolve_seat(seat, catalog, budget, name, exclude, allow)
             except RolesError as error:
                 problems.append(f"{name}: {error}")
                 continue

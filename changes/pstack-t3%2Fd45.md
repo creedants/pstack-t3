@@ -1,3 +1,4 @@
 - kind fix
-- cap a `variant` reasoning ladder at the budget level or the closest lower level the model offers, so light mode no longer runs a capped OpenCode seat above medium
+- apply the existing reasoning budget rules to a `variant` reasoning ladder, including light mode's default small budget and the lowest offered level when every level exceeds the cap
 - `roles.py validate` now resolves seats with the role's OpenCode allow list, so a substitute note or an inherit seat names what `show` picks, not a model `show` refuses
+- `roles.py validate` resolves each role's seats with the same effective budget `show` uses, so a light-mode seat whose capped level the exclude list refuses is refused by `validate` too
