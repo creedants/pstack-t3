@@ -98,7 +98,7 @@ def report(restaurant, write=True):
         lines.append("")
     if len(lines) == 4:
         lines += ["Nothing new.", ""]
-    lines += send_back_section(restaurant.rows("pass.tsv"), stamp)
+    lines += send_back_section(restaurant.rows("pass.tsv"), stamp, restaurant)
     lines += hit_section(restaurant.rows("pass.tsv"), restaurant.rows("edits.tsv"), restaurant.rows("86.tsv"), stamp)
     lines += spend_section(restaurant, since)
     lines += cooldown_section(restaurant, since)

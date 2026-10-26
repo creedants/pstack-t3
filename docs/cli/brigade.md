@@ -531,7 +531,7 @@ brigade.py [flags] pass check --sha SHA [--json] dish
 brigade.py [flags] pass stats [--last LAST]
 ```
 
-Print the first-pass rate overall and per author model. An item has at least one non-member pass.tsv row. Its first non-member row in table order sets its author and first verdict. The rate is the percentage of items whose first verdict is pass. Every other verdict counts as a failure. Select the last N items by the at cell of their last non-member row, descending. Ties keep the order in which items first occur in the table. Count all non-member send-back rows of those items by reason. An empty reason or one outside false-wording, missing-test, wrong-behavior, out-of-lease, scope, other counts as unrecorded. An empty window prints no items with a verdict.
+Print the first-pass rate overall and per author model. An item has at least one non-member pass.tsv row. Its first non-member row in table order sets its author and first verdict. The rate is the percentage of items whose first verdict is pass. Every other verdict counts as a failure. Select the last N items by the at cell of their last non-member row, descending. Ties keep the order in which items first occur in the table. Count all non-member send-back rows of those items by reason. An empty reason or one outside false-wording, missing-test, wrong-behavior, out-of-lease, scope, other counts as unrecorded. An empty window prints no items with a verdict. It also prints a `report says:` line when at least one counted send-back's report names a class. That line counts those classes in reason order plus `not in report`, and names each send-back whose report disagrees with its recorded reason as `D\<n> recorded \<reason>, report says \<class>`.
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
@@ -776,7 +776,7 @@ the thread line first, then counts, then workers outside the executive admin's s
 brigade.py [flags] close [--dry-run | --to-file]
 ```
 
-write the report of what changed since the last one, with a `## Spend` section by goal for items fired on or after the UTC date of the last close, or for every item when no report was written yet, the finest window `spend --since` takes
+write the report of what changed since the last one, with a `## Spend` section by goal for items fired on or after the UTC date of the last close, or for every item when no report was written yet, the finest window `spend --since` takes. When at least one counted send-back's review report names a reason class, its `## Send-back reasons` section adds a `report says:` line counting those classes beside the recorded reasons
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

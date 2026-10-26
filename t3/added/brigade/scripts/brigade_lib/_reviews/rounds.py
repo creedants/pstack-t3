@@ -2,6 +2,7 @@ import functools
 import json
 import runpy
 from datetime import datetime, timedelta, timezone
+from brigade_lib._reviews.reason_class import report_class
 from brigade_lib.shared import BrigadeError, plural
 from brigade_lib.store import OWING_STATES, REASONS, ROUND_DECISIONS, ROUND_KIND, ROUND_PARKED, UNRECORDED_REASON, roles_script, round_budget_of
 
@@ -118,6 +119,9 @@ def reviewed_items(rows, last):
 SEND_BACK_DAYS = 7
 
 
+NOT_IN_REPORT = "not in report"
+
+
 def _at_utc(text):
     """The datetime of a store table's at cell, with a naive value read as UTC. A datetime passes through."""
     if isinstance(text, datetime):
@@ -188,19 +192,53 @@ def send_back_window(rows, cutoff):
 
 
 def reason_summary(counts):
-    """`reason N, ...` in REASONS then unrecorded order, or an empty string when every count is 0."""
-    return ", ".join(f"{reason} {counts[reason]}" for reason in (*REASONS, UNRECORDED_REASON) if counts[reason])
+    """`reason N, ...` in the counts dict's own order, or an empty string when every count is 0."""
+    return ", ".join(f"{reason} {count}" for reason, count in counts.items() if count)
 
 
-def send_back_section(rows, now):
+def report_says(items, restaurant):
+    """The `report says:` line for the send-back rows of these items, or "" when no row's report names a class.
+
+    The counts follow REASONS order and end with `not in report` for a send-back whose report names no class.
+    A row whose report names a class that differs from its recorded reason is named after the counts as
+    `D<n> recorded <reason>, report says <class>`, where the recorded reason is the value the counts line counts,
+    which is `unrecorded` when the reason cell is empty or outside REASONS.
+    """
+    counts = dict.fromkeys((*REASONS, NOT_IN_REPORT), 0)
+    disagreements = []
+    for dish, item_rows in items:
+        for row in item_rows:
+            if row["verdict"] != "send-back":
+                continue
+            found = report_class(restaurant, row["report"])
+            counts[found or NOT_IN_REPORT] += 1
+            recorded = row["reason"] if row["reason"] in REASONS else UNRECORDED_REASON
+            if found is not None and found != recorded:
+                disagreements.append(f"{dish} recorded {recorded}, report says {found}")
+    if not any(counts[reason] for reason in REASONS):
+        return ""
+    line = f"report says: {reason_summary(counts)}"
+    if disagreements:
+        line += "; " + "; ".join(disagreements)
+    return line
+
+
+def send_back_section(rows, now, restaurant):
     """The `## Send-back reasons` lines for these pass.tsv rows.
 
     The earliest record comes only from the pass.tsv rows this function is handed, which the caller passes whole.
+    The class is read from each report at build time, never written to a table.
     """
     heading, sentence = window_phrases(earliest_record(rows), now, SEND_BACK_DAYS)
     cutoff = _at_utc(now) - timedelta(days=SEND_BACK_DAYS)
-    return [f"## Send-back reasons ({heading})", "",
-            reason_summary(reason_counts(send_back_window(rows, cutoff))) or f"No send-backs {sentence}.", ""]
+    window = send_back_window(rows, cutoff)
+    lines = [f"## Send-back reasons ({heading})", "",
+             reason_summary(reason_counts(window)) or f"No send-backs {sentence}.", ""]
+    derived = report_says(window, restaurant)
+    if derived:
+        lines.append(derived)
+        lines.append("")
+    return lines
 
 
 def pass_rate(passed, items):
@@ -231,4 +269,7 @@ def pass_stats(restaurant, last):
         lines.append(f"first pass {author}: {pass_rate(sum(passes), len(passes))}")
     counts = reason_counts(items)
     lines.append(f"send-backs: {reason_summary(counts) or 'none'}")
+    derived = report_says(items, restaurant)
+    if derived:
+        lines.append(derived)
     return "\n".join(lines)
