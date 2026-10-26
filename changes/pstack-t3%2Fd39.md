@@ -1,0 +1,2 @@
+- kind fix
+- `land.py init --mode local --base <commit>` stored the contract and then ran `git update-ref` for the local lane, so a refused ref (for example a leftover `refs/landing/main.lock` in the git directory) left a new contract with no lane ref. The ref now moves before the contract transaction commits. A refused first init leaves no store, so `land.py status` reports no landing contract, and a refused re-init leaves the stored contract as it was. The refusal is one line that names the lock file to remove when that file exists, and otherwise gives git's reason

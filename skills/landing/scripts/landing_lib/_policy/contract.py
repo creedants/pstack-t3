@@ -1,6 +1,8 @@
+import contextlib
 import json
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 from landing_lib import seam
 from landing_lib._merge.forge import github_owner_repo
@@ -99,6 +101,24 @@ def size_note(contract):
         return ""
     return f"size limit {maximum} tokens via {contract.get('sizeBaseline') or seam.DEFAULT_BASELINE}"
 
+@contextlib.contextmanager
+def discard_refused_first_store(directory):
+    """Leave no database behind when a first init is refused, unless a concurrent init stored a contract in it."""
+    first_init = not (directory / "land.db").exists()
+    try:
+        yield
+    except seam.LandError:
+        if first_init:
+            try:
+                with seam.Store(directory) as store:
+                    if store.contract:
+                        raise
+            except (KeyError, sqlite3.Error):
+                pass
+            for name in ("land.db", "land.db-wal", "land.db-shm"):
+                (directory / name).unlink(missing_ok=True)
+        raise
+
 def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_method=None, cap=None, generated=None, rebuild=None,
          author_policy=None, pr_item_line=None, heartbeat_ms=None, merge_heartbeat_ms=None, generated_map=None,
          size_max_tokens=None, size_baseline=None):
@@ -176,7 +196,7 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
         if not base:
             raise seam.LandError(f"local mode lands on {lane}; pass --base <commit> to create it")
         lane_sha = seam.git("rev-parse", "--verify", f"{base}^{{commit}}", cwd=repo).stdout.strip()
-    with seam.Store(directory) as store:
+    with discard_refused_first_store(directory), seam.Store(directory) as store:
         with store.tx() as db:
             current = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key, value FROM contract")}
             refuse_clash(current)
@@ -205,8 +225,14 @@ def init(path, trunk, mode, remote, base, checks, setup, batch, timeout, merge_m
                 db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeMaxTokens', ?)", (json.dumps(size_max_tokens),))
             if baseline_to_store is not None:
                 db.execute("INSERT OR REPLACE INTO contract VALUES ('sizeBaseline', ?)", (json.dumps(baseline_to_store),))
-        if lane_sha:
-            seam.git("update-ref", lane, lane_sha, "", cwd=repo)
+            # The lane ref moves before COMMIT, so a refused ref rolls the contract back with it.
+            if lane_sha:
+                created = seam.git("update-ref", lane, lane_sha, "", cwd=repo, check=False)
+                if created.returncode != 0:
+                    lock = Path(common) / f"{lane}.lock"
+                    if lock.exists():
+                        raise seam.LandError(f"git cannot create {lane}: remove {lock} and run land.py init again")
+                    raise seam.LandError(f"git cannot create {lane}: {seam.git_reason(created.stderr)}")
         note = f"{'updated' if current else 'created'} {directory}"
         settings = generated_note(wanted["generated"], wanted["rebuild"])
         return f"{note}. {settings}" if settings else note
