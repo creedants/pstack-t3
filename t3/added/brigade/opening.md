@@ -6,10 +6,10 @@ Run from any thread.
 2. Draft the menu from evidence: the repo's README and AGENTS.md, open work in the tracker AGENTS.md names, read with the commands it names, and recent threads via the **recall** skill. Use `gh issue list` only when AGENTS.md names no other tracker. When the named tracker cannot be read, say so in the draft. Never read GitHub Issues in its place. Ask the user only for what the evidence cannot settle, normally the purpose itself. Use the **grilling** skill when the purpose is vague.
 3. Ask the user four things with the host's question tool, unless they already said each one. Ask all four in one call.
    - Who lands work. This decides whether the user stays a gate on PRs and git. Offer:
-     - `merge` (recommended for a repository with a remote): every change still gets a PR as its record, and the queue merges it once the checks pass. The user reviews what landed afterward and does no PR or git work.
-     - `human`: every change gets a PR, and the user merges it.
-     - `push`: no PRs. The queue pushes trunk after the checks pass.
-     - `local`: nothing leaves the machine. Changes land on a lane ref the user merges.
+     - `merge` (recommended for a GitHub repository): every change still gets a PR as its record, and the queue merges it once the checks pass. The user reviews what landed afterward and does no PR or git work.
+     - `human` (fits a GitHub repository): every change gets a PR, and the user merges it.
+     - `push` (fits a remote that is not GitHub or has no pull requests): no PRs. The queue pushes trunk after the checks pass.
+     - `local` (fits a repository with no remote): nothing leaves the machine. Changes land on a lane ref the user merges.
      Say that `merge` and `push` put reviewed changes on trunk with no human gate. When the repository already has a landing contract (`$L status`), its mode applies to every restaurant on that repository. Say so before changing it, and name the siblings `walk --repo <root>` lists.
    - How often the coordinator replies. Recommend `milestones`. Offer `every-turn`, `milestones`, and `digest`. What each level sends is [Run a service](SKILL.md#run-a-service) step 9.
    - Which mode, per [the runtime's Modes section](../pstack-runtime/SKILL.md#modes). Offer `light` (recommended) and `full`. Light keeps tests, the build, and a review by another model family, or a same-family read when only the author's family has a runnable seat, and cuts the panels around them. When the user has no preference, record nothing, and the project and user roles files decide.
