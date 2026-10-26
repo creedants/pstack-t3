@@ -130,7 +130,7 @@ class ReportClassTest(BrigadeTest):
         self.review_file("D1-review-1.md", "Reason: scope\n\nReason: other\n")
         self.assertEqual(report_class(self.report_store(), "D1-review-1.md"), "scope")
 
-    def test_invalid_bytes_state_no_class(self):
+    def test_a_report_that_is_not_utf8_states_no_class(self):
         self.fired_bug_fix()
         path = self.review_file("D1-review-1.md", "Reason: scope\n")
         path.write_bytes(b"Reason: scope\n\xff\xfe not text\n")

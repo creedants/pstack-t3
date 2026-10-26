@@ -6,44 +6,36 @@ from brigade_lib.store import REASONS
 REASON_LINE = re.compile(r"^Reason:[ \t]*(\S+)[ \t]*$", re.M)
 
 # A fence delimiter: up to three leading spaces, then three or more backticks or tildes.
-_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 
 
 def _without_fenced(text):
-    """Return text with every line inside a fenced code block blanked out.
+    """Return text with every line of a fenced code block blanked out.
 
     Fenced blocks are Markdown code fences: an opening line with up to three
     leading spaces and three or more backticks or tildes, closed by a line with
-    the same character at least as long and no info string. An unclosed fence
+    the same character at least as long and no info string. An opening backtick
+    fence whose info string holds a backtick is not a fence. An unclosed fence
     runs to the end of the text. A carriage return at the end of a line counts
     as part of the line ending when detecting a fence.
     """
-    lines = text.split("\n")
     out = []
-    in_fence = False
-    fence_char = ""
-    fence_len = 0
-    for line in lines:
+    fence = None
+    for line in text.split("\n"):
         body = line[:-1] if line.endswith("\r") else line
-        if not in_fence:
-            match = _FENCE.match(body)
-            if match:
-                in_fence = True
-                fence_char = match.group(1)[0]
-                fence_len = len(match.group(1))
+        if fence is None:
+            opening = _FENCE.match(body)
+            if opening and not (opening.group(1)[0] == "`" and "`" in opening.group(2)):
+                fence = (opening.group(1)[0], len(opening.group(1)))
                 out.append("")
             else:
                 out.append(line)
         else:
-            close = re.match(r"^ {0,3}(`{3,}|~{3,})[ \t]*$", body)
-            if (close and close.group(1)[0] == fence_char
-                    and len(close.group(1)) >= fence_len):
-                in_fence = False
-                fence_char = ""
-                fence_len = 0
-                out.append("")
-            else:
-                out.append("")
+            closing = _CLOSE.match(body)
+            if closing and closing.group(1)[0] == fence[0] and len(closing.group(1)) >= fence[1]:
+                fence = None
+            out.append("")
     return "\n".join(out)
 
 
