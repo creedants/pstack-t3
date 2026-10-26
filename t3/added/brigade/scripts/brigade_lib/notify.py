@@ -103,6 +103,15 @@ def _privacy():
         sys.dont_write_bytecode = flag
 
 
+_OCTET = r"(?:25[0-5]|2[0-4]\d|1?\d?\d)"
+_ADDRESS = re.compile(rf"{_OCTET}(?:[.-]{_OCTET}){{3}}|[\w.-]+:\d+")
+
+
+def _address_like(text):
+    """A bare IPv4 address, in dotted or hyphenated form, or a host:port."""
+    return bool(_ADDRESS.fullmatch(text.lower()))
+
+
 def _secret_like(word):
     low = word.lower()
     return (len(word) > 32 or "://" in word or "www." in low or "@" in word or "_" in word or "=" in word
@@ -115,13 +124,13 @@ def _mixed_run(word):
 
 
 def _name(privacy, text):
-    if _secret_like(text) or privacy.clean(text) != text:
+    if _secret_like(text) or _address_like(text) or privacy.clean(text) != text:
         return "brigade"
     try:
         name = slug(text)
     except BrigadeError:
         return "brigade"
-    if _secret_like(name) or privacy.clean(name) != name:
+    if _secret_like(name) or _address_like(name) or privacy.clean(name) != name:
         return "brigade"
     return name
 
