@@ -1,0 +1,2 @@
+- kind feature
+- A coordinator can opt in to GitHub issue webhooks. A signed webhook wakes it when an issue opens, and it files that issue as a ticket. A webhook and polling never file the same issue twice. Polling stays on as the default and the fallback, and a restaurant that does not opt in sees no change in its sheets. The steps are in `reference/webhook-intake.md`.
