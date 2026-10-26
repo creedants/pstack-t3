@@ -173,12 +173,23 @@ def opencode_model_is_metered(catalog, provider_instance_id, model_id):
     return not catalog_says_free(model)
 
 
+def allow_refuses(catalog, provider_instance_id, model_id, allow):
+    """True when the allow list refuses this metered OpenCode model."""
+    if allow is None:
+        return False
+    if not opencode_model_is_metered(catalog, provider_instance_id, model_id):
+        return False
+    return not allow.names(model_id)
+
+
 def opencode_allow_line(role, seat, allow, catalog):
     if not isinstance(seat, dict):
         return None
     provider = seat.get("providerInstanceId")
     model = seat.get("model")
-    if not provider or not model or not opencode_model_is_metered(catalog, provider, model) or allow.names(model):
+    if not provider or not model:
+        return None
+    if not allow_refuses(catalog, provider, model, allow):
         return None
     return (
         f"{role}: {provider}/{model} is a metered OpenCode model and the allow list does not name {model}. "
@@ -291,6 +302,7 @@ __all__ = [
     "is_opencode_provider",
     "catalog_says_free",
     "opencode_model_is_metered",
+    "allow_refuses",
     "opencode_allow_line",
     "opencode_allow_lines",
     "providers_by_id",
