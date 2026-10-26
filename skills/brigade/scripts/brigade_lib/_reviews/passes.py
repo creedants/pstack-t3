@@ -7,6 +7,7 @@ from brigade_lib import seam
 from brigade_lib._affected.report import _common_dir, _contract_rows, contract_check, records_check
 from brigade_lib._reviews.rounds import item_verdicts, roles_family, round_debt
 from brigade_lib._reviews.threads import report_threads, report_threads_refusal, write_threads
+from brigade_lib._edits.apply import apply_review
 from brigade_lib.edits import NEEDS_COMMANDS, commit_tree, replay, report_edits
 from brigade_lib.leases import fragment_for
 from brigade_lib.reports import NOT_A_REPORT, REVIEW_FILE, in_reports, report_stat
@@ -214,6 +215,43 @@ def verify_edits(restaurant, dish_id, from_sha, to_sha):
         if not any(all(recorded[key] == value for key, value in row.items()) for recorded in restaurant.rows("edits.tsv")):
             restaurant.append("edits.tsv", {"at": seam.now(), **row})
     return f"{dish_id}: edits verified, {from_sha} to {to_sha}"
+
+
+def _generated_list(root, dish_id):
+    """The contract's generated paths for root. Any failed or invalid status read raises BrigadeError."""
+    def unreadable(why):
+        return BrigadeError(f"{dish_id}: cannot read the landing contract's generated paths; {why}")
+
+    try:
+        result = seam.land_result(root, "status", "--json")
+    except Exception as error:
+        raise unreadable(str(error) or type(error).__name__) from None
+    if result.returncode:
+        raise unreadable(f"land.py status --json exited {result.returncode}")
+    try:
+        payload = json.loads(result.stdout)
+    except Exception:
+        raise unreadable("land.py status --json did not print JSON") from None
+    value = payload.get("generated") if isinstance(payload, dict) else None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise unreadable("land.py status --json holds no generated list")
+    return tuple(value)
+
+
+def apply_edits_command(restaurant, dish_id, report, from_sha, branch, worktree):
+    """Called from handle(), because it starts subprocesses. It reads projectRoot and the landing contract's setup command before taking the store lock. It holds the lock while checking tables, and runs subprocesses outside the lock. It never writes a table and never records a verdict."""
+    root = restaurant.meta.get("projectRoot") or ""
+    setup = contract_setup(root)
+    generated = _generated_list(root, dish_id)
+    with restaurant.checked():
+        restaurant.fence()
+        restaurant.find("dishes.tsv", dish_id)
+        meta = restaurant.meta
+        build = meta.get("buildCommand")
+        name = review_report(restaurant, dish_id, report)
+        edits = report_edits(restaurant, name)
+        project = meta.get("projectRoot") or ""
+    return apply_review(project, dish_id, name, edits, from_sha, branch, worktree, build, setup, generated)
 
 
 def unrecorded_reviews(restaurant):
