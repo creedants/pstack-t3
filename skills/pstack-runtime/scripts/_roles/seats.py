@@ -246,8 +246,30 @@ def rank(value):
     return LADDER.get(value)
 
 
+VARIANT_ID = "variant"
+
+
+def reasoning_ladder(option):
+    if not isinstance(option, dict) or option.get("type") != "select":
+        return False
+    choices = option.get("options") or []
+    if not choices:
+        return False
+    return all(rank(choice.get("id")) is not None for choice in choices)
+
+
+def reasoning_option(model):
+    for option in options_of(model):
+        if option["id"] in EFFORT_IDS and option.get("type") == "select":
+            return option
+    for option in options_of(model):
+        if option.get("id") == VARIANT_ID and option.get("type") == "select" and reasoning_ladder(option):
+            return option
+    return None
+
+
 def effort_option(model):
-    return next((option for option in options_of(model) if option["id"] in EFFORT_IDS and option.get("type") == "select"), None)
+    return reasoning_option(model)
 
 
 def check_option_values(seat, model):
@@ -268,7 +290,7 @@ def check_option_values(seat, model):
 
 
 def apply_level(seat, model, target_level):
-    option = effort_option(model) if model else None
+    option = reasoning_option(model) if model else None
     if target_level is None or option is None:
         return seat
     values = [choice["id"] for choice in option.get("options") or [] if choice["id"] not in SPECIAL and rank(choice["id"]) is not None]
@@ -312,6 +334,8 @@ __all__ = [
     "for_runtime_mode",
     "find_model",
     "rank",
+    "reasoning_ladder",
+    "reasoning_option",
     "effort_option",
     "check_option_values",
     "apply_level",

@@ -4,7 +4,7 @@
 from _roles.base import INHERIT, PANEL_BACKUP_ROLE, RolesError
 from _roles.config import inherit_parent
 from _roles.panel import panel_shortfall, panel_verdicts
-from _roles.resolve import cursor_note, resolve_seat
+from _roles.resolve import cursor_note, resolve_seat, role_allow
 from _roles.seats import check_option_values, exclude_label, exclude_reason, find_model, model_matches, models_of, options_of, provider_matches, providers_by_id, runnable
 
 
@@ -103,9 +103,10 @@ def validate(config, catalog, exclude=(), backups=None):
                 problems.append(f"{name}: {shortfall}")
             continue
         resolved = []
+        allow = role_allow(config, name)
         for seat in seats:
             try:
-                value, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name, exclude)
+                value, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name, exclude, allow)
             except RolesError as error:
                 problems.append(f"{name}: {error}")
                 continue
