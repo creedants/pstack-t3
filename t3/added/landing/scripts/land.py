@@ -112,7 +112,9 @@ def run(argv):
                     size_max_tokens=args.max_file_tokens, size_baseline=args.size_baseline)
         with Store.for_repo(args.repo) as store:
             warning = no_checks_note(store.contract)
-        return (f"{text}\n{warning}" if warning else text), 0
+        if warning:
+            print(warning, file=sys.stderr)
+        return text, 0
     if args.command == "size":
         if args.staged and args.all:
             raise LandError("size takes --staged or --all, not both")
@@ -190,9 +192,12 @@ def run(argv):
             item_note = pr_item_line_note(store.contract)
             heartbeat = heartbeat_note(store.contract)
             size = size_note(store.contract)
-            text = " ".join(part for part in (note, policy_note, item_note, heartbeat, size, no_checks_note(store.contract)) if part)
+            text = " ".join(part for part in (note, policy_note, item_note, heartbeat, size) if part)
             if text:
                 line = f"{line} {text}"
+            warning = no_checks_note(store.contract)
+            if warning:
+                print(warning, file=sys.stderr)
             return line, 0
         return line, 0
 
