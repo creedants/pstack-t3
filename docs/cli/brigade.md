@@ -776,7 +776,7 @@ the thread line first, then counts, then workers outside the executive admin's s
 brigade.py [flags] close [--dry-run | --to-file]
 ```
 
-write the report of what changed since the last one, with a `## Spend` section by goal for items fired on or after the UTC date of the last close, or for every item when no report was written yet, the finest window `spend --since` takes. When at least one send-back's review report names a reason class, its `## Send-back reasons` section adds a `report says:` line counting those classes beside the recorded reasons
+write the report of what changed since the last one, with a `## Spend` section by goal for items fired on or after the UTC date of the last close, or for every item when no report was written yet, the finest window `spend --since` takes. When at least one counted send-back's review report names a reason class, its `## Send-back reasons` section adds a `report says:` line counting those classes beside the recorded reasons
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |

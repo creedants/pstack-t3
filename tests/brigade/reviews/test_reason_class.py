@@ -130,15 +130,27 @@ class ReportClassTest(BrigadeTest):
         self.review_file("D1-review-1.md", "Reason: scope\n\nReason: other\n")
         self.assertEqual(report_class(self.report_store(), "D1-review-1.md"), "scope")
 
-    def test_invalid_bytes_elsewhere_keep_the_class(self):
+    def test_invalid_bytes_state_no_class(self):
         self.fired_bug_fix()
         path = self.review_file("D1-review-1.md", "Reason: scope\n")
         path.write_bytes(b"Reason: scope\n\xff\xfe not text\n")
-        self.assertEqual(report_class(self.report_store(), "D1-review-1.md"), "scope")
+        self.assertIsNone(report_class(self.report_store(), "D1-review-1.md"))
 
     def test_a_quoted_reason_line_states_nothing(self):
         self.fired_bug_fix()
         self.review_file("D1-review-1.md", "Findings.\n\n> Reason: scope\n")
+        self.assertIsNone(report_class(self.report_store(), "D1-review-1.md"))
+
+    def test_a_fenced_example_does_not_replace_the_reviewers_classification(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md",
+                         "A short repro paragraph.\n\n```\nReason: scope\n```\n\nReason: wrong-behavior\n")
+        self.assertEqual(report_class(self.report_store(), "D1-review-1.md"), "wrong-behavior")
+
+    def test_a_reason_line_only_inside_a_fence_states_nothing(self):
+        self.fired_bug_fix()
+        self.review_file("D1-review-1.md",
+                         "A short repro paragraph.\n\n```\nReason: scope\n```\n")
         self.assertIsNone(report_class(self.report_store(), "D1-review-1.md"))
 
     def test_a_pass_row_with_a_classed_report_reads_through_report_says(self):
