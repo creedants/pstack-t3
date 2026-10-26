@@ -150,7 +150,7 @@ class TornWritesMixin:
         added = after[len(complete):].decode()
         self.assertEqual((added.count("\n"), added[-1]), (1, "\n"))
         fields = added[:-1].split("\t")
-        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b", "", "", "", "fix", ""])
+        self.assertEqual(fields[:1] + fields[2:], ["T2", "waiting", "user", "", "", "b", "", "", "", "fix", "", ""])
 
     def test_a_short_append_restores_the_last_complete_row(self):
         from unittest import mock

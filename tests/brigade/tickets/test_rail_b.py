@@ -135,7 +135,7 @@ class RailBMixin:
         self.assertEqual((self.at / "rail.tsv").read_bytes()[:len(before)], before)
         self.assertEqual(self.brigade("ticket", "list").splitlines()[-1], "T4 waiting urgent fix [user] New")
         self.assertEqual((self.at / "rail.tsv").read_text().splitlines()[-1].split("\t")[5:],
-                         ["", "New", "urgent", "a.txt", "", "fix", ""])
+                         ["", "New", "urgent", "a.txt", "", "fix", "", ""])
 
     def test_ticket_set_kind_goal_and_no_goal_are_refused_on_a_waiting_ticket_that_an_item_in_flight_names_and_change_no_file_and_priority_alone_is_accepted(self):
         self.two_goals()

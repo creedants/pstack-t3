@@ -19,7 +19,7 @@ class AddMixin:
         self.assertEqual(self.brigade("ticket", "add", "--summary", "New", "--kind", "fix"), "T14")
         after = (self.at / "rail.tsv").read_bytes()
         self.assertEqual(after[:len(before)], before)
-        self.assertEqual(after[len(before):].decode().rstrip("\n").split("\t")[5:], ["", "New", "", "", "", "fix", ""])
+        self.assertEqual(after[len(before):].decode().rstrip("\n").split("\t")[5:], ["", "New", "", "", "", "fix", "", ""])
         self.assertEqual(self.brigade("ticket", "list").splitlines()[-1], "T14 waiting normal fix [user] New")
 
     def test_again_lifts_neither_the_ref_refusal_nor_the_request_refusal_nor_the_source_refusal(self):

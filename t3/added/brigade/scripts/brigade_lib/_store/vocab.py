@@ -118,7 +118,7 @@ LINE_SUFFIX = r":\d+(?:-\d+)?$"
 
 
 TABLES = {
-    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision", "kind", "goal"),
+    "rail.tsv": ("id", "at", "state", "source", "ref", "dish", "summary", "priority", "paths", "decision", "kind", "goal", "after"),
     "dishes.tsv": ("id", "at", "state", "station", "tickets", "task", "thread", "branch", "pr", "sha", "summary", "timebox", "lease", "paths", "reported",
                    "kind", "goal"),
     "pass.tsv": ("at", "dish", "pr", "sha", "verdict", "author", "verifier", "note", "report", "member", "reason"),
@@ -132,7 +132,7 @@ TABLES = {
 }
 
 
-ADDED_COLUMNS = {"pass.tsv": 3, "86.tsv": 2, "rail.tsv": 5, "dishes.tsv": 2}
+ADDED_COLUMNS = {"pass.tsv": 3, "86.tsv": 2, "rail.tsv": 6, "dishes.tsv": 2}
 
 
 PREFIX = {"rail.tsv": "T", "dishes.tsv": "D", "86.tsv": "Q", "rulings.tsv": "R", "goals.tsv": "G"}
