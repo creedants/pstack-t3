@@ -1,0 +1,3 @@
+- kind fix
+- The outside ping sent a coordinator name that is a bare IPv4 address or a host:port as its slug, such as `10-0-0-5:` or `build-box-8080:`. A name of either shape now pings as `brigade`, the same fallback an email, URL, or path already gets, and so does a name whose slug reads as an address, such as `10-0-0-5`
+- The check matches four octets in dotted or hyphenated form and a host followed by a colon and a port. Ordinary names keep their slug, so `pstack-t3`, `bridgekit`, and `home-network-optimization` ping as before
