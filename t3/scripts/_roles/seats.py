@@ -250,7 +250,7 @@ VARIANT_ID = "variant"
 
 
 def reasoning_ladder(option):
-    """True when every value this option offers is a reasoning level."""
+    """True when this option offers at least one value and every value is a reasoning level."""
     if not isinstance(option, dict) or option.get("type") != "select":
         return False
     choices = option.get("options") or []
