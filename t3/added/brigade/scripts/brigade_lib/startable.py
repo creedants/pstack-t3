@@ -24,7 +24,7 @@ from brigade_lib import generated
 from brigade_lib.leases import STANDINGS, _claim_norm, autofire_of, blocked_waiting, claim_paths, lease_block, paths_inside, paths_overlap, refill_of, running_workers, worker_cap, workers_line
 from brigade_lib.shared import BrigadeError, age, clean, slug
 from brigade_lib.store import LOW_FLAG_DAYS, PRIORITIES_BY_RANK, low_reserve_of
-from brigade_lib.tickets import EVERY_ROW, Label, label_words, paths_of, priority_of, read_labels
+from brigade_lib.tickets import EVERY_ROW, Label, after_holds, label_words, paths_of, priority_of, read_labels, read_waits
 
 
 def _goal_paused(goal, refill):
@@ -48,6 +48,7 @@ class Waiting:
     summary: str
     label: Label = Label()
     doc_item: bool = False
+    after: str = ""
 
 
 @dataclass(frozen=True)
@@ -58,13 +59,13 @@ class Standing:
     overdue: bool
 
 
-def waiting_ticket(row, label=Label(), *, doc_item=False, paths=None):
+def waiting_ticket(row, label=Label(), *, doc_item=False, paths=None, after=""):
     filed = datetime.fromisoformat(row["at"].replace("Z", "+00:00"))
     if filed.tzinfo is None:
         filed = filed.replace(tzinfo=timezone.utc)
     effective = paths if paths is not None else paths_of(row)
     return Waiting(row["id"], priority_of(row), filed, effective, row["decision"] == "yes", row["summary"], label,
-                   bool(doc_item))
+                   bool(doc_item), after)
 
 
 def plan(tickets, refill, running, cap, level, refusals, now, low_reserve, expanded=None):
@@ -80,7 +81,9 @@ def plan(tickets, refill, running, cap, level, refusals, now, low_reserve, expan
         eff = expanded.get(ticket.id, ticket.paths) if expanded else ticket.paths
         shared = [ident for ident, paths in started.items() if scopes_overlap(eff, paths)]
         kind, why = "start", ""
-        if ticket.decision:
+        if ticket.after:
+            kind, why = "blocked", ticket.after
+        elif ticket.decision:
             kind = "decision"
         elif not ticket.paths:
             kind = "unknown"
@@ -122,7 +125,7 @@ def lease_refusals(meta, tickets):
     root, prefix = meta["projectRoot"], slug(meta["restaurant"])
     asked, refusals = {}, {}
     for ticket in tickets:
-        if ticket.decision or not ticket.paths:
+        if ticket.decision or not ticket.paths or ticket.after:
             continue
         key = (ticket.paths, ticket.doc_item)
         if key not in asked:
@@ -195,8 +198,10 @@ def startable_lines(standings, meta, running, now, low_reserve):
 
 
 def startable(restaurant):
+    waits = read_waits(restaurant)
     with restaurant.checked():
         meta, labels = restaurant.meta, read_labels(restaurant, EVERY_ROW)
+        held = after_holds(waits, restaurant.rows("rail.tsv"))
         low_reserve = low_reserve_of(meta)
         notes = dict(blocked_waiting(restaurant))
         tickets = []
@@ -205,15 +210,15 @@ def startable(restaurant):
                 continue
             note = notes.get(row["id"])
             if note is None:
-                tickets.append(waiting_ticket(row, labels.tickets[row["id"]]))
+                tickets.append(waiting_ticket(row, labels.tickets[row["id"]], after=held.get(row["id"], "")))
                 continue
             raw_parts = tuple(part for part in (note.get("paths") or "").split(",") if part)
             valid = [made for part in raw_parts if (made := _claim_norm(part))]
             if not valid:
-                tickets.append(waiting_ticket(row, labels.tickets[row["id"]]))
+                tickets.append(waiting_ticket(row, labels.tickets[row["id"]], after=held.get(row["id"], "")))
                 continue
             tickets.append(waiting_ticket(row, labels.tickets[row["id"]], doc_item=bool(note.get("doc_item")),
-                                          paths=raw_parts))
+                                          paths=raw_parts, after=held.get(row["id"], "")))
         running = running_workers(restaurant)
         refill = refill_of(meta, restaurant.rows("dishes.tsv"), labels)
     try:

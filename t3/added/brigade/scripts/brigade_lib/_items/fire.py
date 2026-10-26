@@ -10,7 +10,7 @@ from brigade_lib.leases import Claim, ClaimError, Hold, claim_lease, claim_paths
 from brigade_lib.reviews import fix_round_refusal
 from brigade_lib.shared import BrigadeError, slug
 from brigade_lib.store import KIND_CHOICE, STATION_KIND
-from brigade_lib.tickets import ActsOn, Label, paths_of, priority_of, quoted_paths, read_labels, tracked_paths
+from brigade_lib.tickets import ActsOn, Label, after_holds, paths_of, priority_of, quoted_paths, read_labels, read_waits, tracked_paths
 
 BROAD_DIRECTORY_FILES = 5
 
@@ -93,7 +93,7 @@ def record_blocked(restaurant, ids, kind, station, summary, paths, timebox, bran
             restaurant.log("ticket", ident, "blocked", note)
 
 
-def unfireable(restaurant, ids):
+def unfireable(restaurant, ids, waits=None):
     # A ticket fired again is the same work, so an item that owes its round decision holds its tickets.
     for dish in restaurant.rows("dishes.tsv"):
         held = [ident for ident in ids if ident in dish["tickets"].split(",")]
@@ -104,6 +104,10 @@ def unfireable(restaurant, ids):
         _, ticket = restaurant.find("rail.tsv", ident)
         if ticket["state"] != "waiting":
             return f"{ident} is {ticket['state']}, not waiting"
+    held = after_holds(waits, restaurant.rows("rail.tsv")) if waits is not None else {}
+    for ident in ids:
+        if ident in held:
+            return f"{ident} is {held[ident]}"
     return None
 
 
@@ -200,10 +204,11 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
         meta = restaurant.meta
         project_root = meta.get("projectRoot", "")
         policy = doc_policy(meta)
+        waits = read_waits(restaurant)
         prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item, policy)
         with restaurant.checked():
             restaurant.fence()
-            refusal = unfireable(restaurant, ids)
+            refusal = unfireable(restaurant, ids, waits)
             if refusal:
                 raise BrigadeError(refusal)
             gate = prepared.decide()
@@ -234,9 +239,10 @@ def fire(restaurant, ids, station, task, thread, branch, summary, timebox, paths
                 record_blocked(restaurant, ids, refusal_kind(str(error)), station, summary, paths, timebox, branch, reason,
                                kind, ride_along, doc_item)
             raise BrigadeError(f"nothing fired: {error}") from error
+        waits = read_waits(restaurant)
         prepared = prepare_doc_fire(project_root, paths, timebox, len(ids), doc_item, policy)
         with restaurant.checked():
-            refusal = unfireable(restaurant, ids)
+            refusal = unfireable(restaurant, ids, waits)
             gate = prepared.decide()
             if not refusal and isinstance(gate, DocRefused):
                 refusal = gate.line
