@@ -12,7 +12,7 @@ Read [webhook schedules](../../pstack-runtime/webhooks.md) before you start. It 
 2. Ask the user to add a repository webhook on GitHub. Use the signing secret from step 1, content type `application/json`, and the `issues` event. Point it at the `webhookUrl` that step 3 returns. If you have no `webhookUrl` yet, run step 3 first and give the user that URL.
 3. Call `schedule_task` with `schedule` set to `{"type": "webhook", ...}`. Give these fields:
    - `signature`: `header` `X-Hub-Signature-256`, `encoding` `hex`, `prefix` `sha256=`, and the `secretRef` from step 1. Never create the schedule without this object.
-   - `filters`: `headers.x-github-event` equals `issues`, and `body.action` is `in` `opened` and `reopened`. The `in` op takes an array value.
+   - `filters`: `headers.x-github-event` equals `issues`, and `body.action` is `in` `opened` and `reopened`. The `in` op takes an array value. If a filter never matches a real delivery, the webhook never wakes you and polling files the issue.
    - `dedupe`: `replayKey` set to `headers.x-github-delivery`.
    - `maxDeliveryAgeMinutes`: `120`. A backlog held offline does not replay late.
    - `prompt`: `Use the brigade skill. You are the head chef for the restaurant at <restaurant dir>. Run $B next intake. The webhook named this issue: {{body.issue.html_url}}`. Pass nothing else from the payload. No title, body, labels, or user.
@@ -26,7 +26,7 @@ Run `$B set --schedule intake-webhook=` to clear the record. Then call `delete_s
 
 ## How filing works
 
-File each issue with `ticket add --source github --ref <the issue's html URL> --kind <kind> --summary <one line>`. Write the summary yourself. The ref match refuses a second ticket for the same issue in either order. So polling and the webhook together file one ticket.
+File each issue with `ticket add --source github --ref <the issue's html URL> --kind <kind> --summary <one line>`. Write the summary yourself. The ref match refuses a second ticket for an issue while the first ticket is waiting, assigned, or moved to a live ticket. It does so in either order, so polling and the webhook together file one ticket. A done or dropped ticket no longer holds the ref, so the issue can be filed again.
 
 ## Untrusted input
 
@@ -38,4 +38,4 @@ The webhook URL, the signing secret, and any token never go into the store, a br
 
 ## Fallback
 
-House rule 43 applies: nightly first, stable fallback. When `schedule_task` returns no `webhookUrl`, T3 Connect remote access is off. When the host lacks the webhook trigger, it is stable T3 Code. In either case keep the polling intake schedule only. Nothing is lost, because polling files every issue. Never remove the polling schedule while the webhook is on.
+The webhook is a nightly-first feature with a polling fallback. When `schedule_task` returns no `webhookUrl`, T3 Connect remote access is off. When `schedule_task` refuses a webhook schedule, the host has no webhook trigger. In either case keep the polling intake schedule only. Nothing is lost, because polling files every issue. Never remove the polling schedule while the webhook is on.
