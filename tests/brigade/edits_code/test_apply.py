@@ -240,12 +240,15 @@ class ApplyTest(BrigadeTest):
         away.mkdir()
         link = self.root / "wt-link"
         link.symlink_to(away)
-        for target in (empty, link):
+        line = self.root / "wt-line\nbreak"
+        line.mkdir()
+        for target in (empty, link, line):
             with self.subTest(target.name):
                 before = self.standing()
                 code, out, err = self.apply(*self.edit_args(reviewed, "d1-existing", target))
                 self.assert_refused_leaving_nothing(target, "d1-existing", code, out, err, before)
                 self.assertTrue(os.path.lexists(target))
+        self.assertIn("wt-line\\nbreak", err)
         self.assertEqual(list(empty.iterdir()), [])
         self.assertTrue(away.is_dir())
 
@@ -323,16 +326,19 @@ class ApplyTest(BrigadeTest):
         reviewed = self.edits_store()
         self.one_edit()
         hook = self.project / ".git" / "hooks" / "post-checkout"
-        hook.write_text("#!/bin/sh\necho hook says no\nexit 44\n")
-        hook.chmod(0o755)
-        before = self.standing()
-        target = self.root / "wt-checkout-hook"
-        code, out, err = self.apply(*self.edit_args(reviewed, "d1-checkout-hook", target))
-        self.assertEqual(code, 1, err)
-        self.assertIn("cannot create worktree", err)
-        self.assertNotIn("cleanup incomplete", err)
-        self.assertEqual(self.standing(), before)
-        self.assertFalse(target.exists())
+        commit = "git -c user.name=hook -c user.email=hook@localhost commit -q --allow-empty -m moved\n"
+        for label, body in (("rejects", ""), ("commits then rejects", commit)):
+            with self.subTest(label):
+                hook.write_text("#!/bin/sh\necho hook says no\n" + body + "exit 44\n")
+                hook.chmod(0o755)
+                before = self.standing()
+                target = self.root / f"wt-checkout-hook-{len(label)}"
+                code, out, err = self.apply(*self.edit_args(reviewed, "d1-checkout-hook", target))
+                self.assertEqual(code, 1, err)
+                self.assertIn("cannot create worktree", err)
+                self.assertNotIn("cleanup incomplete", err)
+                self.assertEqual(self.standing(), before)
+                self.assertFalse(target.exists())
 
     def test_apply_commits_only_edited_and_built_paths_fails_when_a_commit_hook_stages_a_file(self):
         # Processes: git and land build the fixture project and its contract; edits apply commits through a pre-commit hook that stages setup output.
