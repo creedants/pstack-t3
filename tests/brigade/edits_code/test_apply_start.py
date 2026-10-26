@@ -89,3 +89,19 @@ class ApplyStartTest(BrigadeTest):
         self.assertEqual(len(err.strip().splitlines()), 1)
         self.assertIn(f"cleanup incomplete: branch {branch}", err)
         self.assertIn(branch, "".join(self.branches()))
+
+    def test_apply_removes_its_temporary_directory_fails_when_git_branch_cannot_start(self):
+        # Processes: git builds the fixture project; edits apply runs in this process while starting git branch fails.
+        self.contract()
+        reviewed = self.edits_store()
+        self.one_edit()
+        branch_creates = lambda argv: "branch" in argv and "--" in argv
+        temp_dirs = lambda: set(Path(tempfile.gettempdir()).glob("brigade-D1-edits-*"))
+        args = ["D1", "--report", "D1-review-1.md", "--from", reviewed, "--branch", "d1-no-branch"]
+        before, before_temp = self.standing(), temp_dirs()
+        outcome = self.apply_with_failing_git(args, branch_creates)
+        err = outcome.stderr_text()
+        self.assertEqual(outcome.code, 1, err)
+        self.assertEqual(len(err.strip().splitlines()), 1)
+        self.assertEqual(self.standing(), before)
+        self.assertEqual(temp_dirs(), before_temp)
