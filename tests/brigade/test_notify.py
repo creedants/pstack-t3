@@ -11,8 +11,10 @@ from tests import isolation
 isolation.install()
 
 import json
+import re
 import shlex
 import sys
+import time
 from types import SimpleNamespace
 from unittest import mock
 
@@ -132,6 +134,31 @@ class NotifyTest(BrigadeTest):
         self.assertEqual(outcome.stderr_text().splitlines(),
                          ["brigade: warning: the outside ping took longer than 2 seconds and was stopped"])
 
+    def test_a_notifier_child_that_outlives_the_timeout_is_stopped_with_its_group(self):
+        """Defect: a forked notifier child outlived the timeout, because only the direct notifier was killed.
+
+        The notifier and its child are real processes because a process group kill has to reach a real child.
+        """
+        marker = self.root / "forked-child-ran"
+        path = self.root / "forking-notifier.py"
+        path.write_text("import pathlib, subprocess, sys, time\n"
+                        f"marker = {str(marker)!r}\n"
+                        "child = 'import pathlib, time; time.sleep(2); pathlib.Path(%r).touch()' % marker\n"
+                        "subprocess.Popen([sys.executable, '-c', child])\n"
+                        "time.sleep(30)\n")
+        self.brigade("set", "--notify", shlex.join([sys.executable, str(path)]))
+        notify = run_globals(self, SCRIPT)["notify"]
+        with mock.patch.object(notify, "TIMEOUT_SECONDS", 1):
+            outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
+                                                     *_owner_words(self.at), "86", "add", "--question", "Which purpose?",
+                                                     "--options", "docs, engine", "--default", "docs"])
+        self.assertEqual(outcome.code, 0)
+        self.assertEqual(outcome.stdout_text().strip(), "Q1")
+        self.assertEqual(outcome.stderr_text().splitlines(),
+                         ["brigade: warning: the outside ping took longer than 1 seconds and was stopped"])
+        time.sleep(3)
+        self.assertFalse(marker.exists())
+
     def test_a_notifier_that_does_not_exist_warns_once_and_the_decision_is_still_parked(self):
         self.brigade("set", "--notify", "/nonexistent/brigade-notifier-for-test")
         outcome = self.outcome("86", "add", "--question", "Which purpose?", "--options", "docs, engine",
@@ -158,6 +185,16 @@ class NotifyTest(BrigadeTest):
             self.outcome("set", "--notify", self.notifier(), at=directory)
             self.ask(at=directory)
         self.assertEqual(self.pings(), [["brigade: a decision is waiting for your answer"]] * 2)
+
+    def test_a_restaurant_named_with_an_email_url_path_or_www_host_pings_as_brigade(self):
+        """Defect: the name was slugged before the privacy check, so the @ / :// / . / path shapes it needs were gone."""
+        names = ("alice@example.com", "https://example.com", "/srv/private-project", "www.example.com")
+        for name in names:
+            directory = self.store / "bridge-kit" / re.sub(r"[^a-z0-9]+", "-", name).strip("-")
+            self.outcome("open", "--project-root", str(self.project), "--name", name, at=directory)
+            self.outcome("set", "--notify", self.notifier(), at=directory)
+            self.ask(at=directory)
+        self.assertEqual(self.pings(), [["brigade: a decision is waiting for your answer"]] * len(names))
 
     def test_a_thread_id_inside_the_restaurant_name_pings_as_brigade(self):
         notify = run_globals(self, SCRIPT)["notify"]

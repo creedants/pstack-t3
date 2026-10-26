@@ -1,7 +1,9 @@
 """The opt-in outside ping. The command the user sets runs once, with one plain line, when a decision needs them or work is stuck."""
 import enum
+import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -113,6 +115,8 @@ def _mixed_run(word):
 
 
 def _name(privacy, text):
+    if _secret_like(text) or privacy.clean(text) != text:
+        return "brigade"
     try:
         name = slug(text)
     except BrigadeError:
@@ -134,13 +138,24 @@ def _line(restaurant, trigger):
 
 def _send(restaurant, argv, line):
     try:
-        done = subprocess.run([*argv, line], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, timeout=TIMEOUT_SECONDS, start_new_session=True,
-                              check=False)
-    except subprocess.TimeoutExpired:
-        restaurant.warn(f"the outside ping took longer than {TIMEOUT_SECONDS} seconds and was stopped")
+        process = subprocess.Popen([*argv, line], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:
         restaurant.warn("the outside ping could not start")
-    else:
-        if done.returncode != 0:
-            restaurant.warn(f"the outside ping exited with status {done.returncode}")
+        return
+    try:
+        returncode = process.wait(timeout=TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        _kill_group(process)
+        restaurant.warn(f"the outside ping took longer than {TIMEOUT_SECONDS} seconds and was stopped")
+        return
+    if returncode != 0:
+        restaurant.warn(f"the outside ping exited with status {returncode}")
+
+
+def _kill_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    process.wait()
