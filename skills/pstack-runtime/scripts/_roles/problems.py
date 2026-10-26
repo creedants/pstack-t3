@@ -103,7 +103,8 @@ def validate(config, catalog, exclude=(), backups=None):
                 problems.append(f"{name}: {shortfall}")
             continue
         resolved = []
-        allow = role_allow(config, name)
+        # A config with no allowByFile carries no allow list, as on the write path, which checks its own list.
+        allow = role_allow(config, name) if "allowByFile" in config else None
         for seat in seats:
             try:
                 value, _, seat_problems = resolve_seat(seat, catalog, config["budget"], name, exclude, allow)
