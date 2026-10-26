@@ -163,7 +163,7 @@ AFTER_STATION = {"feature": "feature", "fix": "bug-fix", "study": "investigation
 
 
 def after_ready(rows, held, blocked):
-    """Call under the lock. (ticket id, note) for each waiting --after ticket whose dependency is done and that has no block note.
+    """Call under the lock. (ticket id, note) for each waiting --after ticket whose dependency is done and that has no block note or decision.
 
     The note has the shape a blocked ticket's note has, so watch prints the same unblocked line and fire command for it.
     """

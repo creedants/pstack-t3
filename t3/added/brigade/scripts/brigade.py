@@ -102,7 +102,7 @@ def parser():
 
 
 def holds_project(args):
-    """True for the ticket writes that read a sibling's dependency: add or set with --after, and set with --state."""
+    """True for ticket add or set with --after, and ticket set with --state."""
     if args.command != "ticket" or args.action not in ("add", "set"):
         return False
     return getattr(args, "after", None) is not None or bool(getattr(args, "state", None))
