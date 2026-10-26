@@ -250,6 +250,7 @@ VARIANT_ID = "variant"
 
 
 def reasoning_ladder(option):
+    """True when every value this option offers is a reasoning level."""
     if not isinstance(option, dict) or option.get("type") != "select":
         return False
     choices = option.get("options") or []
@@ -259,6 +260,7 @@ def reasoning_ladder(option):
 
 
 def reasoning_option(model):
+    """The effort option, or a variant option whose values are all reasoning levels."""
     for option in options_of(model):
         if option["id"] in EFFORT_IDS and option.get("type") == "select":
             return option
@@ -269,6 +271,7 @@ def reasoning_option(model):
 
 
 def effort_option(model):
+    """Alias of reasoning_option, for callers that ask whether a budget reaches this model."""
     return reasoning_option(model)
 
 

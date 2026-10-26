@@ -1,3 +1,3 @@
 - kind fix
-- cap a `variant` reasoning ladder at the budget level, so light mode lowers `variant: max` to the cap
+- cap a `variant` reasoning ladder at the budget level or the closest lower level the model offers, so light mode no longer runs an OpenCode seat above medium
 - pass the role's OpenCode allow list to `validate`, so it names the same substitute and refusal `show` names
