@@ -23,7 +23,7 @@ def sibling_named(restaurant, to):
 
 
 def read_waits(restaurant, given=None):
-    """Call before the store lock. Reads each sibling a waiting ticket or the given ticket names, at most once."""
+    """Call before the store lock. Reads each sibling a waiting ticket, the given ticket, or a dependency chain from it names, at most once."""
     own = restaurant.dir.name
     asked = None
     if given:
