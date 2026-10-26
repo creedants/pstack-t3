@@ -6,6 +6,7 @@ from brigade_lib.affected import layout
 from brigade_lib.compact import parse_context_cap, parse_coordinator_provider
 from brigade_lib.credit import KEY as CREDIT_KEY, parse_credit
 from brigade_lib.items import doc_policy
+from brigade_lib import notify
 from brigade_lib.leases import require_workers
 from brigade_lib.shared import BrigadeError, clean, command_words
 from brigade_lib.store import CHANGE_NOTE_KEY, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, ROUND_BUDGET_KEY, SCRATCH_KEY, parse_change_note_dir, parse_liveness_ms, parse_low_reserve, parse_round_budget, scratch_parent_text
@@ -140,6 +141,7 @@ def setting_changes(restaurant, args):
     _clear_or_parse(args.liveness_ms, LIVENESS_KEY, parse_liveness_ms, changes, drop)
     _clear_or_parse(args.change_note_dir, CHANGE_NOTE_KEY, parse_change_note_dir, changes, drop)
     _clear_or_parse(args.cooldown_minutes, COOLDOWN_KEY, parse_cooldown_minutes, changes, drop)
+    _clear_or_parse(args.notify, notify.KEY, notify.parse_notify, changes, drop)
     if args.affected_tests is not None:
         if args.affected_tests == "":
             drop.append("affectedTests")

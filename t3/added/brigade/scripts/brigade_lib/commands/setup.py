@@ -10,6 +10,7 @@ from brigade_lib.items import doc_policy
 from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_workers, set_thread, worker_cap
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import AUTOFIRE, MODES, REPORTING, change_note_dir, is_admin, liveness_of, low_reserve_of, open_restaurant, round_budget_of, sibling_lines, siblings
+from brigade_lib.notify import shown
 from brigade_lib.tickets import intake_list
 
 COMMANDS = ("open", "set")
@@ -85,6 +86,9 @@ def register_set(sub):
                    help="claude or other; \"\" clears it to claude; other writes no settings file")
     p.add_argument("--pr-credit", metavar="on|off",
                    help="whether pull requests credit the models that did the work; on or off")
+    p.add_argument("--notify", metavar="COMMAND",
+                   help="the command brigade runs once, with one plain line as its last argument, when a decision "
+                        "needs the user or a failure is stuck; \"\" clears it")
 
 
 def register(sub):
@@ -222,4 +226,4 @@ def handle_locked(restaurant, args, view):
     if args.context_cap is not None and effective_provider(prospective) == "claude":
         sync_meta(prospective)
     meta = restaurant.change_meta(drop, **changes)
-    return json.dumps(meta, indent=2)
+    return json.dumps(shown(meta), indent=2)

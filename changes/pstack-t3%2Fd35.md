@@ -1,0 +1,7 @@
+- kind feature
+- `brigade.py set --notify '<command>'` records an opt-in outside ping in `restaurant.json`, and `set --notify ''` clears it. The command is split into words with no shell. A value that cannot be split is refused and nothing is written
+- the command runs once, after the triggering command has finished and released the store lock, with one plain line as its last argument. It runs when `86 add` parks a new decision, and when `next --failure stuck` records a paused queue or a provider failure. It runs at no other time, and not when `86 add` returns a decision already open for the same dish
+- the line names the restaurant and says a decision is waiting or work hit a failure it cannot fix. It never holds the question text, and it is filtered so it carries no thread id, path, email, token, or URL
+- a command that fails, cannot start, or runs past about 10 seconds prints one warning line. It never changes the exit status, the printed result, or the store write of the command that triggered it
+- `status` ends with `outside ping: on` when a command is set, and `set` prints `on` in place of the command. A restaurant that never sets `--notify` sees no change in any output, and no schedule is created
+- the `set` merge code moved to `commands/_setting_merges.py` with no behavior change, because `commands/setup.py` was near its size cap

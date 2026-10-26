@@ -37,3 +37,7 @@ A drain summary reads like this:
 > - [Fix the settings page freeze](https://github.com/acme/app/pull/42)
 >
 > Full report: ~/.local/state/pstack-t3/brigade/app/perf/closeouts/2026-10-06T230012.481207.md
+
+### Outside ping
+
+When `$B status` ends with `outside ping: on`, the user set a command that `$B` runs by itself, once, with one plain line when `86 add` parks a new decision or `next --failure stuck` records a paused queue or a provider failure. It runs at no other time. Send the reply for that wake as usual, because the ping does not replace it. The ping is not a reply, so a routine wake still ends with no reply text. Do not run it by hand. [store-config.md](../store-config.md#notify) says what it carries and how it fails.

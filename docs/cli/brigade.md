@@ -45,7 +45,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off] [--notify COMMAND]
 ```
 
 record a setting
@@ -79,6 +79,7 @@ record a setting
 | `--context-cap CONTEXT_CAP` |  |  |  | the auto-compact window written to .claude/settings.local.json when the provider is claude; "" clears it to 300000 |
 | `--coordinator-provider COORDINATOR_PROVIDER` |  |  |  | claude or other; "" clears it to claude; other writes no settings file |
 | `--pr-credit on|off` |  |  |  | whether pull requests credit the models that did the work; on or off |
+| `--notify COMMAND` |  |  |  | the command brigade runs once, with one plain line as its last argument, when a decision needs the user or a failure is stuck; "" clears it |
 
 ## brigade.py ticket
 
