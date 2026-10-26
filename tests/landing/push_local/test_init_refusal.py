@@ -11,6 +11,7 @@ from tests import isolation
 isolation.install()
 
 from pathlib import Path
+from unittest import mock
 
 from ..support import (
     setUpModule,
@@ -67,6 +68,29 @@ class LandingTest(LandingTestBase):
         self.assertEqual(refusal.count("\n"), 0, refusal)
         self.assertIn(str(lock), refusal)
         self.assertIn("has no landing contract", self.land("status", ok=False))
+
+    def test_a_second_init_that_commits_during_a_refused_first_init_keeps_its_contract(self):
+        lock = self.lock_lane()
+        base = sh("git", "rev-parse", "HEAD", cwd=self.work)
+        real_unlink = Path.unlink
+        second = []
+
+        def second_init():
+            lock.unlink(missing_ok=True)
+            second.append(self.init(mode="local", base=base))
+
+        def unlink_after_a_second_init(path, *args, **kwargs):
+            if path.name == "land.db" and not second:
+                second_init()
+            return real_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", unlink_after_a_second_init):
+            refusal = self.land("init", "--trunk", "main", "--mode", "local", "--check", "./check.sh", "--base", base, ok=False)
+        self.assertIn(str(lock), refusal)
+        if not second:
+            second_init()
+        self.assertIn("created", second[0])
+        self.assertIn("local mode", self.land("status"))
 
     def test_a_local_re_init_whose_lane_ref_is_refused_keeps_the_stored_contract(self):
         base = sh("git", "rev-parse", "HEAD", cwd=self.work)
