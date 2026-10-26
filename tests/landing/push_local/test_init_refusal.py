@@ -54,8 +54,7 @@ class LandingTest(LandingTestBase):
         self.assertEqual(self.queue_rows(), before)
 
     def lock_lane(self):
-        lock = Path(sh("git", "rev-parse", "--git-dir", cwd=self.work))
-        lock = (lock if lock.is_absolute() else self.work / lock) / "refs" / "landing" / "main.lock"
+        lock = Path(sh("git", "rev-parse", "--path-format=absolute", "--git-path", "refs/landing/main.lock", cwd=self.work))
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text("")
         self.addCleanup(lambda: lock.unlink(missing_ok=True))
