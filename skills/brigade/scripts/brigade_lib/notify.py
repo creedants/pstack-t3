@@ -104,7 +104,7 @@ def _privacy():
 
 
 _OCTET = r"(?:25[0-5]|2[0-4]\d|1?\d?\d)"
-_ADDRESS = re.compile(rf"{_OCTET}(?:[.-]{_OCTET}){{3}}|[a-z0-9.-]+:\d{{1,5}}")
+_ADDRESS = re.compile(rf"{_OCTET}(?:[.-]{_OCTET}){{3}}|[\w.-]+:\d+")
 
 
 def _address_like(text):
