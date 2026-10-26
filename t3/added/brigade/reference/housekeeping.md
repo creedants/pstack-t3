@@ -18,7 +18,7 @@ The head chef owns every git and PR chore its work creates. In `merge` and `push
 
 ## House rules
 
-`house-rules.md` holds the rules a worker brief pastes. `open` writes the file once, from a template, and never rewrites it. The template holds two project rules, one on plain prose and one on landing through the queue. A store may edit or delete them. The template holds no worker size limit and no test standard.
+`house-rules.md` holds the rules a worker brief pastes. `open` writes the file once, from a template, and never rewrites it. The template holds two project rules, one on plain prose and one on landing through the queue. A store may edit or delete them. The template holds no worker size limit and no test standard. A rule whose first tag is `[standing rule]` is left out of STANDING ORDERS. The tool prints its nonempty text under STANDING RULES unless CONTEXT, VERIFY, or an earlier printed line already states it. [Store configuration](../store-config.md#houserulescap) gives the tag precedence, block rendering, and cap accounting.
 
 A store gains the worker size limit and the test standard only when the user pastes them into its `house-rules.md`. Paste this text at the end of the file:
 

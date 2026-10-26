@@ -188,6 +188,116 @@ class StandingRulesMixin:
             "directly under `/tmp`. Delete that directory when you are done. A test suite's own temporary files stay "
             "where the tests put them. Do not set TMPDIR.", text)
 
+    def test_a_store_with_no_recorded_line_keeps_the_brief_tail_byte_for_byte(self):
+        """Only a first-line tag starts a recorded rule, so every other occurrence stays house-rule text."""
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\n"
+            "Paste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "   plain continuation\n\n"
+            "2. [worker] Worker rule.\n"
+            "  worker continuation\n"
+            "   [standing rule] is on a continuation line.\n\n"
+            "3. [reviewer] see [standing rule].\n"
+            "4. [coordinator] Coordinator rule.\n"
+            "5. Last rule.\n")
+        body = self.brief_body(self.brigade(*self.BRIEF))
+        self.assertEqual(body.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0].split("\n\n")[-1].rstrip("\n"),
+                         "\n".join([
+                             "STANDING RULES:",
+                             f"- Save the full output of any failed test run to a file under {self.at}/reports/ before you rerun it, and name that file in the report.",
+                         ]))
+        self.assertEqual(body.split("STANDING ORDERS:\n", 1)[1], "\n".join([
+            "# House rules: Perf",
+            "",
+            "Paste these into every brief verbatim.",
+            "",
+            "1. Plain rule.",
+            "   plain continuation",
+            "",
+            "2. Worker rule.",
+            "  worker continuation",
+            "   [standing rule] is on a continuation line.",
+            "",
+            "5. Last rule.",
+        ]))
+
+    def test_a_recorded_brief_line_prints_once_after_the_built_ins_and_not_under_standing_orders(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "[standing rule] Quote the numstat line.\n")
+        body = self.brief_body(self.brigade(*self.BRIEF))
+        self.assertEqual(body.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0].split("\n\n")[-1].rstrip("\n"),
+                         "\n".join([
+                             "STANDING RULES:",
+                             f"- Save the full output of any failed test run to a file under {self.at}/reports/ before you rerun it, and name that file in the report.",
+                             "- Quote the numstat line.",
+                         ]))
+        self.assertEqual(body.count("Quote the numstat line."), 1)
+        self.assertNotIn("Quote the numstat line.", body.split("STANDING ORDERS:\n", 1)[1])
+
+    def test_a_recorded_brief_line_the_context_states_is_not_printed_again(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "[standing rule] Quote the numstat line.\n")
+        body = self.brief_body(self.brigade(*self.BRIEF, "--context", "quote  the   NUMSTAT   line."))
+        block = body.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0].split("\n\n")[-1]
+        self.assertNotIn("numstat", block.casefold())
+        self.assertIn("- Save the full output of any failed test run", block)
+        self.assertNotIn("numstat", body.split("STANDING ORDERS:\n", 1)[1].casefold())
+
+    def test_a_recorded_brief_line_alone_still_prints_the_standing_rules_heading(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "[standing rule] Quote the numstat line.\n")
+        reports = f"{self.at}/reports"
+        body = self.brief_body(self.brigade(*self.BRIEF, "--verify",
+                                            f"Save the full output under {reports}/ after a failed test run, before you rerun it"))
+        self.assertEqual(body.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0].split("\n\n")[-1].rstrip("\n"),
+                         "STANDING RULES:\n- Quote the numstat line.")
+
+    def test_a_recorded_rule_keeps_its_indented_lines_in_one_bullet(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "[standing rule] Read the change note aloud to yourself\n"
+            "  and cut every sentence that names a kitchen term.\n")
+        body = self.brief_body(self.brigade(*self.BRIEF))
+        self.assertEqual(body.split("\nVERIFY:\n", 1)[1].split("\nTIMEBOX:", 1)[0].split("\n\n")[-1].rstrip("\n"),
+                         "\n".join([
+                             "STANDING RULES:",
+                             f"- Save the full output of any failed test run to a file under {self.at}/reports/ before you rerun it, and name that file in the report.",
+                             "- Read the change note aloud to yourself\n  and cut every sentence that names a kitchen term.",
+                         ]))
+
+    def test_a_recorded_brief_line_prints_as_the_store_wrote_it(self):
+        self.coordinator()
+        parent = str(Path("/usr").resolve())
+        self.brigade("set", "--scratch-dir", parent)
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "[standing rule] Write <reports>/index.txt under <scratch> before you start.\n")
+        self.assertIn("- Write <reports>/index.txt under <scratch> before you start.", self.brigade(*self.BRIEF))
+
+    def test_two_recorded_brief_lines_with_the_same_text_print_once(self):
+        self.coordinator()
+        (self.at / "house-rules.md").write_text(
+            "# House rules: Perf\n\nPaste these into every brief verbatim.\n\n"
+            "1. Plain rule.\n"
+            "[standing rule] Quote the numstat line.\n"
+            "[standing rule] Quote the numstat line.\n")
+        body = self.brief_body(self.brigade(*self.BRIEF))
+        self.assertEqual(body.count("- Quote the numstat line."), 1)
+
     def test_an_invalid_stored_scratch_dir_names_the_key(self):
         self.briefable()
         meta = json.loads((self.at / "restaurant.json").read_text())

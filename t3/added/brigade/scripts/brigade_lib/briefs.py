@@ -1,45 +1,22 @@
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from brigade_lib import seam
+from brigade_lib import seam, standing
 from brigade_lib._store import rules
 from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.brief_setup import setup_lines
 from brigade_lib.items import attempt_kind, latest_mode_note, menu_purpose, record_escalation
 from brigade_lib.leases import kind_limits
 from brigade_lib.reviews import fix_round_refusal, item_verdicts, send_backs
-from brigade_lib.shared import BrigadeError, same_text, slug
-from brigade_lib.store import HELD_LOCKS, MODES, SCRATCH_KEY, SCRATCH_REFUSAL, VERDICTS, WORKER_ROLES, roles_script, scratch_parent_text
+from brigade_lib.shared import BrigadeError, slug
+from brigade_lib.store import HELD_LOCKS, MODES, VERDICTS, WORKER_ROLES, roles_script
 
 
 
 MEASURING_STATIONS = ("perf-issue", "hillclimb", "eval")
 
 
-@dataclass(frozen=True)
-class _Standing:
-    """One rule the brief pastes verbatim, with the anchors that show the coordinator already stated it."""
-    text: str
-    anchors: tuple
-
-
-# The standing rules, in the order the brief prints them.
-_RULES = (
-    _Standing(
-        "Save the full output of any failed test run to a file under <reports>/ before you rerun it, "
-        "and name that file in the report.",
-        ("<reports>/", "failed test run", "before you rerun", "Save the full output"),
-    ),
-    _Standing(
-        "Make every scratch directory, archive copy, and saved output with `mktemp -d -p <scratch>`, never "
-        "directly under `/tmp`. Delete that directory when you are done. A test suite's own temporary files stay "
-        "where the tests put them. Do not set TMPDIR.",
-        ("mktemp -d -p <scratch>",),
-    ),
-)
-STANDING_PLACEHOLDER = re.compile(r"<([a-z]+)>")
 ESCALATED = "escalated: "
 MODE_RESOLUTIONS = 3
 SEAT_RULE = ("Seat rule. Copy the Mode value above into --brief-mode on every roles.py mode and roles.py show call you make, "
@@ -199,50 +176,6 @@ def verify_rule(land, picked_layout):
     return "".join(lines)
 
 
-def _fill_standing(text, values):
-    return STANDING_PLACEHOLDER.sub(lambda match: values[match.group(1)], text)
-
-
-def standing_rules(restaurant, context, verify):
-    """The STANDING RULES bullets, in _RULES order."""
-    try:
-        scratch = scratch_parent_text(restaurant.meta.get(SCRATCH_KEY))
-    except BrigadeError:
-        raw = restaurant.meta.get(SCRATCH_KEY)
-        raise BrigadeError(f"restaurant.json {SCRATCH_KEY} {raw!r} is invalid: {SCRATCH_REFUSAL}") from None
-    values = {"reports": str(restaurant.dir / "reports"), "scratch": scratch}
-    seen = same_text(" ".join(context) + " " + verify)
-    lines = []
-    for rule in _RULES:
-        if any(not values.get(name) for name in STANDING_PLACEHOLDER.findall(rule.text)):
-            continue
-        text = _fill_standing(rule.text, values)
-        anchors = tuple(_fill_standing(anchor, values) for anchor in rule.anchors)
-        for anchor in anchors:
-            if anchor not in text:
-                raise BrigadeError(f"standing rule anchor {anchor!r} is not in {text!r}")
-        scoped = "<scratch>" in rule.text
-        seen_all = True
-        for anchor in anchors:
-            needle = same_text(anchor)
-            if scoped:
-                if re.search(re.escape(needle) + r"(?![A-Za-z0-9_.\-~])", seen) is None:
-                    seen_all = False
-                    break
-            elif needle not in seen:
-                seen_all = False
-                break
-        if seen_all:
-            continue
-        lines.append(f"- {text}")
-    return lines
-
-
-def worker_house_rules(text):
-    """The house rules a worker brief carries. A rule tagged for another role is left out, and a worker tag and at most one space after it are removed."""
-    return rules.for_role("worker", text)
-
-
 def house_rules_cap_lines(restaurant):
     """One line for each role whose house rules exceed the store's houseRulesCap."""
     cap = rules.cap_of(restaurant.meta)
@@ -255,7 +188,7 @@ def house_rules_cap_lines(restaurant):
 def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, paths, lease, base, context, thread,
                 picked_layout, setup):
     ident = dish["id"]
-    standing_orders = rules.house_rules(restaurant.dir / "house-rules.md")
+    worker = standing.sections(restaurant, context, verify)
     if not dish["branch"]:
         dish = restaurant.update("dishes.tsv", ident, "dish", branch=f"{slug(restaurant.meta['restaurant'])}/{ident.lower()}")
     tickets = {row["id"]: row for row in restaurant.rows("rail.tsv")}
@@ -263,7 +196,6 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
     report = restaurant.dir / "reports" / f"{ident}.md"
     sent_back = [row for row in item_verdicts(restaurant.rows("pass.tsv"), ident) if VERDICTS.get(row["verdict"]) == "sent-back"]
     findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
-    standing = standing_rules(restaurant, context, verify)
     lines = [
         f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
         f"GOAL: {goal}",
@@ -281,7 +213,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         f"- {verify_rule(land, picked_layout)}",
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
-        *(["", "STANDING RULES:", *standing] if standing else []),
+        *(["", "STANDING RULES:", *worker.rules] if worker.rules else []),
         "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
         "", "REPORT:",
         WAIT_RULE,
@@ -298,7 +230,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
         "- If `t3_thread_send` returns thread_not_found, read the thread id again from this brief file, copy it exactly, and retry once; name both attempts in the final message.",
         "- Then end your turn with one line naming the report path.",
-        "", "STANDING ORDERS:", worker_house_rules(standing_orders),
+        "", "STANDING ORDERS:", worker.orders,
     ]
     text = "\n".join(lines) + "\n"
     name = brief_file(ident, brief_attempt(restaurant, dish))
