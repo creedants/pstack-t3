@@ -88,14 +88,15 @@ def exclude_option_problems(number, rule, catalog):
 
 
 def validate(config, catalog, exclude=(), backups=None):
-    """Each seat settles on the budget its config's effective mode implies, so the light cap reaches validate too."""
+    """Apply mode-aware role budgets when mode is present, otherwise use the configured budget."""
     backups = backups or {}
     problems = excluded_problems(config["roles"], exclude)
     problems.extend(backup_problems(backups, catalog, exclude))
     for number, rule in enumerate(exclude, 1):
         problems.extend(exclude_option_problems(number, rule, catalog))
     skill_seats = None
-    decision = effective_mode(config)
+    # The write path passes a partial config without mode and keeps its configured budget.
+    decision = effective_mode(config) if "mode" in config else "full"
     mode = decision.mode if isinstance(decision, ModeDecision) else decision
     for name, seats in config["roles"].items():
         seats = [seat for seat in seats if exclude_reason(seat, exclude, name) is None]
