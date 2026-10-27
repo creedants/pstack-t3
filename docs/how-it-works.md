@@ -13,7 +13,7 @@ flowchart TD
     roles --> fan{"one delegate_task per seat"}
     fan --> a["Adversary A<br/>Claude Opus"]
     fan --> b["Adversary B<br/>Grok"]
-    a & b -->|completion wakes the lead| synth["Lead reruns each finding's command,<br/>keeps what the output proves,<br/>reports findings and drops"]
+    a & b -->|lead collects child results| synth["Lead reruns each finding's command,<br/>keeps what the output proves,<br/>reports findings and drops"]
 ```
 
 ## The layers
