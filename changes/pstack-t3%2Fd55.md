@@ -1,0 +1,2 @@
+- kind fix
+- `docs/guide.md` states the runtime's waiting rule in its child agents bullet. A lead with a schedule of its own ends its turn and each completion wakes it, when nothing else in the turn waits on the results, and any other lead keeps a bounded wait. The bullet links to where work runs in `docs/how-it-works.md` and no longer claims that child agents wake every lead.

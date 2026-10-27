@@ -110,7 +110,7 @@ $poteto-mode i'm going to bed. land the stack even if ci flakes. i want everythi
 
 Long work uses three T3 features:
 
-- **Child agents** do the units of work and wake the lead when they finish.
+- **Child agents** do the units of work. A lead with a schedule of its own ends its turn and each completion wakes it, when nothing else in the turn waits on the results. Any other lead keeps a bounded wait, per [where work runs](how-it-works.md#where-work-runs).
 - **Separate threads in their own worktrees** own long-lived pieces, such as one PR each in Autopilot. They show up in your T3 sidebar.
 - **`schedule_task`** runs a recurring check, usually hourly, that audits progress against the playbook and fixes drift. It is deleted when the work is done.
 
