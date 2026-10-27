@@ -1,0 +1,2 @@
+- kind fix
+- `docs/guide.md` and `docs/how-it-works.md` describe the shipped interrogate flow in four phases frame, fan out, verify, and output, with proof by run and lead rerun, instead of the removed panel and rubric flow.
