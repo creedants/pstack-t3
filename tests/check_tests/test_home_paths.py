@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.check_tests.support import check, setUpModule
+from tests.check_tests.support import ROOT, check, setUpModule
 
 
 class HomePathTest(unittest.TestCase):
@@ -47,3 +47,7 @@ class HomePathTest(unittest.TestCase):
         root = self._directory()
         (root / "README.md").write_text("# Title\nno machine path here\n")
         self.assertEqual(check.home_path_findings(root), [])
+
+    def test_every_allow_listed_path_exists_in_the_checkout_fails_when_an_entry_is_stale(self):
+        missing = sorted(rel for rel in check.HOME_PATH_EXEMPT if not (ROOT / rel).is_file())
+        self.assertEqual(missing, [])
