@@ -5,15 +5,15 @@ pstack-t3 has three layers. T3 Code supplies the orchestration tools. The `pstac
 ```mermaid
 flowchart TD
     you["You: $interrogate review this branch"] --> lead["Lead thread<br/>any provider: Claude, Codex, Grok, Cursor"]
-    lead -->|reads| skill["interrogate skill<br/>what to do: intent, panel, rubric, synthesis"]
+    lead -->|reads| skill["interrogate skill<br/>what to do: frame, fan out, verify, output"]
     skill -->|links| runtime["pstack-runtime skill<br/>how to do it in T3"]
     runtime --> caps["orchestrator_capabilities<br/>which providers and models exist now"]
     runtime --> roles["roles.py<br/>role to seats, budget, fallbacks"]
     caps --> roles
     roles --> fan{"one delegate_task per seat"}
-    fan --> a["Reviewer A<br/>Claude Opus"]
-    fan --> b["Reviewer B<br/>Grok"]
-    a & b -->|completion wakes the lead| synth["Lead verifies each claim,<br/>weighs cross-family agreement,<br/>writes one verdict"]
+    fan --> a["Adversary A<br/>Claude Opus"]
+    fan --> b["Adversary B<br/>Grok"]
+    a & b -->|lead collects child results| synth["Lead reruns each finding's command,<br/>keeps what the output proves,<br/>reports findings and drops"]
 ```
 
 ## The layers

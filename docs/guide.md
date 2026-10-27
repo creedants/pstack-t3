@@ -87,9 +87,9 @@ Before merging anything important:
 $interrogate review this branch.
 ```
 
-The lead states the change's intent, then sends the diff to one reviewer per seat in your `interrogate reviewers` role. They all get the same read-only brief and rubric, and run in parallel on different model families. The lead ends its turn while they work, and T3 wakes it as each one finishes. It then checks each claim itself and returns a verdict: what to act on, what to consider, what it dismissed and why, and where reviewers agreed.
+The lead states the change's intent and takes the scope you name, or the branch diff from its merge base. It then sends that scope to the adversaries on the seats of your `interrogate reviewers` role. They all get the same brief, which tells each one to break the change and prove every finding with a run against the real code, and they run in parallel. It then reruns each finding's command itself, keeps the findings the output proves, and reports the intent, each verified finding with its command and output, and each adversary's count of dropped findings and why.
 
-Agreement across different model families is the strongest signal. If every reviewer ran on the same model, the report says so, because that agreement counts for much less.
+A finding counts because a run proved it, not because several adversaries agreed. The report keeps every verified finding, not one adversary's list.
 
 ## 5. Go parallel
 
