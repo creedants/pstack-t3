@@ -1,0 +1,2 @@
+- kind upkeep
+- `vendor/pstack/` matches upstream at 7c7bde70 (pstack 0.15.33) where upstream replaced the statechart `.mjs` scripts with a TypeScript compiler and rewrote `statechart/SKILL.md`. `t3/overrides/statechart/SKILL.md` now carries upstream's text unchanged because the two earlier T3 corrections were on sentences upstream deleted, and the `poteto-help` statechart row carries upstream's new wording.
