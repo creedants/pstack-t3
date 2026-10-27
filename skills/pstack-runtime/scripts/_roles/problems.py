@@ -88,7 +88,7 @@ def exclude_option_problems(number, rule, catalog):
 
 
 def validate(config, catalog, exclude=(), backups=None):
-    """Each seat settles on the budget show uses, so validate refuses what show refuses."""
+    """Each seat settles on the budget its config's effective mode implies, so the light cap reaches validate too."""
     backups = backups or {}
     problems = excluded_problems(config["roles"], exclude)
     problems.extend(backup_problems(backups, catalog, exclude))
