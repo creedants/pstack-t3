@@ -128,7 +128,7 @@ class ModesTest(unittest.TestCase):
         self.assertLess(lead.index("**Gate.**"), lead.index("**Forge.**"))
         self.assertIn("(../../pstack-runtime/SKILL.md#gate-review)", blocks[lead.index("**Gate.**")])
         child = next(block for block in blocks if block.startswith("A child task that opens a PR"))
-        self.assertIn("that child runs the **Gate** paragraph above in place of `interrogate` and `/no-comments`.", child)
+        self.assertIn("that child runs the **Gate** paragraph above in place of `/no-comments`.", child)
         self.assertIn("Run `/no-comments` before review.", text)
 
     def test_gate_contract_is_literal(self):
