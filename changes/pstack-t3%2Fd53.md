@@ -1,2 +1,2 @@
 - kind fix
-- `docs/guide.md` and `docs/how-it-works.md` describe the shipped interrogate flow in four phases frame, fan out, verify, and output, with proof by run and lead rerun, instead of the removed panel and rubric flow.
+- `docs/guide.md` and `docs/how-it-works.md` describe interrogate's Frame, Fan out, Verify, and Output flow, where adversaries prove each finding with a run and the lead reruns each command, in place of the panel, rubric, and verdict-bucket text they carried.
