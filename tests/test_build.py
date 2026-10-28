@@ -59,9 +59,9 @@ CASES = (
         None,
     ),
     (
-        "vendor/pstack/skills/poteto-mode/scripts/orch/orch.ts",
-        "poteto-mode/scripts/orch/orch.ts",
-        None,
+        "vendor/pstack/skills/poteto-mode/scripts/bootstrap.ts",
+        "poteto-mode/scripts/bootstrap.ts",
+        0o644,
     ),
     ("t3/runtime.md", "pstack-runtime/SKILL.md", None),
 )
