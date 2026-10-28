@@ -63,13 +63,16 @@ class VisualReportsDocTest(unittest.TestCase):
         text = override_text("poteto-mode/playbooks/orchestrate.md")
         reply = next(line for line in text.splitlines() if line.startswith("**Reply:**"))
         self.assertTrue(reply.startswith(
-            "**Reply:** at checkpoints and close: the predicate and the count against it from `units.tsv` and `ledger.tsv`, "
-            "tracks and what each landed, the frontier (PR list plus SHAs), verdicts summary, what was abandoned and why, "
-            "gates awaiting the human (the only asks), the store path, and the trail path. "
-            "Numbers from the tables, not narrative. Include PR links."
+            "**Reply:** what landed against the goal, each PR's live state and verdict with its link, "
+            "what was dropped and why, and the decisions waiting on the user. "
+            "When a table carries those facts better than prose, publish it per "
+            "[Visual reports](../../pstack-runtime/SKILL.md#visual-reports). "
+            "The decisions and PR links stay in the reply text."
         ))
         self.assertIn("per [Visual reports](../../pstack-runtime/SKILL.md#visual-reports).", reply)
-        self.assertIn("The gates, PR links, store path, and trail path stay in the reply text.", reply)
+        self.assertIn("The decisions and PR links stay in the reply text.", reply)
+        for stale in ("units.tsv", "ledger.tsv", "frontier.json", "decisions.tsv", "status.md"):
+            self.assertNotIn(stale, reply)
 
 class NoCommentsReadOnlyDocTest(unittest.TestCase):
     def setUp(self):
