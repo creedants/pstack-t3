@@ -48,10 +48,10 @@ def head(ident, branch, reports):
         "count as the gate. The coordinator's independent review is the gate.",
         "2. Step 4 (file-pr). Do not open a PR. This repository lands every change through its landing queue, which "
         "opens the PR itself. Instead, write the PR title on the first line and the description below it, drafted per "
-        f"file-pr, to {reports / f'{ident}-pr.md'}. That file and reports/{ident}.md are the only store files you write. "
+        f"file-pr, to {reports / f'{ident}-pr.md'}. "
         "End the description with \"Coordinated by <the coordinator's provider/model>. Written by <your provider/model>. "
         f"Reviewed by {sol}.\" in place of any \"Created with\" line. Keep the one line that says how you proved the "
-        "change. Rebase your branch onto the latest origin/main before you write it, and keep history linear.",
+        "change. Keep history linear. The landing queue lands your branch on trunk.",
         "3. Steps 5 and 6 (babysit-pr and merge) are done by the coordinator through the landing queue after an "
         f"independent review. Skip them. Push nothing except your own branch {branch}, and force-push only that branch "
         "with --force-with-lease after a rebase. Never merge.",
@@ -61,6 +61,5 @@ def head(ident, branch, reports):
         "5. Asking the user. Do not use a question tool. If you reach a point the full-send skill says to ask, write the "
         "report with status BLOCKED and the question with your recommended option first, then send the done message as "
         "the REPORT section says.",
-        "6. Testing permission does not lift any rule in the CONTEXT or STANDING ORDERS sections, the scratch rules, or "
-        "the ban on writing the coordinator's store beyond the two report files above.",
+        "6. Testing permission does not lift any rule in the CONTEXT or STANDING ORDERS sections or the scratch rules.",
     ]
