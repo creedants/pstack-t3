@@ -20,7 +20,7 @@ The bot is a separate service. T3 runs this agent and cannot create a routine in
 Ask whether the bot should be a T3 thread. If yes, read [Webhook schedules](../pstack-runtime/webhooks.md) and offer the native route.
 
 - The user enters the signing key in the `request_secret` card. The one-use `secretRef` goes to `schedule_task`.
-- The local server still needs the same key on disk to sign each POST to `webhookUrl`. A `secretRef` is not exportable, so the key-file steps below apply.
+- The local server still needs the same key on disk to sign each POST to `webhookUrl`. A `secretRef` cannot be exported, so ask for the key again with `delivery: "file"` and follow the steps in `## Receive the sender key` below. One key that both `schedule_task` and the local server need takes two cards, because one call returns either a `secretRef` or a file path, never both.
 - If the user wants the external bot service, or the `schedule_task` result has no `webhookUrl`, follow the external route below unchanged.
 
 ## Get the webhook routine
@@ -42,13 +42,24 @@ For a Grok Bot or Cursor routine the URL looks like `https://api2.cursor.sh/auto
 
 ## Receive the sender key
 
-Do not accept the sender key in chat. T3's `request_secret` tool asks the user for a secret in a private card. A saved result includes a one-use `secretRef`. Only a T3 tool such as `schedule_task` can consume that ref. The key itself never comes back to you, so the user writes it to disk.
+Do not accept the sender key in chat. Ask for it with `request_secret` with `delivery: "file"`. Pass a `label` naming the bot routine and a `reason` naming the local server that reads the key file. The result is a private file path. You never see the value. T3 deletes the delivered file at the first sweep after it is 24 hours old, so copy it at once. One key that both `schedule_task` and the local server need takes two cards, one default and one with `delivery: "file"`. Read [Secrets](../pstack-runtime/secrets.md) before you copy.
+
+1. Create the UI's directory. Add the key file, for example `<ui-dir>/.webhook-key`, to the directory's `.gitignore`, creating that file when it is missing.
+2. Copy the delivered file into the key file in one command that never prints the value, for example `install -m 600 <delivered file> <ui-dir>/.webhook-key`.
+3. Check only that the key file is non-empty (`test -s`). Do not read the value into chat. Do not print the value. Do not log the value.
+4. Delete the delivered file with `rm -f <delivered file>` when the host allows it.
+
+If the user pastes the key in chat anyway, do not echo it, tell them to rotate it in the bot service, and repeat the steps above with the new key.
+
+On a host without file delivery, follow [the fallback](#host-without-file-delivery).
+
+### Host without file delivery
+
+T3 Code 0.1.3 added `delivery: "file"`. Ask the user to update T3 Code when they can. Read [Secrets](../pstack-runtime/secrets.md#host-without-file-delivery) for the shared rules.
 
 1. Create the UI's directory and an empty key file with mode 600, for example `<ui-dir>/.webhook-key`. Add it to the directory's `.gitignore`.
 2. Ask the user to write the key into that file from their own terminal or editor, for example `$EDITOR <ui-dir>/.webhook-key`, then reply "done". End the turn there.
 3. After "done", check only that the file is non-empty (`test -s`). Do not read the value into chat. Do not print the value. Do not log the value.
-
-If the user pastes the key in chat anyway, do not echo it, tell them to rotate it in the bot service, and repeat the steps above with the new key.
 
 ## Host the page on this computer
 

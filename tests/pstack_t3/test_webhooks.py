@@ -39,3 +39,31 @@ class MakeBotUiRouteTest(unittest.TestCase):
         for phrase in ("<ui-dir>/.webhook-key", "test -s"):
             self.assertIn(phrase, text)
         self.assertIn("## Get the webhook routine", text)
+
+    def test_make_bot_ui_takes_the_sender_key_through_file_delivery(self):
+        text = (ROOT / "skills/make-bot-ui/SKILL.md").read_text()
+        for phrase in (
+            'delivery: "file"',
+            "install -m 600",
+            ".gitignore",
+            "rm -f",
+            "24 hours old",
+            "takes two cards",
+        ):
+            self.assertIn(phrase, text)
+
+    def test_make_bot_ui_keeps_the_handwritten_key_file_as_the_fallback_only(self):
+        text = (ROOT / "skills/make-bot-ui/SKILL.md").read_text()
+        head, _, tail = text.partition("### Host without file delivery")
+        self.assertTrue(tail, "missing Host without file delivery fallback")
+        for phrase in ("$EDITOR", '"done"', "mode 600"):
+            self.assertIn(phrase, tail)
+            self.assertNotIn(phrase, head)
+
+    def test_make_bot_ui_keeps_the_secret_ref_path_for_schedule_task(self):
+        text = (ROOT / "skills/make-bot-ui/SKILL.md").read_text()
+        self.assertIn("The one-use `secretRef` goes to `schedule_task`.", text)
+        self.assertIn(
+            'A `secretRef` cannot be exported, so ask for the key again with `delivery: "file"`',
+            text,
+        )
