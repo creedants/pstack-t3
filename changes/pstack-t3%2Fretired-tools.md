@@ -1,6 +1,6 @@
 - kind fix
 - the runtime names only the tools T3 Code 0.1.3 ships. `t3_queue`, `t3_pending_request`, `t3_thread_transfer`, and `preview_act` take an `action`, `schedule_task` takes `scheduledTaskId` for updates, and `t3_thread_configure` reads the seat with no `modelSelection` and changes it with one
-- `scripts/_check/retired.py` reports each retired name under `t3/`, `skills/`, and `docs/` outside `docs/changelog/` and `docs/cli/`, and `tests/check_tests/test_retired_tools.py` covers a passing tree, a failing line, and the scan scope
+- `scripts/_check/vocabulary.py` holds the retired-name table and `scripts/_check/tree.py` reports each retired name under `t3/`, `skills/`, and `docs/` outside `docs/changelog/` and `docs/cli/`, and `tests/check_tests/test_retired_tools.py` covers a passing tree, a failing line, and the scan scope
 - the floor rises to T3 Code 0.1.3. A 0.1.2 host has only the split tools that 0.1.3 retired, so every instruction in the host notes fails there
 - `t3_thread_launch` takes `clientRequestId` for a replayed retry on 0.1.4 and later, and a thread link is pasted verbatim from the result `link`, falling back to `t3-thread://v1/<threadId>` only when no result carries one
 - a read-only child that needs a merged action tool may hit an approval prompt even to list, because 0.1.3 merged each read action into a tool that also writes

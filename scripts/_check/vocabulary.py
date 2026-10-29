@@ -48,6 +48,28 @@ REQUIRED_TOOLS = {
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
 # A T3 thread link is `t3-thread://v1/<threadId>` or `<t3-thread://v2/<environmentId>/<threadId>>`. It names no file.
 THREAD_LINK = re.compile(r"t3-thread://v[12]/[^)\s]")
+# T3 Code 0.1.3 replaced each name here with the merged tool the value names. Keyed by the retired
+# name, so the table is the one place a name is added and the reason is derived from it.
+RETIRED_TOOLS = {
+    "update_scheduled_task": "schedule_task with scheduledTaskId",
+    **{f"preview_{action}": "preview_act with action" for action in
+       ("click", "type", "hover", "select", "drag", "upload", "press", "scroll")},
+    **{f"t3_queue_{action}": "t3_queue with action" for action in
+       ("list", "read", "edit", "cancel", "reorder", "promote_to_steer")},
+    **{f"t3_pending_request_{action}": "t3_pending_request with action" for action in ("list", "read", "respond")},
+    **{f"t3_thread_{action}": "t3_thread_transfer with action" for action in ("fork", "merge_back", "transfers")},
+    "t3_thread_configuration": "t3_thread_configure with no modelSelection",
+}
+# A retired name is bounded by anything but a letter or digit, so `mcp__t3-code__preview_click` matches
+# and `t3_thread_transfer` does not.
+RETIRED_TOOL = re.compile(
+    r"(?<![A-Za-z0-9])(?:" + "|".join(sorted(RETIRED_TOOLS, key=len, reverse=True)) + r")(?![A-Za-z0-9_])"
+)
+# The checkout scan adds the sources that render into the judged tree and the hand-written docs beside it.
+RETIRED_SOURCE_TOPS = ("t3", "docs")
+# History keeps the names its release shipped. docs/cli is generated from t3/scripts, which the
+# checkout scan reads directly, and the build writes that page after its own check runs.
+RETIRED_SKIPPED = (("docs", "changelog"), ("docs", "cli"))
 # Bash ends a <<'JSON' body only on a line that is JSON and nothing else.
 CATALOG_HEREDOC_OPEN = "<<'JSON'"
 CATALOG_HEREDOC_CLOSER = "JSON"

@@ -84,7 +84,6 @@ from _check.readme import (
     readme_count_findings,
     rewritten_readme,
 )
-from _check.retired import retired_tool_findings
 from _check.shared_source import (
     SHARED,
     _binds_shared,
@@ -104,6 +103,7 @@ from _check.tree import (
     _witness_skills_are_files,
     catalog_heredoc_findings,
     light_table_findings,
+    retired_tool_findings,
 )
 from _check import tree as _tree_mod
 from _check import fragments as _fragments_mod
