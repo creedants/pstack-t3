@@ -139,6 +139,19 @@ class CatalogMergeTest(unittest.TestCase):
             self.assertIn("not runnable in the saved catalog", err)
             self.assertEqual(catalog.read_bytes(), before)
 
+    def test_merge_refuses_a_result_that_names_no_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            catalog = fresh_catalog(directory)
+            before = catalog.read_bytes()
+            result = search_result([("codex", []), ("grok", [])])
+            code, out, err = run_merge(
+                ["catalog", "merge", "--catalog", str(catalog), "--from", "-"],
+                json.dumps(result),
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("search result names no model to merge", err)
+            self.assertEqual(catalog.read_bytes(), before)
+
     def test_empty_model_providers_beside_a_match_merge_cleanly(self):
         with tempfile.TemporaryDirectory() as directory:
             catalog = fresh_catalog(directory)
