@@ -100,13 +100,13 @@ def _retired_files(base, tops, skipped):
 
 
 def retired_tool_findings(tree, repo=None):
-    """One finding per retired T3 tool name per line in the given skills tree, and in the checkout.
+    """One finding per retired T3 tool name occurrence in the given skills tree and checkout sources.
 
-    The tree scan covers every file it holds. When repo is given, the checkout's t3 and docs trees
-    are read too, minus docs/changelog and docs/cli. A tree finding names the path relative to
-    tree, a checkout finding the path relative to repo, which is how the other check_tree findings
-    read. Each file is read as UTF-8 with errors replaced. Each scan comes in sorted path order,
-    then line order, then column order.
+    The tree scan covers files outside __pycache__. When repo is given, the checkout's t3 and docs
+    trees are read too, minus docs/changelog and docs/cli. A tree finding names the path relative
+    to tree, a checkout finding the path relative to repo, as other check_tree findings do.
+    Each file is read as UTF-8 with errors replaced. Scans run in tree, t3, then docs order.
+    Within each top directory, findings follow sorted path order, then line and column order.
     """
     scans = [(Path(tree), (".",), ())]
     if repo is not None:

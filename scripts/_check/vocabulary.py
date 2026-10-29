@@ -60,8 +60,8 @@ RETIRED_TOOLS = {
     **{f"t3_thread_{action}": "t3_thread_transfer with action" for action in ("fork", "merge_back", "transfers")},
     "t3_thread_configuration": "t3_thread_configure with no modelSelection",
 }
-# A retired name is bounded by anything but a letter or digit, so `mcp__t3-code__preview_click` matches
-# and `t3_thread_transfer` does not.
+# A retired name has no letter or digit before it and no letter, digit, or underscore after it.
+# Thus `mcp__t3-code__preview_click` matches and `t3_thread_transfer` does not.
 RETIRED_TOOL = re.compile(
     r"(?<![A-Za-z0-9])(?:" + "|".join(sorted(RETIRED_TOOLS, key=len, reverse=True)) + r")(?![A-Za-z0-9_])"
 )
