@@ -27,27 +27,34 @@ def _entry_key(path):
     return (str(parent), current.name)
 
 
-def _final_entry(path):
-    """The entry a read of path follows to, or None when it cannot be resolved."""
-    try:
-        resolved = Path(path).resolve()
-    except (OSError, RuntimeError):
-        return None
-    try:
-        parent = resolved.parent.resolve()
-    except OSError:
-        parent = resolved.parent.absolute()
-    return (str(parent), resolved.name)
-
-
 def _will_read_new(candidate, target):
     """True when a read of candidate after os.replace(target) sees the new file."""
-    if _entry_key(candidate) == _entry_key(target):
-        return True
-    final = _final_entry(candidate)
-    if final is None:
-        return False
-    return final == _entry_key(target)
+    target_key = _entry_key(target)
+    seen = set()
+    current = Path(candidate)
+    while True:
+        try:
+            key = _entry_key(current)
+        except OSError:
+            return False
+        if key == target_key:
+            return True
+        if key in seen:
+            return False
+        seen.add(key)
+        try:
+            if not current.is_symlink():
+                return False
+        except OSError:
+            return False
+        try:
+            link = os.readlink(current)
+        except OSError:
+            return False
+        if os.path.isabs(link):
+            current = Path(link)
+        else:
+            current = current.parent / link
 
 
 def _prospective_merged(user_dict, project_dict, user_path, project_path):
@@ -233,12 +240,6 @@ def command_write(args):
     check_shape(config, target)
     if "escalate" in config:
         config["escalate"] = list(config["escalate"])
-    exclude = config.get("exclude", ())
-    backups = config.get("backups", {})
-    excluded = excluded_problems(roles, exclude)
-    excluded.extend(excluded_backup_problems(backups, exclude))
-    if excluded:
-        raise RolesError("refusing to write, even with --force:\n" + "\n".join(excluded))
     if _will_read_new(user_path, target):
         prospective_user = config
     else:
@@ -254,14 +255,27 @@ def command_write(args):
             raw_project = {}
         prospective_project = check_shape(raw_project, project_path)
     prospective = _prospective_merged(prospective_user, prospective_project, user_path, project_path)
+    excluded = excluded_problems(prospective["roles"], prospective["exclude"])
+    excluded.extend(excluded_backup_problems(prospective["backups"], prospective["exclude"]))
+    if excluded:
+        raise RolesError("refusing to write, even with --force:\n" + "\n".join(excluded))
     _parent, checking = catalog_for_check(args, catalog, args.catalog)
     problems = validate(prospective, checking, prospective["exclude"], prospective["backups"])
+    target_key = str(target)
     for name, seats in prospective["roles"].items():
+        if prospective["sources"].get(name) != target_key:
+            continue
         kept = [seat for seat in seats if exclude_reason(seat, prospective["exclude"], name) is None]
         problems.extend(opencode_allow_lines({name: kept}, allow_for(prospective, name), checking))
-    for name, seats in prospective["backups"].items():
+    backup_sources = {}
+    for origin_dict, origin_path in ((prospective_user, user_path), (prospective_project, project_path)):
+        for backup_name in origin_dict.get("backups", {}):
+            backup_sources[backup_name] = str(origin_path)
+    for backup_name, seats in prospective["backups"].items():
+        if backup_sources.get(backup_name) != target_key:
+            continue
         problems.extend(opencode_allow_lines(
-            {f"{name} backups": list(seats)}, allow_for(prospective, name), checking
+            {f"{backup_name} backups": list(seats)}, allow_for(prospective, backup_name), checking
         ))
     if problems and not args.force:
         raise RolesError("refusing to write without --force:\n" + "\n".join(problems))

@@ -264,6 +264,73 @@ class WriteValidateTest(unittest.TestCase):
             self.assertEqual(bad.returncode, 2, bad.stderr)
             self.assertIn("variant=none", bad.stderr)
 
+    def test_write_user_light_when_project_chains_through_user_symlink_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            original = repo.directory / "original.json"
+            repo.put(original, _roles_file("full", [_seat("max")]))
+            repo.user.parent.mkdir(parents=True, exist_ok=True)
+            repo.user.symlink_to(original)
+            repo.project.parent.mkdir(parents=True, exist_ok=True)
+            repo.project.symlink_to(repo.user)
+            catalog_path = _put_catalog(repo)
+            bad = _write(repo, catalog_path, "--mode", "light")
+            self.assertEqual(bad.returncode, 2, bad.stderr)
+            self.assertIn("variant=none", bad.stderr)
+            forced = _write(repo, catalog_path, "--mode", "light", "--force")
+            self.assertEqual(forced.returncode, 0, forced.stderr)
+            refused = _validate(repo, catalog_path)
+            self.assertEqual(refused.returncode, 1, refused.stdout)
+            self.assertIn("variant=none", refused.stdout)
+
+    def test_shadowed_excluded_seat_write_succeeds_when_project_overrides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            catalog_path = _put_catalog(repo)
+            repo.put(repo.user, {
+                "mode": "full", "budget": "default",
+                "roles": {"bug-fix": [_seat("max")]},
+                "exclude": [{"options": {"variant": "max"}}],
+            })
+            repo.put(repo.project, {
+                "mode": "full", "budget": "default",
+                "roles": {"bug-fix": [_seat("high")]},
+                "exclude": [{"options": {"variant": "max"}}],
+            })
+            good = _write(repo, catalog_path, "--set", f"bug-fix={PROVIDER}/{MODEL}?variant=max")
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertEqual(_validate(repo, catalog_path).stdout, "ok\n")
+
+    def test_free_user_seat_overridden_by_metered_project_seat_write_succeeds(self):
+        free_catalog = {"providers": [{
+            "providerInstanceId": "opencode",
+            "driverKind": "opencode",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [
+                {"id": "opencode/free-model", "options": [], "cost": 0},
+                {"id": "opencode/metered-model", "options": []},
+            ],
+        }]}
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repo(directory)
+            path = repo.directory / "catalog.json"
+            repo.put(path, free_catalog)
+            repo.put(repo.user, {
+                "mode": "full", "budget": "default",
+                "roles": {"bug-fix": [{"providerInstanceId": "opencode", "model": "opencode/free-model"}]},
+            })
+            repo.put(repo.project, {
+                "mode": "full", "budget": "default",
+                "roles": {"bug-fix": [{"providerInstanceId": "opencode", "model": "opencode/metered-model"}]},
+            })
+            good = repo.run("write", "--catalog", str(path), "--parent", PARENT,
+                            "--set", "bug-fix=opencode/opencode/free-model")
+            self.assertEqual(good.returncode, 0, good.stderr)
+            validated = repo.run("validate", "--catalog", str(path), "--parent", PARENT)
+            self.assertEqual(validated.returncode, 0, validated.stdout)
+            self.assertIn("ok", validated.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
