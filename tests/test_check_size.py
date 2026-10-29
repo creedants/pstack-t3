@@ -49,20 +49,14 @@ ROLES_MODULES = tuple(
     for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py"))
 )
 
+CHECK_MODULES = tuple(
+    f"scripts/_check/{p.name}"
+    for p in sorted((ROOT / "scripts/_check").glob("*.py"))
+)
+
 COPIED = (
     "scripts/check.py",
-    "scripts/_check/__init__.py",
-    "scripts/_check/changes.py",
-    "scripts/_check/fence.py",
-    "scripts/_check/fragments.py",
-    "scripts/_check/identity.py",
-    "scripts/_check/pyast.py",
-    "scripts/_check/readme.py",
-    "scripts/_check/shared_source.py",
-    "scripts/_check/siblings.py",
-    "scripts/_check/tree.py",
-    "scripts/_check/vocabulary.py",
-    "scripts/_check/wording.py",
+    *CHECK_MODULES,
     "scripts/size_limit.py",
     "t3/scripts/roles.py",
     *ROLES_MODULES,
