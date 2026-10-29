@@ -1,0 +1,5 @@
+- kind feature
+- `roles.py catalog merge` merges one `orchestrator_capabilities` search result into the saved catalog file so later `show` and `write` see the added models
+- `show` reports a `search` list on a role entry when a configured model is missing from a provider that omits models, naming each model to search and merge
+- setup searches for a named model the saved catalog lacks, merges the result, and reruns `show` before calling a seat dropped, and never proposes a seat no catalog result contains
+- a host whose `orchestrator_capabilities` takes no `search` parameter behaves as before, with no `search` list and the saved catalog as the only source
