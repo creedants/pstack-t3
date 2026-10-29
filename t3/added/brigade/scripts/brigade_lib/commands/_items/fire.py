@@ -16,7 +16,8 @@ def register_fire(sub):
     p.add_argument("--tickets", required=True, action=Once,
                    help="comma-separated ticket ids; the first is the lead ticket; the item takes the lead ticket's goal, "
                         "and its kind when it has one; given once")
-    p.add_argument("--station", required=True, help="the pstack playbook the worker runs")
+    p.add_argument("--station", required=True,
+                   help="the pstack playbook the worker runs, or full-send for tstack's full-send method, only when the owner asked for it")
     p.add_argument("--summary", required=True)
     for field in ("task", "thread", "branch"):
         p.add_argument(f"--{field}", default="")

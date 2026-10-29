@@ -3,7 +3,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from brigade_lib import seam
+from brigade_lib import full_send, seam
 from brigade_lib.commands._items.fire import add_paths_alone
 from brigade_lib.commands.tools import current_brief_mode
 from brigade_lib.items import ATTEMPT_AFTER, announce_archive, drop, item_escalation, record_escalation, retired_worker_threads, workers_full
@@ -117,7 +117,7 @@ def retry_spent(restaurant, ident, role, chain):
 
 
 def record_usage_limit(restaurant, args):
-    """Record a usage limit for the dish, ask roles.py backup for a seat, and print one next step.
+    """Record a usage limit for the dish, ask roles.py backup for a seat unless it is a full-send item, and print one next step.
 
     The cooldown row and the log event are the only writes, and a park also blocks a dish in progress.
     """
@@ -146,7 +146,8 @@ def record_usage_limit(restaurant, args):
         argv += ["--out", name]
     if mode is not None:
         argv += ["--brief-mode", mode]
-    payload = backup_payload(argv, args.catalog, text)
+    # A full-send item resolves no seat through roles.py and has no backup seat, so a usage limit parks it.
+    payload = {"decision": "park"} if dish["station"] == full_send.STATION else backup_payload(argv, args.catalog, text)
     decision = payload.get("decision")
     if decision == "not-usage-limit":
         return f"{args.id}: {seat} failed without a usage limit; respawn per Failure handling"
