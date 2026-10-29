@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from brigade_lib import seam
+from brigade_lib import full_send, seam
 from brigade_lib._reviews.threads import cooldown_seats, moment_of
 from brigade_lib.briefs import brief_attempt, brief_file
 # dish.py imports current_brief_mode from this module while it loads, so this binds the module object
@@ -205,6 +205,8 @@ def launch_text(restaurant, args):
         station = dish["station"]
         project_root = restaurant.meta["projectRoot"]
         live = cooldown_seats(restaurant, moment_of(seam.now()))
+        if station == full_send.STATION:
+            return full_send.writer_selection(ident, live)
         role = launch_role(station)
         mode = current_brief_mode(restaurant, dish)
     argv = [sys.executable, str(roles_script()), "show", "--cwd", project_root, "--catalog", args.catalog,
@@ -240,7 +242,9 @@ def register_launch(sub):
             "A brief with one Mode line of full or light is passed as --brief-mode. "
             "bug-fix, perf-issue, and hillclimb use that role name. "
             "feature and refactoring use the role \"feature, refactoring\". "
-            "investigation has no code-delegate role and the command exits 1.\n"
+            "investigation has no code-delegate role and the command exits 1. "
+            "full-send prints the writer seat from brigade_lib/full_send.py without running roles.py, "
+            "and exits 1 while that seat's provider is cooling.\n"
             "\n"
             "When the resolved seat's provider has a live cooldown, roles.py backup excludes every cooling provider while choosing a replacement. "
             "A replacement object goes to stdout, and one line naming the cooling seat and its end goes to stderr. "

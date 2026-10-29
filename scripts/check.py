@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Lint a generated skills tree for Cursor-only leftovers and broken structure, and the test modules for the git environment fence.
 
-check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` and a skill count stated in that checkout's `README.md` that disagree with the number of skills in the tree. The same case reports a T3 Code minimum version, stated on a line between `T3 Code` and `or later` in a plain sentence or a Markdown link with optional backticks, that disagrees with the version in the setup gate string. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding. home_path_findings reports each line outside `vendor/`, `.git`, `__pycache__`, and the allow list that holds a `/home/<name>/` path, and the bare CLI run adds it.
+check_tree judges the tree it is given, and when that tree contains `pstack-runtime/scripts/roles.py` it also reports library wording, machine values, and shared source for the checkout that contains this file. With `guide` true, which is the default, that same case reports a doctor count quoted in that checkout's `docs/guide.md` and a skill count stated in that checkout's `README.md` that disagree with the number of skills in the tree. The same case reports a T3 Code minimum version, stated on a line between `T3 Code` and `or later` in a plain sentence or a Markdown link with optional backticks, that disagrees with the version in the setup gate string. The build keeps the default and main passes `guide=not argv`, so the build and a bare `python3 scripts/check.py` report the guide while an explicit tree argument does not. A tree without that file gets none of those findings. badge_findings reports a README upstream badge that is missing or that disagrees with the version in upstream.json. The default CLI run and the build add that repository check. An explicit tree argument gets no badge finding. home_path_findings reports each line outside `vendor/`, `.git`, `__pycache__`, and the allow list that holds a `/home/<name>/` path, and the bare CLI run adds it. tstack_link_findings reports each tstack link under `t3/`, `skills/`, and `docs/` whose commit is not the one `tstack.json` pins, and the bare CLI run adds it.
 """
 
 from pathlib import Path
 
+import json
 import re
 import sys
 
@@ -138,6 +139,8 @@ VENDOR_SKILLS_PATH = Path(__file__).resolve().parents[1] / "vendor/pstack/skills
 REQUIRED_SCAN = _IDENTITY_REQUIRED_SCAN
 
 HOME_PATH = re.compile(r"/home/[A-Za-z0-9._-]+/")
+TSTACK_LINK = re.compile(r"(?:github\.com/t3dotgg/tstack/(?:blob|tree|raw)/|raw\.githubusercontent\.com/t3dotgg/tstack/)([^/\s]+)/")
+TSTACK_SCAN = ("t3", "skills", "docs")
 
 HOME_PATH_EXEMPT = frozenset({
     "tests/activity_tests/test_filter.py",
@@ -207,6 +210,34 @@ def home_path_findings(repo):
     return findings
 
 
+def tstack_pin(repo):
+    """The commit repo's tstack.json pins, or an empty string when the file is missing."""
+    path = Path(repo) / "tstack.json"
+    return json.loads(path.read_text(encoding="utf-8"))["commit"] if path.is_file() else ""
+
+
+def tstack_link_findings(repo):
+    """One finding per tstack link under t3, skills, and docs whose commit is not the one tstack.json pins.
+
+    A link is a github.com blob, tree, or raw URL or a raw.githubusercontent.com URL of t3dotgg/tstack, and its
+    commit is the path part after the repository. A branch name counts as a commit that disagrees.
+    """
+    root = Path(repo)
+    pin = tstack_pin(root)
+    findings = []
+    for top in TSTACK_SCAN:
+        for path in sorted((root / top).rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            text = path.read_bytes().decode("utf-8", errors="replace")
+            for number, line in enumerate(text.splitlines(), 1):
+                for ref in TSTACK_LINK.findall(line):
+                    if ref != pin:
+                        rel = path.relative_to(root).as_posix()
+                        findings.append(f"{rel}:{number}: tstack link names {ref}, but tstack.json pins {pin or 'no commit'}")
+    return findings
+
+
 def main(argv):
     layout = _layout()
     if argv:
@@ -215,7 +246,8 @@ def main(argv):
                 + fence_findings(layout.tests_dir)
                 + badge_findings(layout.readme_path, layout.upstream_path)
                 + _size_limit().findings(layout.repo)
-                + home_path_findings(layout.repo))
+                + home_path_findings(layout.repo)
+                + tstack_link_findings(layout.repo))
     print("\n".join(problems) or "ok")
     return 1 if problems else 0
 

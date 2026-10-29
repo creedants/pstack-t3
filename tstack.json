@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/t3dotgg/tstack",
+  "commit": "1085050f3baed1ac724caa4a8166145fb2ac88af",
+  "skills": [
+    "skills/full-send/SKILL.md",
+    "skills/sol-loop/SKILL.md",
+    "skills/file-pr/SKILL.md",
+    "skills/babysit-pr/SKILL.md"
+  ],
+  "license": "MIT",
+  "author": "t3dotgg"
+}

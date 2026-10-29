@@ -26,6 +26,7 @@ Read the core first. Read one reference file when its trigger holds. Do not read
 | [replies](reference/replies.md) | every wake, before assistant text or a reply decision |
 | [liveness](reference/liveness.md) | on the liveness schedule |
 | [housekeeping](reference/housekeeping.md) | first service, cleanup, or a reporting-level change |
+| [full-send](full-send.md) | the owner's own message here asks for full send, or a dish's station is `full-send` |
 
 ## Terms
 
@@ -164,18 +165,18 @@ Run on the liveness schedule, and at the start of any service while work is in p
 
 ## Agent activity
 
-When the user asks what the agents are doing, or asks for activity or status as a picture, follow [Agent activity](views.md#agent-activity) in views.md.
+When the user asks what the agents are doing, or for activity or status as a picture, follow [Agent activity](views.md#agent-activity).
 
 ## Executive chef's view
 
-`$B status` prints the reporting level, the landing mode as `lands by <mode>` or `no landing contract`, then the counts. `$B status` prints `mode <m>` when `restaurant.json` records one. Before you run `brigade.py walk` to show the owner view, read [Executive chef's view](views.md#executive-chefs-view) in views.md.
+`$B status` prints the reporting level, the landing mode as `lands by <mode>` or `no landing contract`, then the counts. It prints `mode <m>` when `restaurant.json` records one. Before you run `brigade.py walk` to show the owner view, read [Executive chef's view](views.md#executive-chefs-view).
 
 ## Close a restaurant
 
-To close a restaurant, follow [Close a restaurant](opening.md#close-a-restaurant) in opening.md.
+To close a restaurant, follow [Close a restaurant](opening.md#close-a-restaurant).
 
 ## Reporting to an executive admin
 
-While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you act on an admin request or send that thread anything. Also read it when `$B inbox take` prints an admin request. An executive admin following a link here reads [admin-reporting.md](admin-reporting.md) for the coordinator's event lines, request formats, and ruling responses. Work a `from-user` request asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`, which refuses a second ticket for that id.
+While `$B status` prints `reports to <thread>`, read [admin-reporting.md](admin-reporting.md) before you act on an admin request or send that thread anything. Also read it when `$B inbox take` prints an admin request. An executive admin following a link here reads [admin-reporting.md](admin-reporting.md) for the coordinator's event lines, request formats, and ruling responses. Work a `from-user` request asks for becomes `$B ticket add --summary "..." --kind <kind> --request A<n>`.
 
 Admin work is in the [brigade-admin skill](../brigade-admin/SKILL.md): [Admin service](../brigade-admin/SKILL.md#admin-service), [Admin messages](../brigade-admin/SKILL.md#admin-messages), [Rulings](../brigade-admin/SKILL.md#rulings), and [What the admin never does](../brigade-admin/SKILL.md#what-the-admin-never-does).

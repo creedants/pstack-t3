@@ -2,7 +2,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from brigade_lib import seam, standing
+from brigade_lib import full_send, seam, standing
 from brigade_lib._store import rules
 from brigade_lib.affected import layout as affected_layout, verify_text as affected_verify_text
 from brigade_lib.brief_setup import setup_lines
@@ -65,6 +65,10 @@ class ModeLines:
     lines: tuple
     mode: str
     escalation: str
+
+
+# A full-send brief resolves no mode, because its method and seats come from full_send.
+NO_MODE = ModeLines((), "", None)
 
 
 def brief_dish(restaurant, ident, paths, lease, acceptance):
@@ -131,7 +135,7 @@ def brief(restaurant, ident, goal, acceptance, contract, verify, paths, lease, b
             dish, used_paths, _, thread = brief_dish(restaurant, ident, paths, lease, acceptance)
             inputs = mode_inputs(restaurant, dish, used_paths, thread)
             meta = restaurant.meta
-        mode = seam.roles_mode(inputs)
+        mode = NO_MODE if inputs.station == full_send.STATION else seam.roles_mode(inputs)
         picked_layout = affected_layout(meta)
         setup = setup_lines(inputs.project_root)
         if not (verify or "").strip():
@@ -196,8 +200,10 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
     report = restaurant.dir / "reports" / f"{ident}.md"
     sent_back = [row for row in item_verdicts(restaurant.rows("pass.tsv"), ident) if VERDICTS.get(row["verdict"]) == "sent-back"]
     findings = restaurant.dir / "reports" / (sent_back[-1]["report"] if sent_back and sent_back[-1]["report"] else f"{ident}-review.md")
+    method = dish["station"] == full_send.STATION
     lines = [
-        f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE, "",
+        *(full_send.head(ident, dish["branch"], report.parent) if method else
+          [f"Use the poteto-mode skill and its `{dish['station']}` playbook.", *mode.lines, "Gate: brigade", SEAT_RULE]), "",
         f"GOAL: {goal}",
         f"PURPOSE: {menu_purpose(restaurant)}",
         "TICKETS: " + "; ".join(f"{t}: {tickets[t]['summary']}" for t in dish["tickets"].split(",") if t in tickets), "",
@@ -214,7 +220,8 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         *([f"- Run every measurement through `python3 {land} slot --exclusive -- <command>`, so no other work shares the machine while it runs."]
           if dish["station"] in MEASURING_STATIONS else []),
         *(["", "STANDING RULES:", *worker.rules] if worker.rules else []),
-        "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps.",
+        "", f"TIMEBOX: {dish.get('timebox') or 60} minutes. The timebox orders the work and "
+        + (full_send.TIMEBOX if method else "never waives a playbook step (How, Architect, investigation, or the implementation delegate). At the limit, write the report with what remains instead of skipping steps."),
         "", "REPORT:",
         WAIT_RULE,
         f"- Write it to {report}: status, branch, head SHA, what you ran and its output, before and after numbers with the method, deviations, follow-ups. "
@@ -224,7 +231,7 @@ def write_brief(restaurant, dish, mode, goal, acceptance, contract, verify, path
         "Every other follow-up goes to the store's notes ledger, unless its text is already on the rail. "
         "Name each file a follow-up touches by its repository path in backticks.",
         "- Hold a `## Threads` section with one list item per child of the form - <role> `<thread id>` <seat>. The role is one of code delegate, claims check, and architect runner, named literally. The seat is one bare provider/model token with nothing after it and no backticks around it. That means no reasoning level, no note, and no effort word after the seat. List only code delegate, claims check, and architect runner under ## Threads. Put every other child under ## Notes. List only T3 threads started with `delegate_task` or `t3_thread_launch` for those threads. For example, the line - code delegate `mcp:00000000-0000-4000-8000-000000000001` opencode-go/step-5-preview-free parses as one child with no unreadable line. Name a child run inside the worker's own harness in the report body instead, never in the section. A missing section adds no row and is not an error. The worker still writes the section when it used a child.",
-        "- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation.",
+        *([] if method else ["- Under the status line, repeat this brief's Mode: line, and its Waived by mode: line when it has one. A step that line names is not a deviation."]),
         *(["- If you find the design contested, do not run interrogate. Stop at a verifiable point, commit, and write Contested: <one-line reason> under the status line. The coordinator moves the work to full mode and gives your report to a fresh worker."]
           if mode.mode == "light" else []),
         f"- After that file is written, call t3_thread_send to thread {thread} with mode \"auto\" and the one-line message \"{ident} done: report at {report}\".",
