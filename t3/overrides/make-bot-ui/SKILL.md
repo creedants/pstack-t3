@@ -19,7 +19,8 @@ Ask whether the bot should be a T3 thread. If yes, read [Webhook schedules](../p
 
 - The user enters the signing key in the `request_secret` card. The one-use `secretRef` goes to `schedule_task`.
 - The local server still needs the same key on disk to sign each POST to `webhookUrl`. A `secretRef` cannot be exported, so ask for the key again with `delivery: "file"` and follow the steps in `## Receive the sender key` below. One key that both `schedule_task` and the local server need takes two cards, because one call returns either a `secretRef` or a file path, never both.
-- If the user wants the external bot service, or the `schedule_task` result has no `webhookUrl`, follow the external route below unchanged.
+- If the user wants the external bot service, follow the external route below unchanged.
+- If the `schedule_task` result has no `webhookUrl`, tell the user T3 Connect remote access is off and to enable it, which gives the native route a URL. Offer the external route only when they do not enable it. Read [Webhook schedules](../pstack-runtime/webhooks.md#create-the-schedule) for why the URL is missing.
 
 ## Get the webhook routine
 
