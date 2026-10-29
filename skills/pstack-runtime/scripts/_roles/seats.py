@@ -216,8 +216,29 @@ def models_of(provider):
     return (provider or {}).get("models") or []
 
 
+def _canonical_option(option):
+    """One option in the shape this module reads, from either catalog shape.
+
+    A live orchestrator_capabilities option carries "values" instead of "type" and
+    "options", and every value is a bare string or bool. Its type is boolean when
+    it has values and every one is a bool, and select otherwise. Its options list
+    holds one {"id": <value>} per value, in catalog order. An option with no
+    "values" is already readable and comes back unchanged.
+    """
+    if "values" not in option:
+        return option
+    values = list(option["values"] or [])
+    kind = "boolean" if values and all(isinstance(value, bool) for value in values) else "select"
+    return {"id": option["id"], "type": kind, "options": [{"id": value} for value in values]}
+
+
 def options_of(model):
-    return (model or {}).get("options") or []
+    """The model's options in the shape every reader in this module expects.
+
+    This is the one boundary between the catalog and those readers, so a live
+    option and a saved option arrive in the same shape.
+    """
+    return [_canonical_option(option) for option in (model or {}).get("options") or []]
 
 
 def runnable(provider):

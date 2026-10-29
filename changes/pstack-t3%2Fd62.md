@@ -1,0 +1,2 @@
+- kind fix
+- `t3/scripts/_roles/seats.py` folds an `orchestrator_capabilities` option that carries `values` and no `type` into the `type` plus `options` shape at `options_of`, its one catalog boundary, so a budget caps an OpenCode `variant` or a Codex `reasoningEffort` seat and a value the model does not offer is refused on both catalog shapes.
