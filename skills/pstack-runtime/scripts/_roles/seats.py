@@ -1,6 +1,7 @@
 """Seat parsing, matching, catalog helpers, levels, cursor, and OpenCode metering."""
 
 
+import copy
 import fnmatch
 import re
 
@@ -292,6 +293,73 @@ def check_option_values(seat, model):
     return problems
 
 
+def merge_search(saved, result):
+    """The saved catalog with the result's models merged in, and the label of each model added.
+
+    A result provider merges only when the saved catalog lists it and marks it able to run
+    children. A model id the saved catalog already has keeps its saved entry and options.
+    """
+    providers = result.get("providers") if isinstance(result, dict) else None
+    hits = [provider for provider in providers or [] if models_of(provider)]
+    if not hits:
+        raise RolesError("search result names no model to merge")
+    saved_by_id = {
+        provider.get("providerInstanceId"): provider for provider in (saved.get("providers") or [])
+    }
+    for provider in hits:
+        identity = provider.get("providerInstanceId")
+        saved_provider = saved_by_id.get(identity)
+        if saved_provider is None:
+            raise RolesError(f"search result provider {identity} is not in the saved catalog")
+        if not saved_provider.get("canRunChildTask"):
+            detail = "; ".join(saved_provider.get("constraints") or []) or "cannot run child tasks"
+            raise RolesError(
+                f"search result provider {identity} is not runnable in the saved catalog ({detail})"
+            )
+    merged = copy.deepcopy(saved)
+    targets = {
+        provider.get("providerInstanceId"): provider for provider in (merged.get("providers") or [])
+    }
+    added = []
+    for provider in hits:
+        identity = provider.get("providerInstanceId")
+        target = targets[identity]
+        seen = {model.get("id") for model in models_of(target)}
+        for model in models_of(provider):
+            if model.get("id") in seen:
+                continue
+            seen.add(model.get("id"))
+            target.setdefault("models", []).append(copy.deepcopy(model))
+            added.append(f"{identity}/{model.get('id')}")
+    return merged, added
+
+
+def search_hints(seats, catalog):
+    """The configured seats whose model the saved catalog lacks while their provider omits models."""
+    if not seats or not catalog:
+        return []
+    by_id = {
+        provider.get("providerInstanceId"): provider for provider in (catalog.get("providers") or [])
+    }
+    hints = []
+    for seat in seats or []:
+        if not isinstance(seat, dict):
+            continue
+        provider = by_id.get(seat.get("providerInstanceId"))
+        if provider is None or not provider.get("canRunChildTask"):
+            continue
+        known = {model.get("id") for model in models_of(provider)}
+        if seat.get("model") in known:
+            continue
+        omitted = provider.get("omittedModels")
+        if not isinstance(omitted, (int, float)) or isinstance(omitted, bool) or omitted <= 0:
+            continue
+        label = f"{seat['providerInstanceId']}/{seat['model']}"
+        if label not in hints:
+            hints.append(label)
+    return hints
+
+
 def apply_level(seat, model, target_level):
     option = reasoning_option(model) if model else None
     if target_level is None or option is None:
@@ -317,6 +385,7 @@ __all__ = [
     "bare_id",
     "normalized_bare",
     "family",
+    "merge_search",
     "model_matches",
     "provider_matches",
     "exclude_rule_matches",
@@ -334,6 +403,7 @@ __all__ = [
     "models_of",
     "options_of",
     "runnable",
+    "search_hints",
     "for_runtime_mode",
     "find_model",
     "rank",

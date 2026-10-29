@@ -4,7 +4,7 @@
 from _roles.base import BUDGETS, CATALOG_REQUIRED, DefaultSelection, EXCLUDE_RULE, HAIKU_BRIEF, INHERIT, PANEL_BACKUP_ROLE, PANEL_CATALOG_NOTE, ROLES, RUNTIME_MODE_GAP, RolesError, UNSET_NOTE, UNSET_ROLE_NOTE
 from _roles.config import DEFAULT_MODE, OpenCodeAllow, allow_for, inherit_parent, stamp_parent
 from _roles.mode import seat_budget
-from _roles.seats import allow_refuses, apply_budget, check_option_values, effort_option, exclude_reason, find_model, models_of, normalized_bare, opencode_allow_lines, options_of, providers_by_id, runnable, runs_on_cursor
+from _roles.seats import allow_refuses, apply_budget, check_option_values, effort_option, exclude_reason, find_model, models_of, normalized_bare, opencode_allow_lines, options_of, providers_by_id, runnable, runs_on_cursor, search_hints
 from _roles import seam
 
 
@@ -366,6 +366,9 @@ def resolve(config, catalog=None, names=None, parent=None, launches_seats=False)
             lines = opencode_allow_lines({name: list(configured)}, allow_for(config, name), catalog)
             if lines:
                 entry["notes"] = [*entry.get("notes", []), *lines]
+            hints = search_hints(configured, catalog)
+            if hints:
+                entry["search"] = hints
         finish_entry(entry, name, catalog, parent, budget, exclude, allow)
         result["roles"][name] = entry
     return result

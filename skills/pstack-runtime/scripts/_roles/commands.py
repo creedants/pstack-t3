@@ -13,7 +13,7 @@ from _roles.config import DEFAULT_MODE, ModeDecision, OpenCodeAllow, allow_for, 
 from _roles.mode import effective_mode, light_cap_gap
 from _roles.problems import excluded_backup_problems, excluded_problems, validate
 from _roles.resolve import resolve
-from _roles.seats import exclude_reason, for_runtime_mode, opencode_allow_lines, parse_seat
+from _roles.seats import exclude_reason, for_runtime_mode, merge_search, opencode_allow_lines, parse_seat
 from _roles import seam
 
 
@@ -287,6 +287,25 @@ def command_write(args):
     print(f"wrote {target}")
 
 
+def command_catalog_merge(args):
+    """Merge one search result into the saved catalog file so later show and write see it."""
+    if str(args.catalog) == "-":
+        raise RolesError(
+            "catalog merge: --catalog needs a file, because the merge writes the merged catalog back"
+        )
+    saved = load_catalog(args.catalog)
+    result = load_catalog(args.source)
+    merged, added = merge_search(saved, result)
+    if not added:
+        print("nothing to add")
+        return 0
+    for label in added:
+        print(f"added {label}")
+    write_atomic(Path(args.catalog), merged)
+    print(f"wrote {args.catalog}")
+    return 0
+
+
 def launch_refusal(detail):
     return (
         "role 'skill tests' has no seat for a child that launches seats: "
@@ -305,6 +324,7 @@ __all__ = [
     "back_up",
     "load_show_catalog",
     "catalog_for_check",
+    "command_catalog_merge",
     "command_show",
     "command_validate",
     "command_write",

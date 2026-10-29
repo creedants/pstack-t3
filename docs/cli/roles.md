@@ -16,7 +16,7 @@ Roles map a pstack role name to a list of seats. A seat is "inherit" or a target
 
 Two optional keys tune the file. "exclude" is a list of rules that refuse a seat by model-id glob, by declared option, by the provider instance id, by the role name, or by a combination of them. The merged list is the union of the user and project lists. User rules come first. "backups" maps a role to the seats roles.py backup tries, in order, after a usage limit.
 
-`<command>` is one of `show`, `validate`, `write`, `mode`, `check-brief`, `backup`.
+`<command>` is one of `show`, `validate`, `write`, `mode`, `check-brief`, `catalog`, `backup`.
 
 ## roles.py show
 
@@ -107,6 +107,25 @@ roles.py check-brief brief
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `brief` | yes |  |  | brief file to check |
+
+## roles.py catalog
+
+```text
+roles.py catalog <catalog_command>
+```
+
+`<catalog_command>` is one of `merge`.
+
+## roles.py catalog merge
+
+```text
+roles.py catalog merge --catalog CATALOG --from SOURCE
+```
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--catalog CATALOG` | yes |  |  | saved orchestrator_capabilities JSON file the merge writes back |
+| `--from SOURCE` | yes |  |  | a saved orchestrator_capabilities search result, or - for stdin |
 
 ## roles.py backup
 
