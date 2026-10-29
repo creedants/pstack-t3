@@ -15,35 +15,49 @@ RETIRED_TOOLS: dict[str, str] = {
 RETIRED_TOOL = re.compile(
     r"(?<![A-Za-z0-9])(?:" + "|".join(sorted(RETIRED_TOOLS, key=len, reverse=True)) + r")(?![A-Za-z0-9_])"
 )
-SCAN_TOPS = ("t3", "skills", "docs")
-HISTORY = ("docs", "changelog")
+# The tree handed to check_tree holds the skills. The checkout adds the sources that render into it
+# and the hand-written docs beside it.
+SOURCE_TOPS = ("t3", "docs")
+# History keeps the names its release shipped. docs/cli is generated from t3/scripts, which the
+# checkout scan reads directly, and the build writes that page after its own check runs.
+SKIPPED = (("docs", "changelog"), ("docs", "cli"))
 
 
-def retired_tool_findings(root) -> list[str]:
-    """One finding per retired T3 tool name per line under t3, skills, and docs, except docs/changelog.
-
-    Each file is read as UTF-8 with errors replaced. Findings come in sorted path
-    order, then line order, then column order, with the path relative to root in POSIX form.
-    """
-    base = Path(root)
+def _files(base, tops, skipped):
+    """Every file below one of tops under base, minus the skipped two-part prefixes and __pycache__."""
     paths = []
-    for top in SCAN_TOPS:
+    for top in tops:
         for path in sorted((base / top).rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
             parts = path.relative_to(base).parts
-            if len(parts) >= 2 and parts[0] == HISTORY[0] and parts[1] == HISTORY[1]:
+            if any(parts[:2] == prefix for prefix in skipped):
                 continue
             paths.append(path)
-    paths.sort(key=lambda path: path.relative_to(base).as_posix())
+    return paths
+
+
+def retired_tool_findings(tree, repo=None) -> list[str]:
+    """One finding per retired T3 tool name per line in the given skills tree, and in the checkout.
+
+    The tree scan covers every file it holds. When repo is given, the checkout's t3 and docs trees
+    are read too, minus docs/changelog and docs/cli. A tree finding names the path relative to
+    tree, a checkout finding the path relative to repo, which is how the other check_tree findings
+    read. Each file is read as UTF-8 with errors replaced. Each scan comes in sorted path order,
+    then line order, then column order.
+    """
+    scans = [(Path(tree), (".",), ())]
+    if repo is not None:
+        scans.append((Path(repo), SOURCE_TOPS, SKIPPED))
     findings = []
-    for path in paths:
-        rel = path.relative_to(base).as_posix()
-        text = path.read_bytes().decode("utf-8", errors="replace")
-        for number, line in enumerate(text.splitlines(), 1):
-            for match in RETIRED_TOOL.finditer(line):
-                name = match.group(0)
-                findings.append(
-                    f"{rel}:{number}: retired T3 tool {name}; use {RETIRED_TOOLS[name]}: {line.strip()[:120]}"
-                )
+    for base, tops, skipped in scans:
+        for path in _files(base, tops, skipped):
+            rel = path.relative_to(base).as_posix()
+            text = path.read_bytes().decode("utf-8", errors="replace")
+            for number, line in enumerate(text.splitlines(), 1):
+                for match in RETIRED_TOOL.finditer(line):
+                    name = match.group(0)
+                    findings.append(
+                        f"{rel}:{number}: retired T3 tool {name}; use {RETIRED_TOOLS[name]}: {line.strip()[:120]}"
+                    )
     return findings

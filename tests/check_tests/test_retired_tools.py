@@ -18,6 +18,10 @@ from .support import (
     check,
 )
 
+MERGED = "Call `t3_queue`, `t3_pending_request`, `t3_thread_transfer`, `preview_act`, `t3_thread_configure`."
+RETIRED = "Call `t3_queue_list` on the recipient."
+RETIRED_LINE = "retired T3 tool t3_queue_list; use t3_queue with action: " + RETIRED
+
 
 class RetiredToolsTest(unittest.TestCase):
     def _root(self, line):
@@ -27,34 +31,25 @@ class RetiredToolsTest(unittest.TestCase):
         demo = root / "t3/added/pstack-runtime/demo.md"
         demo.parent.mkdir(parents=True)
         demo.write_text(line + "\n")
-        (root / "skills").mkdir()
-        (root / "docs").mkdir()
         return root
 
-    def test_merged_names_pass_fails_when_a_merged_name_is_reported(self):
-        root = self._root("Call `t3_queue`, `t3_pending_request`, `t3_thread_transfer`, `preview_act`, `t3_thread_configure`.")
-        self.assertEqual(check.retired_tool_findings(root), [])
+    def test_merged_names_alone_are_quiet_fails_when_a_merged_name_matches_a_retired_one(self):
+        self.assertEqual(check.retired_tool_findings(self._root(MERGED)), [])
 
-    def test_a_retired_name_is_reported_with_its_line_and_replacement_fails_when_it_is_missed(self):
-        root = self._root("Call `t3_queue_list` on the recipient.")
-        self.assertEqual(check.retired_tool_findings(root), [
-            "t3/added/pstack-runtime/demo.md:1: retired T3 tool t3_queue_list; "
-            "use t3_queue with action: Call `t3_queue_list` on the recipient.",
+    def test_a_retired_name_is_named_with_its_line_and_replacement_fails_when_it_is_missed(self):
+        self.assertEqual(check.retired_tool_findings(self._root(RETIRED)), [
+            f"t3/added/pstack-runtime/demo.md:1: {RETIRED_LINE}",
         ])
 
-    def test_changelog_history_is_not_scanned_fails_when_a_changelog_line_is_reported(self):
-        """The defect: a history note naming a retired tool fails the build. History stays as written."""
+    def test_the_checkout_scan_reads_t3_only_fails_when_history_generated_output_or_stale_skills_is_read(self):
+        """The defect: a history note, the generated CLI page, or a stale generated skills tree fails the build."""
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
-        runtime = root / "t3/runtime.md"
-        runtime.parent.mkdir(parents=True)
-        runtime.write_text("Call `t3_queue_list` on the recipient.\n")
-        history = root / "docs/changelog/0.1.0.md"
-        history.parent.mkdir(parents=True)
-        history.write_text("Call `t3_queue_list` on the recipient.\n")
-        (root / "skills").mkdir()
-        self.assertEqual(check.retired_tool_findings(root), [
-            "t3/runtime.md:1: retired T3 tool t3_queue_list; "
-            "use t3_queue with action: Call `t3_queue_list` on the recipient.",
-        ])
+        tree = root / "rendered"
+        tree.mkdir()
+        for relative in ("t3/runtime.md", "docs/changelog/0.1.0.md", "docs/cli/roles.md", "skills/stale/SKILL.md"):
+            document = root / relative
+            document.parent.mkdir(parents=True, exist_ok=True)
+            document.write_text(RETIRED + "\n")
+        self.assertEqual(check.retired_tool_findings(tree, root), [f"t3/runtime.md:1: {RETIRED_LINE}"])

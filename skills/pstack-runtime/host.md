@@ -4,7 +4,7 @@ Read this file when a thread settles or snoozes, or before you install or locate
 
 ## Host version
 
-- T3 Code 0.1.3 is the floor. A host older than 0.1.3 is unsupported. Read `serverVersion` from `t3_environment_read`. When it is below 0.1.3, tell the user to update T3 Code and do not rely on a rule in this file. A 0.1.2 host has only the split tools that 0.1.3 retired: it has no `t3_queue`, `t3_pending_request`, `t3_thread_transfer`, `preview_act`, `t3_thread_configure` read, or `schedule_task` update form, so every instruction in this file fails there. When the read is absent or ambiguous, say the host version is unknown.
+- T3 Code 0.1.3 is the floor. A host older than 0.1.3 is unsupported. Read `serverVersion` from `t3_environment_read`. When it is below 0.1.3, tell the user to update T3 Code and do not rely on a rule in this file. A 0.1.2 host has only the split tools that 0.1.3 retired: it has no `t3_queue`, `t3_pending_request`, `t3_thread_transfer`, `preview_act`, `t3_thread_configure` read, or `schedule_task` update form, so the tool rules here fail there. When the read is absent or ambiguous, say the host version is unknown.
 
 ## Settle on turn end
 

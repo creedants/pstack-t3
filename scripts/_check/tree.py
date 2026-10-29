@@ -150,6 +150,7 @@ def check_tree(root, layout, guide=True):
                     continue
                 if path and not (file.parent / path).resolve().exists():
                     findings.append(f"{rel}: broken link {target}")
+    findings.extend(retired_tool_findings(root, layout.repo if witness else None))
     findings.extend(fragment_findings(root, layout))
     if (root / "poteto-mode/SKILL.md").is_file():
         findings.extend(_catalog().missing_playbooks(root))
@@ -159,7 +160,6 @@ def check_tree(root, layout, guide=True):
         repo = layout.repo
         findings.extend(library_wording_findings(repo / "tests"))
         findings.extend(change_findings(repo / "changes"))
-        findings.extend(retired_tool_findings(repo))
         findings.extend(machine_value_findings(repo / "ops", repo / "docs/operations.md", _machine_identity()))
         findings.extend(shared_source_findings(repo / "t3/scripts/roles.py", repo / "scripts/install.py"))
         if guide:
