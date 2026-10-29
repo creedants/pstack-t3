@@ -46,8 +46,8 @@ def head(ident, branch, reports):
         f"\"review\", target {json.dumps(SOL, separators=(',', ':'))}, and a read-only brief. Wait on each round per the "
         "REPORT section's child-task rules. Keep the sol-loop ledger and put it in your report. Your Sol rounds never "
         "count as the gate. The coordinator's independent review is the gate.",
-        "2. Step 4 (file-pr). Do not open a PR. This repository lands every change through its landing queue, which "
-        "opens the PR itself. Instead, write the PR title on the first line and the description below it, drafted per "
+        "2. Step 4 (file-pr). Do not open a PR. This repository lands every change through its landing queue. "
+        "Instead, write the PR title on the first line and the description below it, drafted per "
         f"file-pr, to {reports / f'{ident}-pr.md'}. "
         "End the description with \"Coordinated by <the coordinator's provider/model>. Written by <your provider/model>. "
         f"Reviewed by {sol}.\" in place of any \"Created with\" line. Keep the one line that says how you proved the "
