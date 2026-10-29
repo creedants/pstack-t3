@@ -19,7 +19,7 @@ class SeatLaunchDocChecks:
 
     def test_step_6_reads_configuration_before_the_verdict(self):
         self.assertIn(
-            "Right after the spawn, confirm its options with `t3_thread_configuration` on the returned `childThreadId` before the verdict counts",
+            "Right after the spawn, confirm its options with `t3_thread_configure` and no `modelSelection` on the returned `childThreadId` before the verdict counts",
             self.review,
         )
 

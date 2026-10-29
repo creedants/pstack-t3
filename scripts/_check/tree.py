@@ -17,6 +17,10 @@ from .vocabulary import (
     LINK,
     RENDERED_MARKER,
     REQUIRED_TOOLS,
+    RETIRED_SKIPPED,
+    RETIRED_SOURCE_TOPS,
+    RETIRED_TOOL,
+    RETIRED_TOOLS,
     THREAD_LINK,
     Layout,
 )
@@ -79,6 +83,46 @@ def catalog_heredoc_findings(rel, text):
 
 def _witness_skills_are_files(root):
     return (root / "pstack-runtime/SKILL.md").is_file() and (root / "setup-pstack/SKILL.md").is_file()
+
+
+def _retired_files(base, tops, skipped):
+    """Every file below one of tops under base, minus the skipped two-part prefixes and __pycache__."""
+    paths = []
+    for top in tops:
+        for path in sorted((base / top).rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            parts = path.relative_to(base).parts
+            if any(parts[:2] == prefix for prefix in skipped):
+                continue
+            paths.append(path)
+    return paths
+
+
+def retired_tool_findings(tree, repo=None):
+    """One finding per retired T3 tool name occurrence in the given skills tree and checkout sources.
+
+    The tree scan covers files outside __pycache__. When repo is given, the checkout's t3 and docs
+    trees are read too, minus docs/changelog and docs/cli. A tree finding names the path relative
+    to tree, a checkout finding the path relative to repo, as other check_tree findings do.
+    Each file is read as UTF-8 with errors replaced. Scans run in tree, t3, then docs order.
+    Within each top directory, findings follow sorted path order, then line and column order.
+    """
+    scans = [(Path(tree), (".",), ())]
+    if repo is not None:
+        scans.append((Path(repo), RETIRED_SOURCE_TOPS, RETIRED_SKIPPED))
+    findings = []
+    for base, tops, skipped in scans:
+        for path in _retired_files(base, tops, skipped):
+            rel = path.relative_to(base).as_posix()
+            text = path.read_bytes().decode("utf-8", errors="replace")
+            for number, line in enumerate(text.splitlines(), 1):
+                for match in RETIRED_TOOL.finditer(line):
+                    name = match.group(0)
+                    findings.append(
+                        f"{rel}:{number}: retired T3 tool {name}; use {RETIRED_TOOLS[name]}: {line.strip()[:120]}"
+                    )
+    return findings
 
 
 def check_tree(root, layout, guide=True):
@@ -149,6 +193,7 @@ def check_tree(root, layout, guide=True):
                     continue
                 if path and not (file.parent / path).resolve().exists():
                     findings.append(f"{rel}: broken link {target}")
+    findings.extend(retired_tool_findings(root, layout.repo if witness else None))
     findings.extend(fragment_findings(root, layout))
     if (root / "poteto-mode/SKILL.md").is_file():
         findings.extend(_catalog().missing_playbooks(root))

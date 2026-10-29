@@ -29,7 +29,7 @@ pstack is Lauren Tan's (poteto) set of skills, playbooks, and principles for car
 
 ### Staying current
 
-The maintainers keep a byte-identical copy of the pinned upstream commit and re-port each file the port changes when upstream moves. pstack-t3 tracks upstream's `pstack/` path only and lists excluded upstream paths in `upstream.json`. pstack-t3's runtime and setup text name the T3 Code releases they need. Setup needs T3 Code 0.1.2 or later. See [How it works](docs/how-it-works.md) for the layers.
+The maintainers keep a byte-identical copy of the pinned upstream commit and re-port each file the port changes when upstream moves. pstack-t3 tracks upstream's `pstack/` path only and lists excluded upstream paths in `upstream.json`. pstack-t3's runtime and setup text name the T3 Code releases they need. Setup needs T3 Code 0.1.3 or later. See [How it works](docs/how-it-works.md) for the layers.
 
 ## What it does
 

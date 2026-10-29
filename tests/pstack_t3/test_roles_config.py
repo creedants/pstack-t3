@@ -122,7 +122,7 @@ class RolesConfigTest(unittest.TestCase):
     def test_setup_stops_before_writing_when_watch_is_absent(self):
         text = (ROOT / "t3/setup.md").read_text()
         self.assertIn(
-            'Say "Setup cannot finish. This host does not expose watch_pull_request, and pstack-t3 requires T3 Code 0.1.2 or later."',
+            'Say "Setup cannot finish. This host does not expose watch_pull_request, and pstack-t3 requires T3 Code 0.1.3 or later."',
             text,
         )
         self.assertIn("stop setup before writing roles or a saved catalog", text)

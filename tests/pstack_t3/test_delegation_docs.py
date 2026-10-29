@@ -241,6 +241,6 @@ class SeatLaunchDocTest(unittest.TestCase):
         self.assertIn(
             "After a `t3_thread_launch` or `delegate_task` call whose seat has `options`, "
             "read the applied options from the launch result's `modelSelection.options` or from "
-            "`t3_thread_configuration` on the child's `childThreadId`, and never call again with the options removed.",
+            "`t3_thread_configure` with no `modelSelection` on the child's `childThreadId`, and never call again with the options removed.",
             step,
         )

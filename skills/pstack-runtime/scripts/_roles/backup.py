@@ -71,7 +71,7 @@ def backup_seat(role, failed, text, catalog, budget, out, authors, resume=False,
 
 
 def parse_applied_options(text):
-    """Options from t3_thread_configuration, or a target's options object."""
+    """Options from t3_thread_configure, or a target's options object."""
     try:
         data = json.loads(text)
     except json.JSONDecodeError as error:
@@ -94,7 +94,7 @@ def command_backup(args):
     given_parent(args)
     mode = given_runtime_mode(args)
     if args.provider == INHERIT:
-        raise RolesError("backup refuses provider 'inherit'. Read the seat with t3_thread_configuration")
+        raise RolesError("backup refuses provider 'inherit'. Read the seat with t3_thread_configure")
     if args.role not in ROLES:
         raise RolesError(f"unknown role {args.role!r}")
     authors = list(args.author or [])

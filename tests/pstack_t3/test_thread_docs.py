@@ -39,11 +39,12 @@ class ThreadLifecycleDocTest(unittest.TestCase):
     def test_history_states_the_thread_link_in_a_form_check_accepts(self):
         import check  # noqa: E402
         section = runtime_doc_section("host.md", "## History\n")
-        self.assertIn("whose target is `t3-thread://v1/<threadId>`", section)
+        self.assertIn("pasting the `link` its result carries, verbatim", section)
+        self.assertIn("`<t3-thread://v2/<environmentId>/<threadId>>`", section)
         self.assertIn("Do not URL-encode it, decode its `%` escapes, or add an environment ID.", section)
-        self.assertIn("carry no `link` field", section)
+        self.assertIn("Only when a result carries no `link`, build `t3-thread://v1/<threadId>`", section)
         launch = runtime_doc_section("threads.md", "## Top-level threads")
-        self.assertIn("Report it to the user as a thread link per [History](SKILL.md#history).", launch)
+        self.assertIn("Report it to the user as the thread's `link` per [History](SKILL.md#history).", launch)
         self.assertEqual(check.LINK.findall("[t](t3-thread://v1/abc)"), ["t3-thread://v1/abc"])
         targets = check.LINK.findall((ROOT / "t3/runtime.md").read_text())
         self.assertFalse(any(target.startswith("t3-thread:") for target in targets))
@@ -125,11 +126,11 @@ class ForkDocTest(unittest.TestCase):
     def test_merge_back_is_authorized_and_read_back(self):
         for sentence in (
             "A one-line report stays the default.",
-            "Call `t3_thread_merge_back` only when the user authorized it and the target needs the fork's reasoning, not only its result.",
+            "Call `t3_thread_transfer` with `action: \"merge_back\"` only when the user authorized it and the target needs the fork's reasoning, not only its result.",
             "A transfer moves context, not code, and it does not make a review independent.",
         ):
             self.assertIn(sentence, self.section)
-        self.assertIn("`t3_thread_transfers`", self.section)
+        self.assertIn("`t3_thread_transfer` with `action: \"status\"`", self.section)
 
     def test_no_observed_behavior_is_a_guarantee(self):
         for claim in (
@@ -164,7 +165,7 @@ class ConfigureOwnerDocTest(unittest.TestCase):
 
     def test_configure_always_passes_a_concrete_seat(self):
         for sentence in (
-            "`t3_thread_configure` requires a concrete `modelSelection`, so always pass one, even for an `inherit` seat.",
+            "`t3_thread_configure` changes a thread only when you pass `modelSelection`, so pass one to change a seat, even for an `inherit` seat.",
             "Build it from the resolved seat with `providerInstanceId` renamed to `instanceId`, `model` copied, and `options` copied unchanged.",
             "When the resolved seat is `inherit`, use this thread's own provider and model, `inheritedProviderInstanceId` and "
             "`inheritedModel` from `orchestrator_capabilities`, as the concrete seat when it passes [Excluded seats](SKILL.md#excluded-seats).",
@@ -211,9 +212,9 @@ class PromoteQueuedCorrectionDocTest(unittest.TestCase):
 
     def test_promote_names_the_tool_keys_and_reads_delivery(self):
         for sentence in (
-            "call `t3_queue_list` on the recipient and find the `queuedRunId` of that exact message.",
+            "call `t3_queue` with `action: \"list\"` on the recipient and find the `queuedRunId` of that exact message.",
             "Read the recipient's `activeRunId` with `t3_thread_read`.",
-            "Call `t3_queue_promote_to_steer` with that `queuedRunId`, the `activeRunId` as `targetRunId`, and the recipient's `threadId`.",
+            "Call `t3_queue` with `action: \"promote_to_steer\"` and that `queuedRunId`, the `activeRunId` as `targetRunId`, and the recipient's `threadId`.",
             "Its `sequence` result means T3 accepted the call, not that the run received the message.",
             "Until that read shows it, the delivery is unresolved.",
             "A `cancelled` queued run alone proves nothing.",

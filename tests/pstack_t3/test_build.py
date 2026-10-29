@@ -218,13 +218,13 @@ class BuildTest(unittest.TestCase):
             (skill / "SKILL.md").write_text("---\nname: setup-pstack\ndescription: d\n---\n\nNo watch here.\n")
             findings = check.check_tree(directory)
             self.assertIn("setup-pstack/SKILL.md: missing watch_pull_request", findings)
-            self.assertIn("setup-pstack/SKILL.md: missing T3 Code 0.1.2 or later", findings)
+            self.assertIn("setup-pstack/SKILL.md: missing T3 Code 0.1.3 or later", findings)
             (skill / "SKILL.md").write_text(
                 "---\nname: setup-pstack\ndescription: d\n---\n\n"
-                "Call `watch_pull_request`. T3 Code 0.1.2 or later.\n"
+                "Call `watch_pull_request`. T3 Code 0.1.3 or later.\n"
             )
             findings = check.check_tree(directory)
-        self.assertFalse(any("missing watch_pull_request" in finding or "missing T3 Code 0.1.2 or later" in finding for finding in findings))
+        self.assertFalse(any("missing watch_pull_request" in finding or "missing T3 Code 0.1.3 or later" in finding for finding in findings))
 
     def test_check_rejects_the_cursor_xhigh_slug(self):
         import check  # noqa: E402

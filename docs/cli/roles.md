@@ -124,7 +124,7 @@ roles.py backup [--cwd CWD] [--config CONFIG] [--project-config PROJECT_CONFIG] 
 | `--role ROLE` | yes |  |  |  |
 | `--provider PROVIDER` | yes |  |  |  |
 | `--model MODEL` | yes |  |  |  |
-| `--options OPTIONS` |  |  |  | JSON options array from t3_thread_configuration, or a target options object |
+| `--options OPTIONS` |  |  |  | JSON options array from t3_thread_configure, or a target options object |
 | `--author AUTHOR` (repeatable) |  |  |  | author model, or provider/model. Repeat for each model that wrote the diff. Required for a reviewer role |
 | `--out OUT` (repeatable) |  |  |  | provider already out. Repeat for each |
 | `--resume` |  |  |  | after a parked item's reset, print the seat to launch |
