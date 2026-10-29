@@ -198,3 +198,60 @@ def refusal(role, provider, model):
 
 def fixture_catalog():
     return json.loads(CATALOG.read_text())
+
+
+LIVE_VARIANT_MODEL = "quill-1-flash"
+
+
+LIVE_EFFORT_MODEL = "gpt-quill-1"
+
+
+LIVE_VARIANT_VALUES = ("low", "medium", "high", "xhigh", "max")
+
+
+LIVE_EFFORT_VALUES = ("low", "medium", "high", "xhigh", "max", "ultra")
+
+
+def live_option(option_id, values, default=None):
+    """One option as a live orchestrator_capabilities result carries it, with bare values and no type."""
+    option = {"id": option_id, "values": list(values)}
+    if default is not None:
+        option["default"] = default
+    return option
+
+
+def live_model(model_id, *options):
+    return {"id": model_id, "options": list(options)}
+
+
+def live_catalog():
+    """A live-shaped catalog with one variant model on opencode and one reasoningEffort model on codex.
+
+    The ids are invented. Every option carries values and no type, as a live
+    orchestrator_capabilities result does, and a boolean option's values are bare
+    booleans. Neither provider declares a cost, so both models read as metered.
+    """
+    return {"providers": [
+        {
+            "providerInstanceId": "opencode",
+            "driverKind": "opencode",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [live_model(
+                LIVE_VARIANT_MODEL,
+                live_option("variant", LIVE_VARIANT_VALUES, "medium"),
+                live_option("fastMode", (False, True)),
+            )],
+        },
+        {
+            "providerInstanceId": "codex",
+            "driverKind": "codex",
+            "canRunChildTask": True,
+            "constraints": [],
+            "models": [live_model(
+                LIVE_EFFORT_MODEL,
+                live_option("reasoningEffort", LIVE_EFFORT_VALUES, "low"),
+                live_option("serviceTier", ("default", "priority"), "default"),
+            )],
+        },
+    ]}
