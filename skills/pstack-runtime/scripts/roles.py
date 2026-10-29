@@ -184,6 +184,11 @@ def main(argv=None):
     mode.add_argument("--attempt", choices=ATTEMPTS)
     check_brief = sub.add_parser("check-brief")
     check_brief.add_argument("brief", help="brief file to check")
+    catalog = sub.add_parser("catalog")
+    catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
+    merge = catalog_commands.add_parser("merge")
+    merge.add_argument("--catalog", required=True, help="saved orchestrator_capabilities JSON file the merge writes back")
+    merge.add_argument("--from", dest="source", required=True, help="a saved orchestrator_capabilities search result, or - for stdin")
     backup = sub.add_parser("backup")
     _add_repo_arguments(backup)
     backup.add_argument("--catalog", help="saved orchestrator_capabilities JSON. Stdin is the error text, so - is refused")
@@ -219,6 +224,7 @@ def main(argv=None):
             "show": command_show,
             "validate": command_validate,
             "write": command_write,
+            "catalog": command_catalog_merge,
             "check-brief": command_check_brief,
             "mode": command_mode,
             "backup": command_backup,
