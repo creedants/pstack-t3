@@ -43,11 +43,11 @@ REQUIRED_TOOLS = {
     "poteto-mode/playbooks/orchestrate.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-full.md": ("watch_pull_request",),
     "poteto-mode/playbooks/autopilot-stack.md": ("watch_pull_request",),
-    SETUP_GATE: ("watch_pull_request", "T3 Code 0.1.2 or later"),
+    SETUP_GATE: ("watch_pull_request", "T3 Code 0.1.3 or later"),
 }
 LINK = re.compile(r"\]\(((?!https?:|mailto:|#)[^)\s]+)\)")
-# A T3 thread link is `t3-thread://v1/<threadId>`. It names no file.
-THREAD_LINK = re.compile(r"t3-thread://v1/[^)\s]")
+# A T3 thread link is `t3-thread://v1/<threadId>` or `<t3-thread://v2/<environmentId>/<threadId>>`. It names no file.
+THREAD_LINK = re.compile(r"t3-thread://v[12]/[^)\s]")
 # Bash ends a <<'JSON' body only on a line that is JSON and nothing else.
 CATALOG_HEREDOC_OPEN = "<<'JSON'"
 CATALOG_HEREDOC_CLOSER = "JSON"

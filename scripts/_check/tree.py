@@ -7,6 +7,7 @@ from .fence import fence_findings
 from .fragments import fragment_findings
 from .identity import _machine_identity, machine_value_findings
 from .readme import badge_findings, guide_count_findings, minimum_version_findings, readme_count_findings
+from .retired import retired_tool_findings
 from .shared_source import shared_source_findings
 from .siblings import _catalog, _size_limit
 from .vocabulary import (
@@ -158,6 +159,7 @@ def check_tree(root, layout, guide=True):
         repo = layout.repo
         findings.extend(library_wording_findings(repo / "tests"))
         findings.extend(change_findings(repo / "changes"))
+        findings.extend(retired_tool_findings(repo))
         findings.extend(machine_value_findings(repo / "ops", repo / "docs/operations.md", _machine_identity()))
         findings.extend(shared_source_findings(repo / "t3/scripts/roles.py", repo / "scripts/install.py"))
         if guide:
