@@ -9,12 +9,87 @@ from pathlib import Path
 
 
 from _roles.base import INHERIT, ROLES, RolesError
-from _roles.config import DEFAULT_MODE, allow_for, check_shape, given_parent, given_runtime_mode, load_catalog, load_json, merged_config, parent_for, project_config_path, snapshot_path, stamp_parent, stored_allow, user_config_path
+from _roles.config import DEFAULT_MODE, ModeDecision, OpenCodeAllow, allow_for, check_shape, given_parent, given_runtime_mode, load_catalog, load_json, merged_config, parent_for, project_config_path, snapshot_path, stamp_parent, stored_allow, user_config_path
 from _roles.mode import effective_mode, light_cap_gap
 from _roles.problems import excluded_backup_problems, excluded_problems, validate
 from _roles.resolve import resolve
 from _roles.seats import exclude_reason, for_runtime_mode, opencode_allow_lines, parse_seat
 from _roles import seam
+
+
+def _entry_key(path):
+    """The directory entry os.replace would replace, as (resolved parent, name)."""
+    current = Path(path)
+    try:
+        parent = current.parent.resolve()
+    except OSError:
+        parent = current.parent.absolute()
+    return (str(parent), current.name)
+
+
+def _will_read_new(candidate, target):
+    """True when a read of candidate after os.replace(target) sees the new file."""
+    target_key = _entry_key(target)
+    seen = set()
+    current = Path(candidate)
+    while True:
+        try:
+            key = _entry_key(current)
+        except OSError:
+            return False
+        if key == target_key:
+            return True
+        if key in seen:
+            return False
+        seen.add(key)
+        try:
+            if not current.is_symlink():
+                return False
+        except OSError:
+            return False
+        try:
+            link = os.readlink(current)
+        except OSError:
+            return False
+        if os.path.isabs(link):
+            current = Path(link)
+        else:
+            current = current.parent / link
+
+
+def _prospective_merged(user_dict, project_dict, user_path, project_path):
+    """The merged configuration merged_config returns after the target is replaced."""
+    roles, sources, allow_by_file = {}, {}, {}
+    for origin, cfg in ((user_path, user_dict), (project_path, project_dict)):
+        for name, seats in cfg.get("roles", {}).items():
+            roles[name] = seats
+            sources[name] = str(origin)
+        allow_by_file[str(origin)] = OpenCodeAllow.from_json(cfg.get("opencodeAllow"))
+    if "mode" in project_dict:
+        mode = ModeDecision(project_dict["mode"], ".pstack/t3-roles.json", str(project_path))
+    elif "mode" in user_dict:
+        mode = ModeDecision(user_dict["mode"], "roles.json", str(user_path))
+    else:
+        mode = DEFAULT_MODE
+    escalate = list(project_dict["escalate"]) if "escalate" in project_dict else None
+    budget = project_dict["budget"] if "budget" in project_dict else user_dict.get("budget", "default")
+    exclude = list(user_dict.get("exclude", ()))
+    for rule in project_dict.get("exclude", ()):
+        if rule not in exclude:
+            exclude.append(rule)
+    exclude = tuple(exclude)
+    backups = dict(user_dict.get("backups", {}))
+    backups.update(project_dict.get("backups", {}))
+    return {
+        "budget": budget,
+        "mode": mode,
+        "escalate": escalate,
+        "roles": roles,
+        "sources": sources,
+        "allowByFile": allow_by_file,
+        "exclude": exclude,
+        "backups": backups,
+    }
 
 
 def write_atomic(path, data):
@@ -107,7 +182,9 @@ def command_validate(args):
 def command_write(args):
     given_parent(args)
     catalog = load_catalog(args.catalog)
-    target = project_config_path(args.cwd) if args.project else (Path(args.config) if args.config else user_config_path())
+    user_path = Path(args.config) if args.config else user_config_path()
+    project_path = project_config_path(args.cwd)
+    target = project_path if args.project else user_path
     loaded = load_json(target)
     if loaded is None:
         loaded = {}
@@ -163,18 +240,43 @@ def command_write(args):
     check_shape(config, target)
     if "escalate" in config:
         config["escalate"] = list(config["escalate"])
-    exclude = config.get("exclude", ())
-    backups = config.get("backups", {})
-    excluded = excluded_problems(roles, exclude)
-    excluded.extend(excluded_backup_problems(backups, exclude))
+    if _will_read_new(user_path, target):
+        prospective_user = config
+    else:
+        raw_user = load_json(user_path)
+        if raw_user is None:
+            raw_user = {}
+        prospective_user = check_shape(raw_user, user_path)
+    if _will_read_new(project_path, target):
+        prospective_project = config
+    else:
+        raw_project = load_json(project_path)
+        if raw_project is None:
+            raw_project = {}
+        prospective_project = check_shape(raw_project, project_path)
+    prospective = _prospective_merged(prospective_user, prospective_project, user_path, project_path)
+    excluded = excluded_problems(prospective["roles"], prospective["exclude"])
+    excluded.extend(excluded_backup_problems(prospective["backups"], prospective["exclude"]))
     if excluded:
         raise RolesError("refusing to write, even with --force:\n" + "\n".join(excluded))
     _parent, checking = catalog_for_check(args, catalog, args.catalog)
-    problems = validate({"budget": config.get("budget", "default"), "roles": roles, "sources": {}}, checking, exclude, backups)
-    problems.extend(opencode_allow_lines(roles, allow, checking))
-    problems.extend(opencode_allow_lines(
-        {f"{name} backups": list(seats) for name, seats in backups.items()}, allow, checking
-    ))
+    problems = validate(prospective, checking, prospective["exclude"], prospective["backups"])
+    target_key = str(target)
+    for name, seats in prospective["roles"].items():
+        if prospective["sources"].get(name) != target_key:
+            continue
+        kept = [seat for seat in seats if exclude_reason(seat, prospective["exclude"], name) is None]
+        problems.extend(opencode_allow_lines({name: kept}, allow_for(prospective, name), checking))
+    backup_sources = {}
+    for origin_dict, origin_path in ((prospective_user, user_path), (prospective_project, project_path)):
+        for backup_name in origin_dict.get("backups", {}):
+            backup_sources[backup_name] = str(origin_path)
+    for backup_name, seats in prospective["backups"].items():
+        if backup_sources.get(backup_name) != target_key:
+            continue
+        problems.extend(opencode_allow_lines(
+            {f"{backup_name} backups": list(seats)}, allow, checking
+        ))
     if problems and not args.force:
         raise RolesError("refusing to write without --force:\n" + "\n".join(problems))
     if args.replace:
