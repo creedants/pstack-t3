@@ -275,7 +275,7 @@ def command_write(args):
         if backup_sources.get(backup_name) != target_key:
             continue
         problems.extend(opencode_allow_lines(
-            {f"{backup_name} backups": list(seats)}, allow_for(prospective, backup_name), checking
+            {f"{backup_name} backups": list(seats)}, allow, checking
         ))
     if problems and not args.force:
         raise RolesError("refusing to write without --force:\n" + "\n".join(problems))

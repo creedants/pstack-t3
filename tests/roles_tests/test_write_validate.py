@@ -19,6 +19,9 @@ from .support import Repo, setUpModule
 PROVIDER = "opencode-go"
 MODEL = "deepseek-v4.1-flash"
 PARENT = f"{PROVIDER}/{MODEL}"
+_BC = {"providers": [{"providerInstanceId": "opencode","driverKind": "opencode","canRunChildTask": True,"constraints": [],"models": [{"id": "opencode/free-model","options": [],"cost": 0},{"id": "opencode/metered-model","options": []}]}]}
+_BF = {"providerInstanceId": "opencode","model": "opencode/free-model"}
+_BM = {"providerInstanceId": "opencode","model": "opencode/metered-model"}
 
 
 def _select(option_id, values):
@@ -330,6 +333,57 @@ class WriteValidateTest(unittest.TestCase):
             validated = repo.run("validate", "--catalog", str(path), "--parent", PARENT)
             self.assertEqual(validated.returncode, 0, validated.stdout)
             self.assertIn("ok", validated.stdout)
+
+
+    def test_project_backup_allowed_by_project_succeeds(self):
+        with tempfile.TemporaryDirectory() as d:
+            r=Repo(d);c=r.directory/"catalog.json";r.put(c,_BC)
+            r.put(r.user,{"mode":"full","roles":{"bug-fix":[_BF]}})
+            r.put(r.project,{"mode":"full","backups":{"bug-fix":[_BM]},"opencodeAllow":["opencode/metered-model"]})
+            g=r.run("write","--catalog",str(c),"--parent",PARENT,"--project")
+            self.assertEqual(g.returncode,0,g.stderr)
+            v=r.run("validate","--catalog",str(c),"--parent",PARENT)
+            self.assertTrue(v.stdout.endswith("ok\n"))
+
+    def test_project_backup_allowed_only_by_user_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            r=Repo(d);c=r.directory/"catalog.json";r.put(c,_BC)
+            r.put(r.user,{"mode":"full","roles":{"bug-fix":[_BF]},"opencodeAllow":["opencode/metered-model"]})
+            r.put(r.project,{"mode":"full","backups":{"bug-fix":[_BM]}})
+            b=r.run("write","--catalog",str(c),"--parent",PARENT,"--project")
+            self.assertEqual(b.returncode,2,b.stderr)
+            v=r.run("validate","--catalog",str(c),"--parent",PARENT)
+            self.assertEqual(v.stdout,"ok\n")
+
+    def test_user_backup_allowed_by_user_succeeds(self):
+        with tempfile.TemporaryDirectory() as d:
+            r=Repo(d);c=r.directory/"catalog.json";r.put(c,_BC)
+            r.put(r.project,{"mode":"full","roles":{"bug-fix":[_BF]}})
+            r.put(r.user,{"mode":"full","backups":{"bug-fix":[_BM]},"opencodeAllow":["opencode/metered-model"]})
+            g=r.run("write","--catalog",str(c),"--parent",PARENT)
+            self.assertEqual(g.returncode,0,g.stderr)
+            v=r.run("validate","--catalog",str(c),"--parent",PARENT)
+            self.assertTrue(v.stdout.endswith("ok\n"))
+
+    def test_user_backup_allowed_only_by_project_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            r=Repo(d);c=r.directory/"catalog.json";r.put(c,_BC)
+            r.put(r.project,{"mode":"full","roles":{"bug-fix":[_BF]},"opencodeAllow":["opencode/metered-model"]})
+            r.put(r.user,{"mode":"full","backups":{"bug-fix":[_BM]}})
+            b=r.run("write","--catalog",str(c),"--parent",PARENT)
+            self.assertEqual(b.returncode,2,b.stderr)
+            v=r.run("validate","--catalog",str(c),"--parent",PARENT)
+            self.assertEqual(v.stdout,"ok\n")
+
+    def test_allowed_project_backup_without_main_role_succeeds(self):
+        with tempfile.TemporaryDirectory() as d:
+            r=Repo(d);c=r.directory/"catalog.json";r.put(c,_BC)
+            r.put(r.user,{"mode":"full","roles":{}})
+            r.put(r.project,{"mode":"full","backups":{"bug-fix":[_BM]},"opencodeAllow":["opencode/metered-model"]})
+            g=r.run("write","--catalog",str(c),"--parent",PARENT,"--project")
+            self.assertEqual(g.returncode,0,g.stderr)
+            v=r.run("validate","--catalog",str(c),"--parent",PARENT)
+            self.assertTrue(v.stdout.endswith("ok\n"))
 
 
 if __name__ == "__main__":
