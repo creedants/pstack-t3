@@ -67,3 +67,23 @@ class MakeBotUiRouteTest(unittest.TestCase):
             'A `secretRef` cannot be exported, so ask for the key again with `delivery: "file"`',
             text,
         )
+
+
+class MissingWebhookUrlRuleTest(unittest.TestCase):
+    def test_a_missing_webhook_url_asks_for_t3_connect_remote_access_in_both_files(self):
+        for relative in ("skills/make-bot-ui/SKILL.md", "skills/pstack-runtime/webhooks.md"):
+            rule = next(
+                (
+                    line
+                    for line in (ROOT / relative).read_text().splitlines()
+                    if "no `webhookUrl`" in line or "missing `webhookUrl`" in line
+                ),
+                "",
+            )
+            self.assertIn("T3 Connect remote access is off and to enable it", rule, relative)
+        external = next(
+            line
+            for line in (ROOT / "skills/make-bot-ui/SKILL.md").read_text().splitlines()
+            if line.startswith("- If the user wants the external bot service")
+        )
+        self.assertNotIn("webhookUrl", external)

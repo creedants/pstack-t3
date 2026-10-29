@@ -14,7 +14,7 @@ Read this file before you create a webhook schedule, ask for a signing secret, o
 - Then call `schedule_task` with a self-contained `prompt`, `{"type": "webhook"}` as `schedule`, and a `signature` built from the returned `secretRef`.
 - A run posts into this thread by default. Set `bindToCurrentThread: false` only when the user wants a fresh top-level thread for each request.
 - Give the user the `webhookUrl` from the result.
-- A missing `webhookUrl` means this environment has no T3 Connect managed tunnel. Tell the user to enable T3 Connect remote access.
+- A missing `webhookUrl` means this environment has no T3 Connect managed tunnel. Tell the user T3 Connect remote access is off and to enable it, which gives the task a URL.
 - Never invent an endpoint, share a local path as the task URL, or present another tunnel as the task's URL.
 
 ## Filters, replay keys, and delivery age
