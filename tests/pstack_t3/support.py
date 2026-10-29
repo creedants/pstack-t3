@@ -248,9 +248,10 @@ _WINDOW_OPTION = {
     "options": [{"id": "300k"}, {"id": "1m"}],
 }
 PREVIEW_TOOLS = (
-    "preview_hover",
-    "preview_drag",
-    "preview_select",
-    "preview_upload",
+    "preview_act",
     "preview_dialog",
+    "hover",
+    "drag",
+    "select",
+    "upload",
 )

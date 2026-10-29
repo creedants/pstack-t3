@@ -70,7 +70,7 @@ The POST returns HTTP 200 when the routine wakes.
 Before you tell the user that the UI is live, probe once with a harmless payload.
 Use an action that the prompt ignores.
 
-Check the page itself in T3's preview: `preview_open` the local URL, `preview_snapshot` to confirm every button renders, and `preview_click` the harmless action to confirm the local server answers. Close the preview with `t3_preview_close` when done.
+Check the page itself in T3's preview: `preview_open` the local URL, `preview_snapshot` to confirm every button renders, and `preview_act` with `action: "click"` on the harmless action to confirm the local server answers. Close the preview with `t3_preview_close` when done.
 
 If a POST can fail, append the same JSON to a local log. Drain that log from the routine. Do not poll as the primary path. Do not send media bytes on the webhook.
 

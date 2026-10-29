@@ -191,7 +191,7 @@ def main(argv=None):
     backup.add_argument("--role", required=True)
     backup.add_argument("--provider", required=True)
     backup.add_argument("--model", required=True)
-    backup.add_argument("--options", help="JSON options array from t3_thread_configuration, or a target options object")
+    backup.add_argument("--options", help="JSON options array from t3_thread_configure, or a target options object")
     backup.add_argument(
         "--author", action="append", default=None,
         help="author model, or provider/model. Repeat for each model that wrote the diff. Required for a reviewer role",

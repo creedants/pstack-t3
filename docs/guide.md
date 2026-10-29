@@ -8,7 +8,7 @@ To land one change end to end on a throwaway repository, follow [First coordinat
 Part of the pstack-t3 docs. Each part below names its file. Read the part it names for the full rule.
 ## 1. Install (two minutes)
 
-You need [T3 Code](https://github.com/pingdotgg/t3code/releases) `0.1.2` or later, which ships Orchestrator V2 and the pull request watching pstack-t3 relies on. The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`).
+You need [T3 Code](https://github.com/pingdotgg/t3code/releases) `0.1.3` or later, which ships Orchestrator V2, the merged action tools, and the pull request watching pstack-t3 relies on. The skills call its orchestrator tools, which stable releases through `v0.0.45` don't ship. pstack-t3 runs on the orchestrator V2 tools (`delegate_task`, `t3_thread_launch`, `schedule_task`, `watch_pull_request`).
 
 You also need git and Python 3.10 or later.
 
@@ -120,14 +120,14 @@ To stop it, interrupt the thread. The playbooks interrupt their own owner thread
 
 Four rules keep a long run from stalling or piling up.
 
-- **Owner reports.** An Autopilot or Orchestrate owner sends its report lines to the lead with `t3_thread_send` and `mode: "auto"`. `auto` starts an idle lead, steers a running turn, or queues behind a turn that cannot take steering yet. The lead checks each head a line names, and arrival order never makes a head current. A queued correction that sits behind a long turn can be moved into the owner's active run with `t3_queue_promote_to_steer`. It counts as delivered only when the owner's activity shows it.
+- **Owner reports.** An Autopilot or Orchestrate owner sends its report lines to the lead with `t3_thread_send` and `mode: "auto"`. `auto` starts an idle lead, steers a running turn, or queues behind a turn that cannot take steering yet. The lead checks each head a line names, and arrival order never makes a head current. A queued correction that sits behind a long turn can be moved into the owner's active run with `t3_queue` and `action: "promote_to_steer"`. It counts as delivered only when the owner's activity shows it.
 - **Command capacity.** Local builds, tests, and verifier reruns run through `land.py slot --`, and timing measurements through `land.py slot --exclusive --`. The slot limits heavy commands on the machine. It never caps how many owners or children run.
 - **Decision-only pauses.** A finite program, such as Autopilot or Orchestrate, pauses an audit schedule when its next run could only repeat a question you have not answered. It raises the question once and resumes the same schedule when your answer permits work. A schedule that renews a lease, drains the queue, takes intake, or notices a merge never pauses, and a coordinator's schedules are never paused this way.
 - **Run now.** When an enabled interval schedule's work is ready, the lead can run it at once with `run_scheduled_task_now` instead of waiting for the next tick. The result means the run was dispatched, not that it finished.
 
 The lead can also fork a thread, move an owner to another model, and publish a page.
 
-- **Forks.** `t3_thread_fork` starts a separate read-only planning or investigation thread from another thread's context, and only when you asked for a separate thread. A fork never replaces a child agent or a review round. `t3_thread_merge_back` carries a fork's reasoning back to a related thread only when you authorized it.
+- **Forks.** `t3_thread_transfer` with `action: "fork"` starts a separate read-only planning or investigation thread from another thread's context, and only when you asked for a separate thread. A fork never replaces a child agent or a review round. `t3_thread_transfer` with `action: "merge_back"` carries a fork's reasoning back to a related thread only when you authorized it.
 - **Owner model changes.** `t3_thread_configure` moves an idle launched owner to another model only when a playbook step already calls for it, such as Orchestrate's retry after a tool error. The owner keeps its history, gates, scope, and retry count, so it is never a fresh worker or a fresh reviewer. It is never used on a verifier or reviewer thread.
 - **Visual reports.** When a reply is already due and a table, a timeline, or a chart carries it better than prose, the lead publishes that part as a page with `html_preview` and `html_render`. Every decision that waits on you, every PR link, and the store and report paths stay in the reply text. A coordinator at `digest` renders no page except the activity page you ask for.
 
