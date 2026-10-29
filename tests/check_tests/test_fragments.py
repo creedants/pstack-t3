@@ -57,6 +57,7 @@ def fragment_tree_findings(paths, vendor=()):
 class LinkCheckTest(unittest.TestCase):
     def test_a_thread_link_with_an_id_is_not_a_file_link(self):
         self.assertEqual(link_findings("t3-thread://v1/abc-123", "other.md"), [])
+        self.assertEqual(link_findings("t3-thread://v2/abc-123/def-456", "other.md"), [])
 
     def test_a_query_bearing_file_link_to_an_existing_file_is_not_broken(self):
         self.assertEqual(link_findings("other.md?raw=1"), [])
@@ -64,10 +65,9 @@ class LinkCheckTest(unittest.TestCase):
 
     def test_other_targets_still_must_resolve(self):
         self.assertEqual(
-            link_findings("missing.md", "t3-thread://v2/abc", "t3-thread://v1/"),
+            link_findings("missing.md", "t3-thread://v1/"),
             [
                 "demo/SKILL.md: broken link missing.md",
-                "demo/SKILL.md: broken link t3-thread://v2/abc",
                 "demo/SKILL.md: broken link t3-thread://v1/",
             ],
         )
