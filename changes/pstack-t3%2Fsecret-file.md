@@ -1,0 +1,6 @@
+- kind feature
+- `t3/added/pstack-runtime/secrets.md` teaches a shell command to take a token, deploy key, or publish credential through `request_secret` with `delivery: "file"`, and the on-demand table names it
+- the rule reads the value only inside the command that uses it, bans `echo`, a bare `cat`, `set -x`, and export into a long-lived environment, and deletes the file after the last read when the host allows
+- a T3 tool such as `schedule_task` keeps the default `secretRef` delivery, T3 Code 0.1.3 added the file delivery, and an older host asks the user to update T3 Code, then for a file the user places themselves when they cannot, never in chat
+- a child asks on its own thread and the user answers the card there, because a child cannot answer its own card and `t3_pending_request` reads questions, not secret cards
+- `tests/pstack_t3/test_secrets.py` pins the on-demand table row and every section phrase

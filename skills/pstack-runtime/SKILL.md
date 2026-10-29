@@ -18,6 +18,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | [host.md](host.md) | when a thread settles or snoozes, before you install or locate skills, before interpreting `hasPendingChildRuns`, `hasPendingQuestion`, or a `mode: "wait"` return, when a child's question wakes this thread, or for history notes |
 | [threads.md](threads.md) | before `t3_thread_configure`, `t3_queue`, `t3_thread_transfer`, `run_scheduled_task_now`, or pausing a finite program's schedule |
 | [webhooks.md](webhooks.md) | before creating a webhook schedule, asking for a signing secret, or choosing between a webhook and a polling schedule |
+| [secrets.md](secrets.md) | before you ask the user for a secret, or before a shell command needs a token, deploy key, or password |
 | [light.md](light.md) | before every spawn in light mode |
 | [gate-review.md](gate-review.md) | before reusing a gate verdict |
 | [failures.md](failures.md) | on usage limit or after restart |
