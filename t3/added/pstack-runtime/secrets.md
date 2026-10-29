@@ -25,7 +25,8 @@ No `set -x`.
 No export to a long-lived environment.
 Delete the file after the last command that reads it, as in `rm -f <file>`, when the host allows it.
 T3 removes the file at the first sweep after it is 24 hours old.
-The sweep runs at startup and hourly.
+T3 sweeps at startup.
+The background loop delays one hour before each sweep and waits one hour between repetitions.
 
 ## Never
 
