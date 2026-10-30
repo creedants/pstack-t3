@@ -1,2 +1,0 @@
-- kind fix
-- `open_t3`'s docstring in `t3/added/brigade/scripts/activity_lib/t3state.py` says that with a log and no index, the refusal names a conflicting write lock held by another process when the probe finds one, instead of claiming that every connection in exclusive locking mode keeps its index in heap memory.

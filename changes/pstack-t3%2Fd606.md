@@ -1,2 +1,0 @@
-- kind fix
-- `edits verify` skips the change-note fragment for the dish's current branch when the reviewed commit holds no file at that path and the new head does, and prints `skipped <path>: this round's change note` for it

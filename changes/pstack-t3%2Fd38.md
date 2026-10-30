@@ -1,2 +1,0 @@
-- kind fix
-- The restaurant opener's question about who lands work no longer says to pick `merge` for any repository with a remote. It now says `merge` (recommended) or `human` fits a GitHub repository, `push` fits a remote that is not GitHub or has no pull requests, and `local` fits a repository with no remote.

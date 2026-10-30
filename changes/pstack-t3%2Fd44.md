@@ -1,2 +1,0 @@
-- kind fix
-- a missing OpenCode model now falls back to a model that is free or that the allow list names, so a seat no longer lands on a metered model the file did not approve

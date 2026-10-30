@@ -1,8 +1,0 @@
-- kind feature
-- a restaurant setting `prCredit` is a JSON boolean that "open --pr-credit on|off" records and "set --pr-credit on|off" changes, and any other value is refused with one line and changes nothing
-- a missing `prCredit` reads as off, and a present value that is not a boolean is refused like every other malformed setting
-- a new read-only command `$B credit D<n> --coordinator <provider/model>` prints one line naming the coordinator, the distinct authors, and the distinct verifiers of every pass.tsv row of the item, in first-recorded order, and leaves out every part that names no recorded value
-- `credit` prints `credit: off for this restaurant; set --pr-credit on to turn it on` when `prCredit` is off or unrecorded, and exits 1 with the usual error for an unknown item
-- `onboard` lists `pr_credit` as missing until it is recorded and names `open --pr-credit on or set --pr-credit on` as its fix
-- review, script, store-config, and onboard docs name the new command and setting, and the review submit step puts the credit line last in the PR body
-- commands/setup.py lost its unused imports and gained one helper for eight settings blocks, so it stays under the file size limit after the new flag

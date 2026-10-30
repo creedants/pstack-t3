@@ -1,5 +1,0 @@
-- kind fix
-- `make-bot-ui` sends a user who wants the external bot service to the external route, and no longer treats a `schedule_task` result with no `webhookUrl` as that preference
-- a missing `webhookUrl` now tells the user T3 Connect remote access is off and to enable it, which gives the native route a URL, and offers the external route only when they do not enable it, linking `t3/added/pstack-runtime/webhooks.md` for why the URL is missing
-- `t3/added/pstack-runtime/webhooks.md` keeps the missing tunnel sentence and now tells the user T3 Connect remote access is off and to enable it, which gives the task a URL
-- `tests/pstack_t3/test_webhooks.py` adds a test that reads the built skills and requires both missing URL rules to carry the remote access sentence while the external bot bullet carries no `webhookUrl` condition

@@ -1,2 +1,0 @@
-- kind fix
-- `t3/added/brigade/scripts/activity_lib/t3state.py` reads the schema inside the read transaction it opens, so `open_t3` holds the database snapshot when it returns and a locked or unreadable T3 database raises `SourceError` instead of a raw `sqlite3` error from the first query after it.

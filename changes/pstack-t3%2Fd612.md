@@ -1,2 +1,0 @@
-- kind fix
-- `reference/onboard.md` drops the forward reference to a size ticket and names `land.py init --max-file-tokens`, and `reference/service.md` names the requested `--paths` in the `fire` shared-document refusal

@@ -1,3 +1,0 @@
-- kind fix
-- `brigade.py pass hits` and the closeout `## Reviewer hit rate` section name the span `pass.tsv` covers when its earliest row is newer than the window start and at least a minute old. A store whose earliest row is 39 hours ago prints `over the 39 hours this store has records for by verifier seat` and `## Reviewer hit rate (over the 39 hours this store has records for)`. A store whose rows are older than the window keeps `last 7 days` byte for byte, and an empty window keeps `no reviewed rounds in the last 7 days`.
-- `hits.py` reuses `earliest_record` and `window_phrases` from `rounds.py`, so there is no second span calculator

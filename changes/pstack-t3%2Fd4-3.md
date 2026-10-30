@@ -1,7 +1,0 @@
-- kind fix
-- The record is a JSON array of absolute path strings, so a colon in a protected directory name keeps its protection, and a malformed record stops the process
-- The guard keeps its trusted roots in memory and merges, never drops, them. `PSTACK_TEST_PROTECTED_ROOTS` is guarded, so removing it, setting it to an empty value, clearing the environment, or ending a `protecting()` block cannot lower the roots this process protects. An assignment that drops a recorded root is refused, and one that adds a root is accepted
-- A run root's marker records the trusted roots of the process that marked it, so a Python child started with an explicit environment that drops, empties, or replaces the record still protects every original external root. Only the process that creates or hands out a root writes the marker
-- `worker_env` merges the in-memory roots with the roots its input environment names, so an empty or rewritten input keeps every original external root
-- `os.chown` with `follow_symlinks` False and `os.lchown` refuse a change to a link name inside a protected real root outside the checkout whose target sits outside protection. The `os.chown` audit event carries no `follow_symlinks` field. `os.lchown` keeps its native `(path, uid, gid)` signature
-- `tests/isolation_tests/__init__.py` derives `MODULES` from its directory, so a named package run and discovery select the same modules

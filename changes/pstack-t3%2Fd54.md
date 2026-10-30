@@ -1,2 +1,0 @@
-- kind fix
-- `docs/how-it-works.md` states the runtime's waiting rule in its lead paragraph. A lead with a schedule of its own ends its turn and each completion wakes it, and any other lead keeps a bounded wait with `t3_thread_wait`. The paragraph no longer claims that every lead ends its turn and T3 wakes it.

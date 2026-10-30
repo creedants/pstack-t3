@@ -1,2 +1,0 @@
-- kind fix
-- `t3/added/brigade/verdict-protocol.md` tells a reviewer to start every fenced block anywhere in a pass-with-edits report at the first column, not only inside `## Edits`, because `pass record --edits` refuses a report with one inside a list item or a block quote.

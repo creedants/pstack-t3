@@ -1,5 +1,0 @@
-- kind fix
-- `make-bot-ui` asks for the bot webhook sender key with `request_secret` and `delivery: "file"`, then copies the delivered file into `<ui-dir>/.webhook-key` with `install -m 600` in one command that never prints the value, keeps the `.gitignore` line, and deletes the delivered file when the host allows it
-- one `request_secret` call returns either a one-use `secretRef` or a private file path and never both, so a key that both `schedule_task` and the local server need takes two cards, and the skill says so in the route choice and in the key section
-- the hand-written key file and its `$EDITOR` step stay only under `### Host without file delivery`, for a host without file delivery, which includes any host before T3 Code 0.1.3, and the section links `t3/added/pstack-runtime/secrets.md` instead of restating its rules
-- `tests/pstack_t3/test_webhooks.py` pins the file-delivery steps, the fallback placement, and the surviving `secretRef` path for `schedule_task`
