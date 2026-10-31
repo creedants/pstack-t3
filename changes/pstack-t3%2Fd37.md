@@ -1,2 +1,0 @@
-- kind fix
-- `commands.md` says `edits verify` runs the landing contract's setup command before the build and check commands and prints a `FAIL setup` line when it fails, and `recovery.md` names `edits apply` as the first step after recording pass-with-edits, with a fresh fix worker only when it refuses or fails

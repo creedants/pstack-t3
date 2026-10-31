@@ -1,2 +1,0 @@
-- kind upkeep
-- `t3/overrides/reflect/SKILL.md` names the source file for each pstack-t3 skill edit, `t3/runtime.md` and `t3/setup.md` for the dedicated skills, `t3/scripts/` and `t3/agents/` for runtime scripts and personas, and `t3/overrides/<skill>/` or `t3/added/<skill>/` for other skill files.

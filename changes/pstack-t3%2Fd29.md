@@ -1,2 +1,0 @@
-- kind fix
-- five brigade docs name the landing contract's setup command and its `FAIL setup` line for `edits verify`, and the brigade-admin lifecycle doc names step 7 for the launch step

@@ -1,2 +1,0 @@
-- kind feature
-- `ticket add --after` and `ticket set --after` hold a waiting ticket until the ticket it names is done, across siblings; `watch` and `startable` name the hold, `watch` prints the `unblocked` fire line once the dependency is done, `fire` refuses the held ticket, and `ticket move` refuses it until `--after` is cleared; `ticket add|set --after`, `ticket set --state`, and the checks and writes of `fire` hold one lock on the project store directory, so two coordinators cannot form a cycle or fire past a change between check and write

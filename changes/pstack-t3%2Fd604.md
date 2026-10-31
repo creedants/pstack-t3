@@ -1,6 +1,0 @@
-- kind upkeep
-- `vendor/pstack/` matches upstream's `pstack/` tree at e7fb9647 (pstack 0.15.31), which brings upstream #791 and #794.
-- The `statechart` skill draws how any system moves between states, such as a product flow, a protocol, or a service, rather than how an app behaves, and its scripts are replaced by upstream's renderer, tests, and help text.
-- `t3/overrides/statechart/SKILL.md` keeps its two T3 sentences. The description says each invariant bug is a numbered path, because the scripts draw only INVARIANT rules. The output sentence names the default `NAME-statechart` folder, `NAME.tla`, `NAME.cfg`, and `NAME.map.mjs`, and `--out DIR` for `from-spec` and `from-chart` and `render --out FILE`, ahead of upstream's sentence on the first-run TLC and Java install with mise.
-- `create-formal-verification-skill` tells the next agent to read every TLA+ model-check result with `/statechart`.
-- `upstream.json` and the README upstream badge name 0.15.31, `docs/skills.md` carries the new description, and `t3/overrides.lock.json` pins the new vendored `statechart/SKILL.md`.

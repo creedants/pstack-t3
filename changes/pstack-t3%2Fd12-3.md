@@ -1,2 +1,0 @@
-- kind fix
-- The affected-test picker maps a doc file that a test reads through a join over a list of names, so a document read that way selects the tests that assert it, and a pass-with-edits fix round runs the affected tests for every file it changed.

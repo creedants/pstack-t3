@@ -1,7 +1,0 @@
-- kind feature
-- A review report may close its blockers with one `Reason: <class>` line, where the class is one of false-wording, missing-test, wrong-behavior, out-of-lease, scope, other
-- `pass record --reason` stays required on a send-back and stays the value the send-back counts use
-- `brigade.py close` and `brigade.py pass stats` print a `report says:` line when at least one counted send-back's report names a class, counting those classes in reason order plus `not in report`, and naming each send-back whose report disagrees with its recorded reason as `D<n> recorded <reason>, report says <class>`
-- A closeout with no named class prints exactly what it printed before, with no `report says:` line
-- The class is read from each report when the line prints, so `pass.tsv` gains no column and no row is rewritten. A report that is missing, unreadable, a link, a directory, or names an unknown class contributes no class, its send-back counts as `not in report`, and the command still prints
-- A `Reason:` line inside a fenced code block is an example, not a classification; the first such line outside a fence decides, and a report that is not valid UTF-8 states no class

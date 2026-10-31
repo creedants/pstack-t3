@@ -1,6 +1,0 @@
-- kind feature
-- `brigade.py pass record --verdict send-back` refuses a call with no `--reason` before the store lock is taken. It exits 1 with one line naming `--reason` and its six values, and writes no row and no lock file. A panel member's send-back row needs a reason too, because every send-back row needs one
-- `--reason` with any other verdict is still refused, and every other verdict still records with no `--reason`
-- a `pass.tsv` row with an empty reason still loads and still counts as unrecorded in `pass stats`
-- `brigade.py close` prints a `## Send-back reasons (last 7 days)` section, with the reasons recorded in the last 7 days counted by reason. It counts non-member rows with the counting code `pass stats` uses, counts an empty or unknown reason as unrecorded, and prints `No send-backs in the last 7 days.` when the week holds none. `close`, `close --dry-run`, and the file `close --to-file` writes carry the same section
-- the `pass record` reference, the review reference, and the generated command page state the `--reason` rule for a send-back

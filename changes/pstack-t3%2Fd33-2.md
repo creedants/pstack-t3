@@ -1,4 +1,0 @@
-- kind feature
-- `land.py init` and `land.py status` print one warning on stderr when the contract's mode is `push` or `local` and the contract has no checks: nothing gates a landing, and `land.py init` again with `--check <command>` adds one. The warning is advice only. It changes no exit code, and `merge` and `human` mode print nothing new
-- docs: `docs/first-coordinator.md` and `docs/guide/coordinator.md` no longer list `push` and `local` as frozen, and they say which mode fits: `merge` or `human` for a GitHub repository, `push` for a remote that is not GitHub or has no pull requests, `local` for a repository with no remote. The walkthrough and `scripts/outsider_smoke.py` now init with one `--check`. The onboard reference and the landing skill agree
-- `land.py submit --title` and `--body-file` help now says merge mode uses them as well as human mode

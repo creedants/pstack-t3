@@ -1,2 +1,0 @@
-- kind fix
-- `landing_lib/times.py` `landing_times` reports a landing database that SQLite leaves locked or unreadable past its busy timeout as the queue's `LandError`, naming the database path and SQLite's reason, so `land.py times` prints one refused line and no traceback

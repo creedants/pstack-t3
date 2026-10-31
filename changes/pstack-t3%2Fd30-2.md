@@ -1,5 +1,0 @@
-- kind feature
-- a store records a line every worker brief prints once under STANDING RULES with a `[standing rule]` tag in `house-rules.md`, after the built-in lines and never under STANDING ORDERS
-- a recorded line the CONTEXT or VERIFY already states is not printed again, and neither is one an earlier printed line already states, and it prints as the store wrote it with no placeholder filled in
-- the worker's houseRulesCap share counts every recorded line once as `- ` plus the line with no newline, whether or not a given brief drops it, while the reviewer and coordinator sizes do not count it
-- a store with no `[standing rule]` writes the same brief and the same sizes as before, and the standing-rule rendering moves out of `briefs.py` into `brigade_lib/standing.py` for that

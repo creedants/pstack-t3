@@ -1,4 +1,0 @@
-- kind fix
-- Remove the stale `skills/statechart/scripts/test/statechart.test.mjs` entry from `HOME_PATH_EXEMPT` in `scripts/check.py`. Upstream 0.15.33 (PR #691) replaced the `.mjs` scripts with a TypeScript compiler and deleted that file.
-- Add `test_every_allow_listed_path_exists_in_the_checkout_fails_when_an_entry_is_stale` in `tests/check_tests/test_home_paths.py`. It lists every exempt path that is not a file under `ROOT` and fails naming each stale entry. It fails at the base on the removed `.mjs` path and passes after the exemption is gone.
-- Verified with `python3 -m unittest discover -s tests/check_tests -t .` on default Python and 3.10, `python3 scripts/check.py` printing ok, and `python3 scripts/build.py` leaving no diff.
