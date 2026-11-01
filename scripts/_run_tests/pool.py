@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import ACTIVE, POLL_SECONDS, PROGRESS_SECONDS
 from .events import OUTCOMES, Accounting, Channel, Ended, Interrupted, Ledger, Problem, Refusal, Running, Shard, Test, Verdict, exit_status, fails, kinds, plural
-from .plan import build_shards, launch_order, tests_in_part
+from .plan import build_shards, launch_order, read_durations, tests_in_part
 from .processes import Watch, child_env, lifeline, start_child
 from .report import account, render
 
@@ -137,10 +137,12 @@ def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = N
     try:
         try:
             plan = list_tests_fn(start, scratch, timeout, watch.pause)
-            selected = plan if part is None else tests_in_part(plan, part[0], part[1])
+            costs = read_durations()
+            selected = plan if part is None else tests_in_part(plan, part[0], part[1], costs=costs)
             if part is not None and not selected:
                 raise Refusal(f"part {part[0]}/{part[1]} has no test")
-            shards = list(launch_order(build_shards(selected), part is not None))
+            shards = list(launch_order(build_shards(selected), part is not None,
+                                       (lambda shard: costs.estimate(shard.module, len(shard.seqs))) if part is not None else None))
             ledger = Ledger(len(plan), None if part is None else tuple(test.seq for test in selected))
 
             def settle(seq: int, verdict: Verdict) -> None:

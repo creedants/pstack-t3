@@ -33,20 +33,25 @@ That is NO TESTS RAN from Python 3.12 on and OK before it.
 To regenerate the durations file, run `python3 scripts/run_tests.py --record-durations <path>`. The recording
 run is one ordinary run of the suite, so the workers `-j` names and their contention are part of every number
 it writes. The measurement for a test is the gap the runner reads between that worker's start and result
-events. Polling and scheduling affect the error. A test whose start and result events are read together has
-no measurement. Only the slowest tests fit the file's 15000-byte budget, and every test the file does not
-record takes `default_seconds`. A stale or missing durations file costs balance and never coverage.
+events. Polling and scheduling affect the error. Each shard's overhead is its worker's span less the gaps of
+its tests. The file holds one record per module, as that module's measured seconds per test and the typical
+overhead of one shard of it. A test whose start and result events are read together has
+no measurement. A module the file does not name takes `default_seconds` per test and `default_overhead`
+per shard. A stale or missing durations file costs balance and never coverage.
 
 What this runner guarantees. The tests are trusted code. They can be wrong, slow, flaky, or broken, and they
 are not written to defeat the runner. A run exits 0 only when each test the run selected has exactly one
 verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the test's
 shard, and each shard of the run finished cleanly. A run with no `--part` selects
 every test discovery returned. A shard holds the tests of one module, and the modules with the most tests are
-built first. The part split orders tests by their recorded seconds, longest first with ties by test id, and
-sends each test to the part with the smallest running total, ties to the lowest part number. A test the
-durations file does not record takes a stated default. The assignment depends only on test ids and the
-durations file, so each part job of a run computes the same split. Without `--record-durations`, a run with
-`--part i/n` selects part i of n by the rule above and no other test. So each of these makes
+built first. The part split keeps a module's tests in one part, except that a module estimated above one
+part's share of the default worker count is placed one test at a time, so its tests can land in different
+parts, and a plan with fewer modules than parts places every test on its own. Each item goes to the part
+with the smallest estimated total by the rule above, ties to the lowest part number. A module the durations
+file does not name takes a stated default per test and per shard.
+The assignment depends only on the plan discovery returned and the durations file, so each part job of a
+run computes the same split. A part run starts its most expensive shards first while a full run keeps build order.
+Without `--record-durations`, a run with `--part i/n` selects part i of n by the rule above and no other test. So each of these makes
 the run exit with another status than 0. A failing assertion. An error in a test or in a fixture. A module
 that fails to import. A worker that exits or is killed before it reported that it had finished, as when a
 test calls `os._exit`. A worker past
@@ -91,7 +96,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _run_tests import ACTIVE, DEFAULT_TIMEOUT, ENTRY, MAX_DEFAULT_JOBS, NO_TESTS, POLL_SECONDS, PR_SET_CHILD_SUBREAPER, PROGRESS_SECONDS, QUOTED_BYTES, QUOTED_LINES, ROOT as _PKG_ROOT, SEP1, SEP2, SHARD_SIZE, SWEEP_SECONDS
 from _run_tests.events import EVENTS, STATUSES, PROBLEM, SETUP, Accounting, Channel, Ended, Ledger, LedgerError, Outcome, OUTCOMES, Problem, Refusal, Interrupted, Running, Shard, Test, Verdict, exit_status, fails, kinds, parse_event, plural, quoted, shaped, tallies, verdict_of
-from _run_tests.plan import DEFAULT_SECONDS, build_shards, launch_order, part_of, read_durations, tests_in_part
+from _run_tests.plan import DEFAULT_OVERHEAD, DEFAULT_SECONDS, Costs, ModuleCost, build_shards, launch_order, part_of, read_durations, tests_in_part
 from _run_tests.pool import kill_group, launch, list_tests, read_output, run_pool
 from _run_tests.pool import run as _pool_run
 from _run_tests.processes import Watch, adopt_orphans, children_by_parent, start_child
@@ -129,6 +134,58 @@ def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = N
     return _pool_run(start, jobs, timeout, part, _list_tests=list_tests_fn or list_tests, _run_pool=run_pool, _Watch=Watch)
 
 
+def summarize_durations(plan: tuple[Test, ...], measured: dict[str, float], spans: list[tuple[str, tuple[int, ...], float]]) -> dict:
+    """Return the durations document `record_durations` writes: one record per module, as its measured seconds per test and the median overhead of one shard of it."""
+    by_seq = {test.seq: test for test in plan}
+    counts: dict[str, int] = {}
+    for test in plan:
+        counts[test.module] = counts.get(test.module, 0) + 1
+    per_module: dict[str, list[float]] = {}
+    all_overheads: list[float] = []
+    for module, seqs, span in spans:
+        gap = 0.0
+        for seq in seqs:
+            test = by_seq.get(seq)
+            if test is not None:
+                gap += measured.get(test.id, 0.0)
+        overhead = max(0.0, span - gap)
+        per_module.setdefault(module, []).append(overhead)
+        all_overheads.append(overhead)
+    if measured:
+        default_seconds = round(statistics.fmean(measured.values()), 3)
+    else:
+        default_seconds = DEFAULT_SECONDS
+    if all_overheads:
+        default_overhead = round(statistics.median(all_overheads), 3)
+    else:
+        default_overhead = DEFAULT_OVERHEAD
+    modules: dict[str, list] = {}
+    for module in sorted(set(counts) | set(per_module)):
+        count = counts.get(module, 0)
+        seconds = sum(measured.get(test.id, 0.0) for test in plan if test.module == module)
+        if module in per_module and per_module[module]:
+            overhead = round(statistics.median(per_module[module]), 3)
+        else:
+            overhead = default_overhead
+        modules[module] = [round(seconds / count, 3) if count else 0.0, overhead]
+    return {"default_seconds": default_seconds, "default_overhead": default_overhead, "modules": modules}
+
+
+def format_durations(doc: dict) -> str:
+    """Return the durations file text. Each module sits on one line, so the file stays small and its diffs stay readable."""
+    lines = ["{",
+             f'  "default_seconds": {doc["default_seconds"]},',
+             f'  "default_overhead": {doc["default_overhead"]},',
+             '  "modules": {']
+    names = sorted(doc["modules"])
+    for index, name in enumerate(names):
+        rate, overhead = doc["modules"][name]
+        comma = "," if index < len(names) - 1 else ""
+        lines.append(f"    {json.dumps(name)}: [{rate}, {overhead}]{comma}")
+    lines.extend(["  }", "}"])
+    return "\n".join(lines) + "\n"
+
+
 def record_durations(start: Path, jobs: int, timeout: float, out: Path) -> int:
     stamps: dict[int, dict[str, float]] = {}
     original_read = Channel.read
@@ -150,44 +207,53 @@ def record_durations(start: Path, jobs: int, timeout: float, out: Path) -> int:
         plan_holder["plan"] = plan
         return plan
 
+    spans: list[tuple[str, tuple[int, ...], float]] = []
+    original_pool = run_pool
+
+    def wrapping_pool(shards, pool_jobs: int, limit: float, launch_one, finish, tick, pause) -> None:
+        starts: dict[int, tuple[float, str, tuple[int, ...]]] = {}
+
+        def wrapping_launch(shard):
+            running = launch_one(shard)
+            starts[id(running)] = (time.monotonic(), shard.module, tuple(shard.seqs))
+            return running
+
+        def wrapping_finish(worker, ended) -> None:
+            try:
+                return finish(worker, ended)
+            finally:
+                end = time.monotonic()
+                info = starts.pop(id(worker), None)
+                if info is not None:
+                    begin, module, seqs = info
+                    spans.append((module, seqs, end - begin))
+
+        return original_pool(shards, pool_jobs, limit, wrapping_launch, wrapping_finish, tick, pause)
+
     Channel.read = wrapped
+    globals()["run_pool"] = wrapping_pool
     try:
         status = run(start, jobs, timeout, list_tests_fn=listing)
     finally:
         Channel.read = original_read
-    by_seq = {test.seq: test.id for test in plan_holder.get("plan", ())}
+        globals()["run_pool"] = original_pool
+    plan = plan_holder.get("plan", ())
+    by_id = {test.seq: test.id for test in plan}
     measured: dict[str, float] = {}
     for seq, times in stamps.items():
-        ident = by_seq.get(seq)
+        ident = by_id.get(seq)
         if ident is None or "start" not in times or "result" not in times:
             continue
         gap = times["result"] - times["start"]
         if gap > 0:
             measured[ident] = gap
-    ordered = sorted(measured.items(), key=lambda item: (-item[1], item[0]))
-    written: dict[str, float] = {}
-    for ident, seconds in ordered:
-        trial = dict(written)
-        trial[ident] = seconds
-        left_out = [value for key, value in ordered if key not in trial]
-        trial_default = round(statistics.median(left_out), 2) if left_out else DEFAULT_SECONDS
-        blob = json.dumps({"default_seconds": trial_default, "seconds": trial}, indent=2) + "\n"
-        if len(blob.encode("utf-8")) > 15000:
-            break
-        written = trial
-    left = [value for key, value in ordered if key not in written]
-    default = round(statistics.median(left), 2) if left else DEFAULT_SECONDS
-    data = json.dumps({"default_seconds": default, "seconds": written}, indent=2) + "\n"
-    while len(data.encode("utf-8")) > 15000 and written:
-        dropped = min(written, key=lambda key: (written[key], key))
-        del written[dropped]
-        left = [value for key, value in ordered if key not in written]
-        default = round(statistics.median(left), 2) if left else DEFAULT_SECONDS
-        data = json.dumps({"default_seconds": default, "seconds": written}, indent=2) + "\n"
+    doc = summarize_durations(plan, measured, spans)
+    data = format_durations(doc)
     out.write_text(data)
     size = len(data.encode("utf-8"))
-    print(f"run_tests: measured {len(measured)} tests, wrote {len(written)} durations, "
-          f"default_seconds {default}, {size} bytes to {out}", file=sys.stderr, flush=True)
+    print(f"run_tests: measured {len(measured)} tests, {len(spans)} shards, wrote {len(doc['modules'])} modules, "
+          f"default_seconds {doc['default_seconds']}, default_overhead {doc['default_overhead']}, "
+          f"{size} bytes to {out}", file=sys.stderr, flush=True)
     return status
 
 

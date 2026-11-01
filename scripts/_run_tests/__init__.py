@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None, doc: str | None = None) -> int:
     parser.add_argument("--part", type=parse_part,
                         help="Run part i of n, written as i/n. i is an integer from 1 to n. With no --part, the run selects every test discovery returned.")
     parser.add_argument("--record-durations", default=None, metavar="PATH",
-                        help="Run the whole suite once, ignoring --part, and write the slowest measured test durations to PATH within a 15000-byte budget, then exit with the suite status. The run uses -j with the landing slot cap. Regenerate the durations file with python3 scripts/run_tests.py --record-durations PATH.")
+                        help="Run the whole suite once, ignoring --part, and write one record per module with its measured seconds per test and the overhead of one shard of it to PATH, then exit with the suite status. The run uses -j with the landing slot cap. Regenerate the durations file with python3 scripts/run_tests.py --record-durations PATH.")
     parser.add_argument("--list", help=argparse.SUPPRESS)
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)

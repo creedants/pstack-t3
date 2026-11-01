@@ -56,19 +56,14 @@ class PartsMixin:
         return tuple(run_tests.Test(seq, test.id(), type(test).__module__, run_tests.class_name(test))
                      for seq, test in enumerate(found))
 
-    def test_parts_cover_a_long_module_and_a_one_test_module_without_putting_the_one_test_in_part_1(self):
-        lines = ["import unittest", "", "class LongTest(unittest.TestCase):"]
-        for index in range(11):
-            lines.append(f"    def test_{index:02d}(self):")
-            lines.append("        pass")
-        self.write("test_long.py", "\n".join(lines) + "\n")
-        self.write("test_one.py", """
-            import unittest
-
-            class OneTest(unittest.TestCase):
-                def test_only(self):
-                    pass
-        """)
+    def test_grouped_parts_cover_every_test_exactly_once_rather_than_scattering_one_module(self):
+        for name in ("test_alpha", "test_beta", "test_gamma", "test_delta",
+                     "test_eps", "test_zeta", "test_eta", "test_theta", "test_iota"):
+            lines = ["import unittest", "", f"class {name.title()}Test(unittest.TestCase):"]
+            for index in range(2):
+                lines.append(f"    def test_{index}(self):")
+                lines.append("        pass")
+            self.write(f"{name}.py", "\n".join(lines) + "\n")
         plan = self.plan_of(self.tests)
         ids = [test.id for test in plan]
         for count in range(1, 9):
@@ -76,13 +71,13 @@ class PartsMixin:
             got = [test.id for part in parts for test in part]
             self.assertEqual(sorted(got), sorted(ids))
             self.assertEqual(len(got), len(set(test.seq for part in parts for test in part)))
-        fourth = [
-            ["test_long.LongTest.test_00", "test_long.LongTest.test_04", "test_long.LongTest.test_08"],
-            ["test_long.LongTest.test_01", "test_long.LongTest.test_05", "test_long.LongTest.test_09"],
-            ["test_long.LongTest.test_02", "test_long.LongTest.test_06", "test_long.LongTest.test_10"],
-            ["test_long.LongTest.test_03", "test_long.LongTest.test_07", "test_one.OneTest.test_only"],
-        ]
-        self.assertEqual([[test.id for test in run_tests.tests_in_part(plan, index, 4)] for index in range(1, 5)], fourth)
+        pair = [run_tests.tests_in_part(plan, index, 2) for index in range(1, 3)]
+        for part in pair:
+            by_module: dict[str, list] = {}
+            for test in part:
+                by_module.setdefault(test.module, []).append(test)
+            for module, tests in by_module.items():
+                self.assertEqual(len(tests), 2)
         repo = self.plan_of(run_tests.ROOT / "tests")
         repo_ids = [test.id for test in repo]
         for count in range(1, 9):
@@ -90,35 +85,54 @@ class PartsMixin:
             got = [test.id for part in parts for test in part]
             self.assertEqual(sorted(got), sorted(repo_ids))
             self.assertEqual(len(got), len(repo))
-            self.assertTrue(all(parts))
 
-    def test_a_heavy_recorded_duration_puts_that_test_alone_in_its_part(self):
-        # This starts no process: the split reads a durations file the test writes.
-        self.write("test_quad.py", """
-            import unittest
+    def test_every_test_of_one_module_lands_in_one_part_including_a_module_larger_than_a_shard(self):
+        # This starts no process: the split runs in memory.
+        plan = []
+        seq = 0
+        for module, count in (("big", run_tests.SHARD_SIZE + 5), ("giant", 200), ("giant2", 200)):
+            for index in range(count):
+                plan.append(run_tests.Test(seq, f"{module}.Case.test_{index}", module, f"{module}.Case"))
+                seq += 1
+        plan = tuple(plan)
+        costs = run_tests.Costs(
+            {
+                "big": run_tests.ModuleCost(tests=run_tests.SHARD_SIZE + 5, seconds=0.25, overhead=0.1),
+                "giant": run_tests.ModuleCost(tests=200, seconds=2000.0, overhead=1.0),
+                "giant2": run_tests.ModuleCost(tests=200, seconds=2000.0, overhead=1.0),
+            },
+            default_seconds=1.0,
+            default_overhead=1.0,
+        )
+        for count in (2, 3):
+            assignment = run_tests.part_of(plan, count, costs)
+            big_parts = {assignment[test.seq] for test in plan if test.module == "big"}
+            self.assertEqual(len(big_parts), 1)
 
-            class QuadTest(unittest.TestCase):
-                def test_a(self):
-                    pass
-
-                def test_b(self):
-                    pass
-
-                def test_c(self):
-                    pass
-
-                def test_heavy(self):
-                    pass
-        """)
-        plan = self.plan_of(self.tests)
-        heavy = next(test.id for test in plan if test.id.endswith("test_heavy"))
-        durations = self.proj / "durations.json"
-        durations.write_text(json.dumps({"default_seconds": 1.0, "seconds": {heavy: 1000.0}}))
-        first = [test.id for test in run_tests.tests_in_part(plan, 1, 2, durations_path=durations)]
-        second = [test.id for test in run_tests.tests_in_part(plan, 2, 2, durations_path=durations)]
-        self.assertEqual(first, [heavy])
-        self.assertEqual(len(second), 3)
-        self.assertNotIn(heavy, second)
+    def test_a_heavy_module_above_one_parts_worker_share_splits_per_test_while_a_light_one_stays_whole(self):
+        # This starts no process: the split runs in memory.
+        plan = []
+        seq = 0
+        for module, count in (("heavy", 4), ("mid", 4), ("small", 4), ("tiny", 4)):
+            for index in range(count):
+                plan.append(run_tests.Test(seq, f"{module}.Case.test_{index}", module, f"{module}.Case"))
+                seq += 1
+        plan = tuple(plan)
+        costs = run_tests.Costs(
+            {
+                "heavy": run_tests.ModuleCost(tests=4, seconds=400.0, overhead=1.0),
+                "mid": run_tests.ModuleCost(tests=4, seconds=4.0, overhead=1.0),
+                "small": run_tests.ModuleCost(tests=4, seconds=4.0, overhead=1.0),
+                "tiny": run_tests.ModuleCost(tests=4, seconds=4.0, overhead=1.0),
+            },
+            default_seconds=1.0,
+            default_overhead=1.0,
+        )
+        assignment = run_tests.part_of(plan, 2, costs)
+        heavy_parts = {assignment[test.seq] for test in plan if test.module == "heavy"}
+        self.assertGreater(len(heavy_parts), 1)
+        for module in ("mid", "small", "tiny"):
+            self.assertEqual(len({assignment[test.seq] for test in plan if test.module == module}), 1)
 
     def test_a_broken_durations_file_still_covers_every_test_exactly_once(self):
         # This starts no process: the split reads files the test writes.
@@ -138,6 +152,13 @@ class PartsMixin:
             "seconds_list": '{"seconds": []}',
             "slow_string": json.dumps({"seconds": {good: "slow"}}),
             "bad_default": json.dumps({"default_seconds": -1, "seconds": {good: 0}}),
+            "modules_list": json.dumps({"modules": []}),
+            "modules_entry_string": json.dumps({"modules": {"mod": "slow"}}),
+            "modules_short": json.dumps({"modules": {"mod": [1.0]}}),
+            "modules_bad_rate": json.dumps({"modules": {"mod": [-1.0, 1.0]}}),
+            "modules_bad_overhead": json.dumps({"modules": {"mod": [1.0, "slow"]}}),
+            "modules_bad_defaults": json.dumps({"default_seconds": "slow", "default_overhead": -2,
+                                                "modules": {"test_nine": [1.0, 1.0]}}),
         }
         for name, payload in payloads.items():
             path = self.proj / f"durations-{name}.json"
@@ -155,17 +176,39 @@ class PartsMixin:
                     self.assertEqual(len(got), len({test.seq for part in parts for test in part}))
                     self.assertTrue(all(parts))
 
+    def test_a_malformed_module_entry_falls_back_to_defaults_while_valid_modules_still_record(self):
+        # This starts no process: the costs are read from a file the test writes.
+        path = self.proj / "durations.json"
+        path.write_text(json.dumps({
+            "default_seconds": 2.0,
+            "default_overhead": 3.0,
+            "modules": {
+                "good": [2.0, 1.5],
+                "bad": {"tests": 0},
+            },
+        }))
+        costs = run_tests.read_durations(path)
+        self.assertIn("good", costs.modules)
+        self.assertNotIn("bad", costs.modules)
+        self.assertEqual(costs.default_seconds, 2.0)
+        self.assertEqual(costs.default_overhead, 3.0)
+        self.assertEqual(costs.estimate("bad", 4), 4 * 2.0 + 1 * 3.0)
+
     def test_the_split_does_not_depend_on_plan_order(self):
         # This starts no process: the split runs in memory.
         first = tuple(run_tests.Test(seq, f"mod.Case.test_{name}", "mod", "mod.Case")
                       for seq, name in enumerate("abcd"))
         second = tuple(run_tests.Test(seq, f"mod.Case.test_{name}", "mod", "mod.Case")
                        for seq, name in enumerate("dcba"))
-        seconds = {"mod.Case.test_d": 100.0}
+        costs = run_tests.Costs(
+            {"mod": run_tests.ModuleCost(tests=4, seconds=104.0, overhead=1.0)},
+            default_seconds=1.0,
+            default_overhead=1.0,
+        )
         for count in (1, 2, 3, 4):
             with self.subTest(count=count):
-                by_id_first = {test.id: run_tests.part_of(first, count, seconds, 1.0)[test.seq] for test in first}
-                by_id_second = {test.id: run_tests.part_of(second, count, seconds, 1.0)[test.seq] for test in second}
+                by_id_first = {test.id: run_tests.part_of(first, count, costs)[test.seq] for test in first}
+                by_id_second = {test.id: run_tests.part_of(second, count, costs)[test.seq] for test in second}
                 self.assertEqual(by_id_first, by_id_second)
 
     def test_recording_durations_caps_the_worker_count_at_the_landing_slot_limit(self):
@@ -205,93 +248,53 @@ class PartsMixin:
         self.assertEqual(seen, [4])
         self.assertIn("lowered to 4", sink.getvalue())
 
-    def test_record_durations_writes_seconds_for_each_test_it_measures(self):
-        one = run_tests.Test(0, "test_slow.SlowTest.test_one", "test_slow", "test_slow.SlowTest")
-        two = run_tests.Test(1, "test_slow.SlowTest.test_two", "test_slow", "test_slow.SlowTest")
-        three = run_tests.Test(2, "test_slow.SlowTest.test_three", "test_slow", "test_slow.SlowTest")
-        plan = (one, two, three)
-
-        def start_line(seq):
-            return json.dumps({"ev": "start", "seq": seq})
-
-        def result_line(seq):
-            return json.dumps({"ev": "result", "seq": seq, "status": "ok", "problems": []})
-
-        batches = [
-            [start_line(0)],
-            [result_line(0)],
-            [start_line(1)],
-            [result_line(1)],
-            [start_line(2), result_line(2)],
-        ]
-        clocks = [10.0, 10.25, 11.0, 11.5, 12.0]
-
-        class FakeClock:
-            def __init__(self, values):
-                self.values = list(values)
-                self.index = 0
-
-            def monotonic(self):
-                value = self.values[self.index]
-                self.index += 1
-                return value
-
-        original_list_tests = run_tests.list_tests
-        original_run = run_tests.run
-        original_time = run_tests.time
-        run_tests.list_tests = lambda start, scratch, timeout, pause: plan
-        self.addCleanup(setattr, run_tests, "list_tests", original_list_tests)
-        self.addCleanup(setattr, run_tests, "run", original_run)
-        self.addCleanup(setattr, run_tests, "time", original_time)
-
-        def fake_run(start, jobs, timeout, part=None, *, list_tests_fn=None):
-            found = list_tests_fn(start, None, timeout, None)
-            self.assertEqual(tuple(test.seq for test in found), (0, 1, 2))
-            channel_path = self.proj / "channel.jsonl"
-            channel = run_tests.Channel(channel_path)
-            self.addCleanup(channel.close)
-            handle = open(channel_path, "a")
-            self.addCleanup(handle.close)
-            for lines in batches:
-                for line in lines:
-                    handle.write(line + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-                channel.read()
-            return 0
-
-        run_tests.run = fake_run
-        run_tests.time = FakeClock(clocks)
-        out = self.proj / "durations.json"
-        self.assertEqual(run_tests.record_durations(Path(self.tests), 1, 30.0, out), 0)
-        data = json.loads(out.read_text())
-        self.assertEqual(data["seconds"], {one.id: 0.25, two.id: 0.5})
-        self.assertNotIn(three.id, data["seconds"])
-        reread, default = run_tests.read_durations(out)
-        self.assertEqual(reread, data["seconds"])
-        self.assertEqual(default, data["default_seconds"])
-        self.assertGreater(default, 0)
+    def test_summarize_durations_sums_test_seconds_and_medians_shard_overheads_rather_than_dropping_modules(self):
+        # This starts no process: the summary runs in memory.
+        plan = (
+            run_tests.Test(0, "aaa.Case.test_one", "aaa", "aaa.Case"),
+            run_tests.Test(1, "aaa.Case.test_two", "aaa", "aaa.Case"),
+            run_tests.Test(2, "bbb.Case.test_one", "bbb", "bbb.Case"),
+        )
+        measured = {"aaa.Case.test_one": 1.0, "aaa.Case.test_two": 3.0, "bbb.Case.test_one": 2.0}
+        spans = [("aaa", (0,), 2.5), ("aaa", (1,), 5.0)]
+        doc = run_tests.summarize_durations(plan, measured, spans)
+        self.assertEqual(doc["modules"]["aaa"], [2.0, 1.75])
+        self.assertEqual(doc["modules"]["bbb"], [2.0, doc["default_overhead"]])
+        self.assertEqual(doc["default_seconds"], 2.0)
+        self.assertEqual(doc["default_overhead"], 1.75)
+        self.assertEqual(list(doc["modules"]), sorted(doc["modules"]))
+        text = run_tests.format_durations(doc)
+        self.assertEqual(json.loads(text), doc)
+        self.assertEqual(len(text.splitlines()), 6 + len(doc["modules"]))
 
     def test_record_durations_writes_a_readable_file_and_exits_with_the_suite_status(self):
         self.write("test_slow.py", """
+            import time
             import unittest
 
             class SlowTest(unittest.TestCase):
                 def test_one(self):
-                    pass
+                    time.sleep(0.3)
 
                 def test_two(self):
-                    pass
+                    time.sleep(0.3)
         """)
         out = self.proj / "durations.json"
         result = self.runner("--record-durations", str(out))
         self.assertEqual(result.returncode, 0, result.stderr)
         data = json.loads(out.read_text())
         self.assertGreater(data["default_seconds"], 0)
-        self.assertIsInstance(data["seconds"], dict)
-        reread, default = run_tests.read_durations(out)
-        self.assertEqual(reread, data["seconds"])
-        self.assertEqual(default, data["default_seconds"])
+        self.assertGreater(data["default_overhead"], 0)
+        self.assertIn("test_slow", data["modules"])
+        record = data["modules"]["test_slow"]
+        self.assertEqual(len(record), 2)
+        self.assertGreater(record[0], 0)
+        self.assertGreater(record[1], 0)
+        reread = run_tests.read_durations(out)
+        self.assertEqual(reread.modules["test_slow"].seconds, record[0])
+        self.assertEqual(reread.modules["test_slow"].overhead, record[1])
+        self.assertEqual(reread.default_seconds, data["default_seconds"])
+        self.assertEqual(reread.default_overhead, data["default_overhead"])
         self.write("test_slow.py", """
             import unittest
 
@@ -303,7 +306,8 @@ class PartsMixin:
         self.assertEqual(failed.returncode, 1, failed.stderr)
         data = json.loads(out.read_text())
         self.assertGreater(data["default_seconds"], 0)
-        self.assertIsInstance(data["seconds"], dict)
+        self.assertGreater(data["default_overhead"], 0)
+        self.assertIsInstance(data["modules"], dict)
 
     def test_part_flag_runs_one_test_of_a_pair_and_refuses_a_part_outside_the_plan(self):
         for text, message in (("2/1", "2/1 has i outside 1 to n"),
@@ -366,27 +370,14 @@ class BuildShardsMixin:
     def test_no_test_makes_no_shard(self):
         self.assertEqual(run_tests.build_shards(()), [])
 
-    def test_a_part_queue_starts_one_test_shards_before_larger_shards_and_a_full_queue_keeps_build_order(self):
+    def test_a_part_run_passes_shards_in_descending_cost_ahead_of_build_order_while_a_full_run_keeps_build_order(self):
         plan = []
         seq = 0
         for module, count in (("big", 21), ("early", 1), ("late", 1)):
             for _ in range(count):
                 plan.append(run_tests.Test(seq, module + ".id", module, module + ".C"))
                 seq += 1
-        shards = run_tests.build_shards(tuple(plan))
-        self.assertEqual([shard.module for shard in shards], ["big", "big", "early", "late"])
-        self.assertEqual(run_tests.launch_order(shards, False), tuple(shards))
-        front = run_tests.launch_order(shards, True)
-        self.assertEqual([shard.number for shard in front], [3, 4, 1, 2])
-        self.assertEqual([len(shard.seqs) for shard in front], [1, 1, 11, 10])
-
-    def test_a_part_run_passes_one_test_shards_to_the_pool_ahead_of_larger_shards(self):
-        plan = []
-        seq = 0
-        for module, count in (("big", 21), ("early", 1), ("late", 1)):
-            for _ in range(count):
-                plan.append(run_tests.Test(seq, module + ".id", module, module + ".C"))
-                seq += 1
+        plan = tuple(plan)
         received = []
 
         def list_tests(start, scratch, timeout, pause):
@@ -419,8 +410,18 @@ class BuildShardsMixin:
         self.addCleanup(setattr, sys, "stderr", previous)
         with tempfile.TemporaryDirectory() as directory:
             run_tests.run(Path(directory), 1, 30, (1, 1))
+        costs = run_tests.read_durations()
+        placed = run_tests.build_shards(tuple(plan))
+        expected = run_tests.launch_order(placed, True, lambda shard: costs.estimate(shard.module, len(shard.seqs)))
         self.assertEqual(
             [(shard.number, len(shard.seqs)) for batch in received for shard in batch],
-            [(3, 1), (4, 1), (1, 11), (2, 10)],
+            [(shard.number, len(shard.seqs)) for shard in expected],
         )
-
+        received.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            run_tests.run(Path(directory), 1, 30, None)
+        placed = run_tests.build_shards(tuple(plan))
+        self.assertEqual(
+            [(shard.number, len(shard.seqs)) for batch in received for shard in batch],
+            [(shard.number, len(shard.seqs)) for shard in placed],
+        )
