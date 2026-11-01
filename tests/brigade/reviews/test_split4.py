@@ -289,6 +289,10 @@ class ReviewsSplit4Test(BrigadeTest):
             "### Unassigned", "",
             "- polish T8: Tidy the docs",
             "- T9: Installer",
+            "", "## Waiting list", "",
+            "- 4 waiting tickets, oldest 0 days old; no ticket aged out since the last report.",
+            "- no auto-start level is recorded; the default is normal; "
+            "set --autofire decides which priorities start on their own.",
             "", "## Send-back reasons (last 7 days)", "", "other 1",
             "", "## Reviewer hit rate (last 7 days)", "",
             "codex/gpt-6.1-sol  rounds 2  pass 1  pass-with-edits 0  send-backs 1  upheld 0  overruled 0  rate n/a",
