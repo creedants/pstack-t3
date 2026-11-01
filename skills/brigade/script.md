@@ -76,7 +76,7 @@ Each command's text below is the text that moved out of the command block in [th
 
 **`$B ticket notes --paths a.py,b.py` and `--all`.** prints the notes that name those paths, or every note.
 
-**`$B ticket age`.** moves waiting low-priority polish and upkeep tickets older than the limit to `notes.tsv`, then drops them. The evening wake runs it whenever aging is on, before the report cue.
+**`$B ticket age`.** moves waiting low-priority polish and upkeep tickets past the limit to `notes.tsv` and drops them. The evening wake runs it when aging is on.
 
 **`$B ticket set T<n>`.** at least one flag. `--paths ""` clears the recorded paths.
 
