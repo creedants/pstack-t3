@@ -1,109 +1,1691 @@
 {
-  "default_seconds": 0.3,
-  "seconds": {
-    "brigade.affected.test_split3.AffectedSplit3Test.test_d411_pair_keeps_every_old_key_fails_when_a_gained_key_is_outside_an_underscore_directory": 70.87245997303398,
-    "brigade.affected.test_split1.AffectedSplit1Test.test_briefs_lib_one_hop_maps_fails_when_helper_carried_entry_import_not_followed": 25.2040117130382,
-    "brigade.affected.test_split1.AffectedSplit1Test.test_brigade_source_and_twin_pick_briefs_without_times_fails_when_helper_union_not_narrowed": 24.571028072969057,
-    "brigade.affected.test_split1.AffectedSplit1Test.test_governor_one_hop_maps_fails_when_helper_carried_entry_import_not_followed": 24.005206367990468,
-    "brigade.affected.test_split1.AffectedSplit1Test.test_activity_source_and_twin_pick_activity_and_render_fails_when_transitive_import_not_closed": 23.95788686699234,
-    "landing.slot.test_order.LandingTest.test_contending_callers_fill_two_worker_slots_and_never_pass_an_earlier_ticket": 14.074625020031817,
-    "test_build.BuildModeTest.test_a_read_only_copy_builds_the_same_files_and_modes_as_a_writable_one": 12.487906370020937,
-    "brigade.test_tickets.TicketsTest.test_fire_shared_doc_timebox_limit": 8.295829511014745,
-    "brigade.test_fire_layout.FireLayoutTest.test_skill_source_adds_docs_skills_md_and_unrelated_omits_it": 7.7535616679815575,
-    "landing.slot.test_order.LandingTest.test_contending_callers_never_share_a_slot_and_never_pass_an_earlier_ticket": 7.40956937201554,
-    "test_build.BuildReferenceTest.test_default_build_writes_the_committed_command_line_reference_pages": 7.263500537024811,
-    "landing.queue.test_landing.LandingTest.test_a_check_that_escapes_its_group_cannot_hold_the_queue": 6.901220544008538,
-    "pstack_t3.test_build.BuildTest.test_build_accepts_an_indented_note_under_a_playbook_bullet": 5.383021903980989,
-    "brigade.reviews.test_split4.ReviewsSplit4Test.test_edits_verify_and_pass_record_refuse_a_file_old_text_or_new_text_line_directly_below_a_line_that_is_none_of_empty_only_spaces_and_tabs_the_edit_heading_a_closing_fence_and_those_three_lines": 4.97521493799286,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_bounces_a_failed_first_entry_alone_rebuilds_the_two_behind_it_without_its_change_then_lands_both": 4.668595967988949,
-    "brigade.test_fire_layout.FireLayoutTest.test_fire_table_covers_files_dirs_and_guards": 4.619143638992682,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_does_not_say_trunk_holds_an_unchecked_change_when_a_merge_with_another_tree_is_not_on_trunk_then_says_it_once_trunk_holds_it": 4.578649810981005,
-    "brigade.test_tickets.TicketsTest.test_fire_shared_doc_with_doc_item_records_the_doc_row": 4.569224739971105,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_merges_nothing_while_the_first_entry_is_pending_notes_the_entry_ahead_on_the_passed_ones_then_lands_all_three": 4.417696084012277,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_bounces_an_entry_whose_rebuild_conflicts_with_trunk_and_rebuilds_the_entry_behind_it": 4.369699288974516,
-    "brigade.test_notify.NotifyTest.test_a_notifier_child_that_outlives_the_timeout_is_stopped_with_its_group": 4.238774531986564,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_pauses_and_leaves_the_entry_awaiting_merge_when_git_cannot_read_its_merge_commit_then_reports_the_other_tree_after_resume": 4.12938881595619,
-    "brigade.test_fire_layout.FireLayoutTest.test_doc_item_omits_docs_skills_md_for_runtime_and_skill": 4.016481539991219,
-    "activity_tests.test_row_shape.RowShapeTest.test_timestamp_in_another_shape_exits_3_wherever_its_text_sorts": 4.015297278005164,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_another_push_url_dropped_the_branch": 3.9992885219980963,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_the_other_push_url_keeps_the_branch": 3.976361578970682,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_leaves_an_entry_awaiting_merge_when_its_merge_with_the_candidate_tree_is_not_on_trunk_then_lands_the_line_once_trunk_holds_it": 3.966609747032635,
-    "pstack_t3.test_build.BuildTest.test_build_fails_before_the_swap_on_a_playbook_bullet_whose_file_does_not_exist": 3.9662732479628175,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_does_not_bounce_a_merge_requested_entry_with_a_failed_check_when_the_second_state_read_fails": 3.9158930589910597,
-    "landing.identity.test_pause.LandingTest.test_a_store_with_no_identity_key_runs_each_listed_command_with_status_0_and_land_stores_the_pair_and_lands": 3.8659167130244896,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_the_push_url_names_another_repo": 3.838151480013039,
-    "release_tests.test_run.RunTest.test_a_signal_at_any_line_of_apply_leaves_the_files_as_they_were_or_released": 3.8254620599909686,
-    "landing.merge.test_checks.LandingTest.test_merge_mode_bounces_when_a_check_fails_after_auto_merge_was_enabled": 3.825460811960511,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_the_forge_repo_cannot_be_read": 3.8157609030022286,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_the_branch_query_fails": 3.785952300997451,
-    "test_build.BuildModeTest.test_build_fails_when_the_repository_badge_is_stale": 3.775281037960667,
-    "landing.merge.test_checks.LandingTest.test_merge_mode_lands_a_merged_pr_when_a_later_check_fails": 3.725231424032245,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_lands_three_stacked_entries_in_order_in_the_run_after_their_checks_pass": 3.5344482740038075,
-    "landing.merge.test_rebuild.LandingTest.test_a_store_from_before_the_onto_column_keeps_its_first_entry_rebuilds_the_second_behind_it_then_lands_both": 3.5142673299997114,
-    "test_outsider_smoke.OutsiderSmokeTest.test_inherited_python_startup_overrides_cannot_reach_the_canary_home": 3.4748516519903205,
-    "test_outsider_smoke.OutsiderSmokeTest.test_every_required_step_prints_its_ok_line": 3.463930819008965,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_merges_nothing_and_rebuilds_both_passed_entries_when_trunk_gained_an_outside_commit_then_lands_both": 3.4628816280164756,
-    "test_outsider_smoke.OutsiderSmokeTest.test_every_step_runs_against_the_home_the_script_made": 3.4249781179823913,
-    "test_outsider_smoke.OutsiderSmokeTest.test_inherited_git_overrides_cannot_reach_the_canary_home": 3.413270632037893,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_lands_the_first_entry_bounces_a_failed_second_and_rebuilds_the_third_without_the_second": 3.37414130900288,
-    "landing.merge.test_checks.LandingTest.test_merge_mode_lets_github_merge_after_required_checks_and_asks_once": 3.3637436979915947,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_does_not_report_another_tree_when_the_tree_of_an_equal_merge_commit_cannot_be_read_and_lands_it_after_resume": 3.275209456041921,
-    "brigade.test_fire_layout.FireLayoutTest.test_doc_item_keeps_cli_pages_for_tool_sources": 3.2134079239913262,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_keeps_a_failed_entry_behind_a_pending_first_and_bounces_it_in_the_run_that_lands_the_first": 3.031788168998901,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_rebuilds_an_entry_again_after_a_run_killed_between_the_rebuild_push_and_its_row": 3.0220164159545675,
-    "landing.merge.test_init.LandingTest.test_a_refused_merge_method_names_the_command_that_changes_it": 3.0125393249909393,
-    "landing.queue.test_prs.LandingTest.test_the_pr_body_carries_the_kind_and_the_goal_of_the_items_row": 3.0117984539829195,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_lands_both_entries_in_the_run_after_one_killed_right_after_the_first_merge": 2.972870413970668,
-    "brigade.reporting.test_status.ReportingTest.test_walk_groups_repositories_and_repo_selects_one": 2.9256601890083402,
-    "landing.test_slot.LandingTest.test_an_exclusive_slot_waits_for_every_other_slot_and_refuses_nesting": 2.8704313480411656,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_says_the_merge_could_not_be_checked_when_git_cannot_tell_whether_trunk_holds_the_merge_commit": 2.8219125590403564,
-    "test_build.BuildModeTest.test_built_files_keep_source_modes": 2.771873941994272,
-    "landing.test_contests.LandingTest.test_a_settled_contest_keeps_its_order_while_a_failed_pr_still_has_auto_merge": 2.733632354007568,
-    "brigade.test_items.ItemsTest.test_a_replaced_coordinators_paused_commands_change_nothing": 2.7114251379971392,
-    "landing.queue.test_landing.LandingTest.test_a_conflict_under_a_non_english_locale_bounces": 2.6608490050421096,
-    "brigade.test_tickets.TicketsTest.test_blocked_counts_follow_the_block_that_holds_now": 2.632950711005833,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_builds_each_queued_entry_on_the_candidate_of_the_entry_ahead": 2.5601316810352728,
-    "activity_tests.test_store.StoreTest.test_name_project_root_thread_or_previous_thread_of_the_store_record_that_is_not_null_and_not_a_string_or_holds_a_nul_or_a_lone_surrogate_exits_1_and_names_it": 2.5211621920461766,
-    "landing.merge.test_rebuild.LandingTest.test_merge_mode_with_no_posted_checks_opens_two_entries_and_lands_both_in_the_second_run": 2.4703051480464637,
-    "brigade.test_fire_layout.FireLayoutTest.test_doc_item_keeps_cli_pages_for_ancestor_scopes": 2.460139748000074,
-    "landing.test_contests.LandingTest.test_a_settled_contest_holds_the_second_holder_until_the_first_lands_after_a_bounce": 2.4332689789589494,
-    "brigade.test_fire_layout.FireLayoutTest.test_startable_blocked_dot_path_normalizes_for_generated_overlap_and_derived_fire": 2.4109694400103763,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_the_queue_branch_delete_fails": 2.4101134079974145,
-    "brigade.test_fire_layout.FireLayoutTest.test_doc_item_keeps_explicit_docs_skills_md": 2.409951664041728,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_lands_an_entry_and_pauses_when_its_merge_commit_holds_another_tree_than_its_candidate_and_resume_clears_it": 2.409249986987561,
-    "test_run_tests.RunTestsTest.test_a_run_that_kills_a_worker_at_a_2_second_timeout_ends_a_process_its_test_started_in_a_new_session": 2.3714045110391453,
-    "test_run_tests.RunTestsTest.test_a_run_whose_process_had_a_child_and_that_kills_a_worker_at_a_2_second_timeout_leaves_alone_that_childs_orphan_in_a_new_session": 2.3696203849976882,
-    "brigade.test_startable.StartableTest.test_startable_keeps_ticket_order_with_kinds_and_goals_with_paused_and_share_where_they_hold": 2.359743115026504,
-    "brigade.test_notify.NotifyTest.test_a_notifier_that_hangs_is_stopped_at_its_timeout_with_one_warning": 2.3218829809920862,
-    "test_run_tests.RunTestsTest.test_a_worker_that_writes_bytes_with_no_newline_past_a_2_second_timeout_is_killed_and_its_test_is_lost": 2.319621382979676,
-    "roles_tests.test_config_files.WritePreservationTest.test_malformed_roles_are_refused_even_with_replace": 2.3188907869625837,
-    "brigade.test_fire_layout.FireLayoutTest.test_startable_saved_scope_with_whole_repository_component_blocks_the_second_scope": 2.310313338995911,
-    "test_run_tests.RunTestsTest.test_a_test_that_sleeps_past_a_2_second_timeout_is_lost": 2.309760455042124,
-    "landing.merge.test_required.LandingTest.test_merge_mode_waits_when_policy_refuses_and_a_required_check_is_unposted": 2.3097454690141603,
-    "landing.queue.test_landing.LandingTest.test_a_failing_batch_lands_the_good_entries_alone_and_bounces_the_bad_one": 2.280968990002293,
-    "test_run_tests.RunTestsTest.test_a_worker_that_writes_lines_that_are_not_events_past_a_2_second_timeout_is_killed_and_its_test_is_lost": 2.2735244749928825,
-    "activity_tests.test_row_shape.RowShapeTest.test_sub_agent_rows_that_make_a_thread_its_own_parent_or_ancestor_exit_3_in_both_forms": 2.2696960130124353,
-    "landing.merge.test_required.LandingTest.test_merge_mode_waits_when_auto_merge_is_disabled_and_policy_refuses": 2.2689366079866886,
-    "landing.merge.test_checks.LandingTest.test_merge_mode_does_not_merge_a_just_opened_pr_with_zero_posted_checks": 2.2216820290195756,
-    "brigade.reporting.test_goals.ReportingTest.test_a_rewrite_of_its_table_leaves_each_kept_cell_byte_for_byte_and_the_warning_for_it_still_prints": 2.2091259000007994,
-    "landing.leases.test_shares.LandingTest.test_a_reservation_rerun_returns_it_and_an_ended_one_says_how_it_ended": 2.2089197660097852,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_a_hidden_ref_is_locked": 2.1830414009746164,
-    "brigade.test_store.StoreTest.test_next_reply": 2.1591206719749607,
-    "landing.leases.test_claims.LandingTest.test_status_holder_lists_one_holder_or_a_prefix": 2.1589491789927706,
-    "test_run_tests.RunTestsTest.test_a_listing_killed_at_a_2_second_timeout_exits_2_and_ends_a_process_it_started_in_a_new_session": 2.158619866997469,
-    "landing.merge.test_checks.LandingTest.test_merge_mode_does_not_merge_absent_checks_on_a_later_drain": 2.120854987006169,
-    "test_run_tests.RunTestsTest.test_a_module_that_sleeps_at_import_past_a_2_second_timeout_exits_2_with_its_output_and_no_listing_process": 2.1198094070423394,
-    "landing.test_contests.LandingTest.test_an_open_contest_holds_both_holders_out_of_a_push_mode_batch": 2.1092524509876966,
-    "brigade.test_tickets.TicketsTest.test_a_refused_fire_stays_blocked_until_the_lease_is_free": 2.1088411299861036,
-    "activity_tests.test_row_shape.RowShapeTest.test_no_count_is_negative_and_a_page_with_a_running_agent_never_says_no_agent_ran_for_150_random_sets_of_sub_agent_rows": 2.1083976100198925,
-    "landing.merge.test_awaiting.LandingTest.test_merge_mode_pauses_when_the_pr_state_read_fails": 2.072018384002149,
-    "brigade.reviews.test_split5.ReviewsSplit5Test.test_next_runs_each_conditional_action": 2.0710658869938925,
-    "brigade.wake.test_wake_2.WakeTest.test_an_old_bounced_entry_is_ignored_for_the_current_sha": 2.0699079990154132,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_lands_when_the_remote_deletes_the_queue_branch_during_push": 2.0694954030332156,
-    "landing.merge.test_required.LandingTest.test_merge_mode_waits_when_base_branch_policy_refuses_and_no_check_is_posted": 2.067893394967541,
-    "landing.merge.test_forge.LandingTest.test_merge_mode_leaves_the_entry_when_receive_pack_hides_the_queue_branch": 2.059245317999739,
-    "activity_tests.test_row_shape.RowShapeTest.test_value_that_is_not_text_or_an_empty_id_status_or_provider_exits_3_and_names_the_column": 2.058013799949549,
-    "landing.queue.test_landing.LandingTest.test_trunk_moved_by_a_human_is_rebased_onto_and_a_rewind_pauses_the_queue": 2.0336383559624664,
-    "landing.queue.test_landing.LandingTest.test_a_batch_lands_in_one_push_and_resubmitting_is_idempotent": 2.0198696999577805
+  "default_seconds": 0.846,
+  "default_overhead": 4.386,
+  "modules": {
+    "activity_tests.test_activity_pinned_fixes": {
+      "tests": 4,
+      "seconds": 3.448,
+      "overhead": 4.075
+    },
+    "activity_tests.test_browser_pages": {
+      "tests": 5,
+      "seconds": 7.413,
+      "overhead": 3.884
+    },
+    "activity_tests.test_browser_probe": {
+      "tests": 16,
+      "seconds": 0.106,
+      "overhead": 4.408
+    },
+    "activity_tests.test_cap": {
+      "tests": 10,
+      "seconds": 0.302,
+      "overhead": 3.91
+    },
+    "activity_tests.test_database": {
+      "tests": 20,
+      "seconds": 2.558,
+      "overhead": 4.265
+    },
+    "activity_tests.test_docs": {
+      "tests": 3,
+      "seconds": 0.704,
+      "overhead": 4.328
+    },
+    "activity_tests.test_document": {
+      "tests": 14,
+      "seconds": 2.458,
+      "overhead": 4.379
+    },
+    "activity_tests.test_emit": {
+      "tests": 15,
+      "seconds": 5.871,
+      "overhead": 4.428
+    },
+    "activity_tests.test_filter": {
+      "tests": 15,
+      "seconds": 0.101,
+      "overhead": 4.311
+    },
+    "activity_tests.test_filter_paths": {
+      "tests": 14,
+      "seconds": 0.101,
+      "overhead": 4.371
+    },
+    "activity_tests.test_fold": {
+      "tests": 6,
+      "seconds": 0.0,
+      "overhead": 4.323
+    },
+    "activity_tests.test_frame": {
+      "tests": 11,
+      "seconds": 3.169,
+      "overhead": 4.406
+    },
+    "activity_tests.test_goal_strip": {
+      "tests": 7,
+      "seconds": 2.173,
+      "overhead": 4.027
+    },
+    "activity_tests.test_grouping": {
+      "tests": 15,
+      "seconds": 0.151,
+      "overhead": 4.351
+    },
+    "activity_tests.test_labels": {
+      "tests": 14,
+      "seconds": 0.0,
+      "overhead": 4.425
+    },
+    "activity_tests.test_ledger": {
+      "tests": 12,
+      "seconds": 6.3,
+      "overhead": 4.465
+    },
+    "activity_tests.test_ledger_earlier": {
+      "tests": 6,
+      "seconds": 1.976,
+      "overhead": 4.47
+    },
+    "activity_tests.test_ledger_fold": {
+      "tests": 4,
+      "seconds": 1.378,
+      "overhead": 4.203
+    },
+    "activity_tests.test_live": {
+      "tests": 21,
+      "seconds": 1.924,
+      "overhead": 4.281
+    },
+    "activity_tests.test_page": {
+      "tests": 17,
+      "seconds": 1.963,
+      "overhead": 4.413
+    },
+    "activity_tests.test_pinned_activity_defects": {
+      "tests": 4,
+      "seconds": 0.05,
+      "overhead": 4.446
+    },
+    "activity_tests.test_planted": {
+      "tests": 7,
+      "seconds": 4.783,
+      "overhead": 4.076
+    },
+    "activity_tests.test_prior_page": {
+      "tests": 1,
+      "seconds": 0.731,
+      "overhead": 4.027
+    },
+    "activity_tests.test_privacy": {
+      "tests": 10,
+      "seconds": 33.139,
+      "overhead": 3.916
+    },
+    "activity_tests.test_read": {
+      "tests": 11,
+      "seconds": 0.151,
+      "overhead": 4.346
+    },
+    "activity_tests.test_renderer": {
+      "tests": 14,
+      "seconds": 3.829,
+      "overhead": 4.425
+    },
+    "activity_tests.test_row_shape": {
+      "tests": 12,
+      "seconds": 18.788,
+      "overhead": 4.397
+    },
+    "activity_tests.test_run": {
+      "tests": 14,
+      "seconds": 6.057,
+      "overhead": 4.455
+    },
+    "activity_tests.test_size": {
+      "tests": 14,
+      "seconds": 13.843,
+      "overhead": 4.45
+    },
+    "activity_tests.test_store": {
+      "tests": 23,
+      "seconds": 10.221,
+      "overhead": 4.615
+    },
+    "activity_tests.test_t3state_locked": {
+      "tests": 4,
+      "seconds": 2.062,
+      "overhead": 4.932
+    },
+    "activity_tests.test_t3state_read_race": {
+      "tests": 1,
+      "seconds": 0.0,
+      "overhead": 4.079
+    },
+    "activity_tests.test_words": {
+      "tests": 8,
+      "seconds": 1.672,
+      "overhead": 4.233
+    },
+    "brigade.affected.test_ancestor_shadow": {
+      "tests": 2,
+      "seconds": 1.032,
+      "overhead": 9.808
+    },
+    "brigade.affected.test_ancestor_syspath_compete": {
+      "tests": 3,
+      "seconds": 1.624,
+      "overhead": 10.123
+    },
+    "brigade.affected.test_blockers": {
+      "tests": 3,
+      "seconds": 1.573,
+      "overhead": 10.442
+    },
+    "brigade.affected.test_doc_checks": {
+      "tests": 10,
+      "seconds": 4.903,
+      "overhead": 9.724
+    },
+    "brigade.affected.test_env_exec": {
+      "tests": 1,
+      "seconds": 0.603,
+      "overhead": 10.29
+    },
+    "brigade.affected.test_nested_facade": {
+      "tests": 2,
+      "seconds": 1.13,
+      "overhead": 9.604
+    },
+    "brigade.affected.test_private_packages": {
+      "tests": 5,
+      "seconds": 4.112,
+      "overhead": 9.963
+    },
+    "brigade.affected.test_split1": {
+      "tests": 12,
+      "seconds": 150.971,
+      "overhead": 9.022
+    },
+    "brigade.affected.test_split2": {
+      "tests": 12,
+      "seconds": 5.595,
+      "overhead": 10.308
+    },
+    "brigade.affected.test_split3": {
+      "tests": 13,
+      "seconds": 92.618,
+      "overhead": 10.308
+    },
+    "brigade.affected.test_transitive": {
+      "tests": 2,
+      "seconds": 1.005,
+      "overhead": 9.627
+    },
+    "brigade.edits_code.test_apply": {
+      "tests": 14,
+      "seconds": 12.744,
+      "overhead": 4.458
+    },
+    "brigade.edits_code.test_apply_ignored": {
+      "tests": 1,
+      "seconds": 0.805,
+      "overhead": 4.185
+    },
+    "brigade.edits_code.test_apply_start": {
+      "tests": 3,
+      "seconds": 2.413,
+      "overhead": 4.246
+    },
+    "brigade.edits_code.test_ast_exemption": {
+      "tests": 4,
+      "seconds": 2.177,
+      "overhead": 4.767
+    },
+    "brigade.edits_code.test_binary_cap": {
+      "tests": 1,
+      "seconds": 0.852,
+      "overhead": 4.172
+    },
+    "brigade.edits_code.test_git_floor": {
+      "tests": 2,
+      "seconds": 1.055,
+      "overhead": 3.954
+    },
+    "brigade.edits_code.test_injected_git": {
+      "tests": 2,
+      "seconds": 1.534,
+      "overhead": 3.992
+    },
+    "brigade.edits_code.test_replay_setup": {
+      "tests": 4,
+      "seconds": 3.022,
+      "overhead": 4.75
+    },
+    "brigade.edits_code.test_round_change_note": {
+      "tests": 10,
+      "seconds": 7.015,
+      "overhead": 4.051
+    },
+    "brigade.edits_code.test_small_fix": {
+      "tests": 5,
+      "seconds": 3.084,
+      "overhead": 3.874
+    },
+    "brigade.house_rules.test_cap": {
+      "tests": 6,
+      "seconds": 2.392,
+      "overhead": 4.455
+    },
+    "brigade.house_rules.test_missing": {
+      "tests": 2,
+      "seconds": 0.659,
+      "overhead": 3.937
+    },
+    "brigade.notes.test_follow_up_fixes": {
+      "tests": 2,
+      "seconds": 0.869,
+      "overhead": 4.094
+    },
+    "brigade.notes.test_notes": {
+      "tests": 8,
+      "seconds": 3.143,
+      "overhead": 4.527
+    },
+    "brigade.reporting.test_close": {
+      "tests": 20,
+      "seconds": 10.88,
+      "overhead": 4.348
+    },
+    "brigade.reporting.test_goals": {
+      "tests": 20,
+      "seconds": 12.835,
+      "overhead": 4.285
+    },
+    "brigade.reporting.test_spend_section": {
+      "tests": 5,
+      "seconds": 1.512,
+      "overhead": 4.054
+    },
+    "brigade.reporting.test_status": {
+      "tests": 19,
+      "seconds": 15.053,
+      "overhead": 4.565
+    },
+    "brigade.reporting.test_weekly_reasons": {
+      "tests": 10,
+      "seconds": 2.968,
+      "overhead": 4.048
+    },
+    "brigade.reviews.test_blank_reason": {
+      "tests": 5,
+      "seconds": 1.725,
+      "overhead": 4.043
+    },
+    "brigade.reviews.test_helper_archive": {
+      "tests": 5,
+      "seconds": 2.377,
+      "overhead": 4.624
+    },
+    "brigade.reviews.test_hit_rate": {
+      "tests": 16,
+      "seconds": 4.869,
+      "overhead": 4.363
+    },
+    "brigade.reviews.test_late_helper_rows": {
+      "tests": 4,
+      "seconds": 2.139,
+      "overhead": 4.888
+    },
+    "brigade.reviews.test_reason_class": {
+      "tests": 18,
+      "seconds": 5.41,
+      "overhead": 4.399
+    },
+    "brigade.reviews.test_review_numbers": {
+      "tests": 7,
+      "seconds": 2.068,
+      "overhead": 4.084
+    },
+    "brigade.reviews.test_split1": {
+      "tests": 14,
+      "seconds": 8.179,
+      "overhead": 4.433
+    },
+    "brigade.reviews.test_split2": {
+      "tests": 17,
+      "seconds": 22.541,
+      "overhead": 4.351
+    },
+    "brigade.reviews.test_split3": {
+      "tests": 26,
+      "seconds": 19.323,
+      "overhead": 4.78
+    },
+    "brigade.reviews.test_split4": {
+      "tests": 23,
+      "seconds": 21.442,
+      "overhead": 4.612
+    },
+    "brigade.reviews.test_split5": {
+      "tests": 13,
+      "seconds": 9.773,
+      "overhead": 4.185
+    },
+    "brigade.reviews.test_threads_prose_roles": {
+      "tests": 3,
+      "seconds": 1.006,
+      "overhead": 4.439
+    },
+    "brigade.seat_cooldown.test_command": {
+      "tests": 10,
+      "seconds": 5.216,
+      "overhead": 4.03
+    },
+    "brigade.seat_cooldown.test_launch": {
+      "tests": 4,
+      "seconds": 1.752,
+      "overhead": 4.564
+    },
+    "brigade.seat_cooldown.test_lines": {
+      "tests": 2,
+      "seconds": 1.219,
+      "overhead": 3.996
+    },
+    "brigade.spend.test_spend_1": {
+      "tests": 10,
+      "seconds": 2.739,
+      "overhead": 4.257
+    },
+    "brigade.spend.test_spend_2": {
+      "tests": 10,
+      "seconds": 5.326,
+      "overhead": 4.218
+    },
+    "brigade.spend.test_spend_3": {
+      "tests": 10,
+      "seconds": 9.887,
+      "overhead": 4.117
+    },
+    "brigade.spend.test_spend_4": {
+      "tests": 8,
+      "seconds": 6.435,
+      "overhead": 4.581
+    },
+    "brigade.startable_tickets.test_after": {
+      "tests": 4,
+      "seconds": 3.236,
+      "overhead": 4.352
+    },
+    "brigade.support": {
+      "tests": 23,
+      "seconds": 0.0,
+      "overhead": 4.634
+    },
+    "brigade.test_add_paths_widen": {
+      "tests": 8,
+      "seconds": 16.061,
+      "overhead": 4.369
+    },
+    "brigade.test_admin": {
+      "tests": 42,
+      "seconds": 42.205,
+      "overhead": 4.662
+    },
+    "brigade.test_affected": {
+      "tests": 12,
+      "seconds": 6.854,
+      "overhead": 10.129
+    },
+    "brigade.test_archive_threads": {
+      "tests": 16,
+      "seconds": 9.157,
+      "overhead": 4.19
+    },
+    "brigade.test_briefs": {
+      "tests": 78,
+      "seconds": 51.016,
+      "overhead": 5.701
+    },
+    "brigade.test_call": {
+      "tests": 6,
+      "seconds": 0.302,
+      "overhead": 4.546
+    },
+    "brigade.test_context_cap": {
+      "tests": 59,
+      "seconds": 23.982,
+      "overhead": 4.721
+    },
+    "brigade.test_contract_check_command": {
+      "tests": 10,
+      "seconds": 5.797,
+      "overhead": 4.208
+    },
+    "brigade.test_contract_read_race": {
+      "tests": 1,
+      "seconds": 0.11,
+      "overhead": 4.165
+    },
+    "brigade.test_entry_load": {
+      "tests": 8,
+      "seconds": 3.555,
+      "overhead": 4.71
+    },
+    "brigade.test_fire_broad_paths": {
+      "tests": 5,
+      "seconds": 3.657,
+      "overhead": 4.645
+    },
+    "brigade.test_fire_layout": {
+      "tests": 29,
+      "seconds": 74.778,
+      "overhead": 4.685
+    },
+    "brigade.test_fire_write": {
+      "tests": 4,
+      "seconds": 4.215,
+      "overhead": 4.226
+    },
+    "brigade.test_full_send": {
+      "tests": 4,
+      "seconds": 1.368,
+      "overhead": 4.461
+    },
+    "brigade.test_gate_parity": {
+      "tests": 5,
+      "seconds": 6.311,
+      "overhead": 4.583
+    },
+    "brigade.test_generated_map": {
+      "tests": 6,
+      "seconds": 6.705,
+      "overhead": 4.481
+    },
+    "brigade.test_goal_write": {
+      "tests": 4,
+      "seconds": 2.989,
+      "overhead": 4.641
+    },
+    "brigade.test_handoff": {
+      "tests": 48,
+      "seconds": 32.843,
+      "overhead": 4.77
+    },
+    "brigade.test_host_gh_guard": {
+      "tests": 4,
+      "seconds": 0.217,
+      "overhead": 4.542
+    },
+    "brigade.test_items": {
+      "tests": 120,
+      "seconds": 102.664,
+      "overhead": 4.858
+    },
+    "brigade.test_items_next": {
+      "tests": 3,
+      "seconds": 2.614,
+      "overhead": 4.314
+    },
+    "brigade.test_launch": {
+      "tests": 30,
+      "seconds": 14.435,
+      "overhead": 4.781
+    },
+    "brigade.test_leases": {
+      "tests": 15,
+      "seconds": 7.383,
+      "overhead": 4.396
+    },
+    "brigade.test_loader": {
+      "tests": 3,
+      "seconds": 0.453,
+      "overhead": 4.415
+    },
+    "brigade.test_notify": {
+      "tests": 18,
+      "seconds": 15.501,
+      "overhead": 4.532
+    },
+    "brigade.test_onboard": {
+      "tests": 18,
+      "seconds": 13.275,
+      "overhead": 4.513
+    },
+    "brigade.test_onboard_contract_commands": {
+      "tests": 3,
+      "seconds": 1.925,
+      "overhead": 4.28
+    },
+    "brigade.test_onboard_r3": {
+      "tests": 3,
+      "seconds": 3.345,
+      "overhead": 4.196
+    },
+    "brigade.test_onboard_unprotected": {
+      "tests": 2,
+      "seconds": 1.176,
+      "overhead": 3.941
+    },
+    "brigade.test_once_flags": {
+      "tests": 3,
+      "seconds": 0.822,
+      "overhead": 4.23
+    },
+    "brigade.test_paths_flag": {
+      "tests": 5,
+      "seconds": 1.257,
+      "overhead": 4.623
+    },
+    "brigade.test_pr_credit": {
+      "tests": 13,
+      "seconds": 4.733,
+      "overhead": 4.415
+    },
+    "brigade.test_rename": {
+      "tests": 9,
+      "seconds": 8.208,
+      "overhead": 4.094
+    },
+    "brigade.test_rename_kill": {
+      "tests": 1,
+      "seconds": 0.489,
+      "overhead": 4.169
+    },
+    "brigade.test_rename_refs": {
+      "tests": 15,
+      "seconds": 9.286,
+      "overhead": 4.271
+    },
+    "brigade.test_reports": {
+      "tests": 48,
+      "seconds": 17.971,
+      "overhead": 4.415
+    },
+    "brigade.test_review_sha": {
+      "tests": 11,
+      "seconds": 9.803,
+      "overhead": 4.357
+    },
+    "brigade.test_reviews": {
+      "tests": 22,
+      "seconds": 9.974,
+      "overhead": 4.391
+    },
+    "brigade.test_setup": {
+      "tests": 26,
+      "seconds": 7.764,
+      "overhead": 5.108
+    },
+    "brigade.test_startable": {
+      "tests": 44,
+      "seconds": 54.821,
+      "overhead": 4.442
+    },
+    "brigade.test_store": {
+      "tests": 28,
+      "seconds": 18.738,
+      "overhead": 4.509
+    },
+    "brigade.test_tickets": {
+      "tests": 119,
+      "seconds": 91.967,
+      "overhead": 4.99
+    },
+    "brigade.test_watch_idle": {
+      "tests": 13,
+      "seconds": 6.93,
+      "overhead": 4.499
+    },
+    "brigade.test_widen": {
+      "tests": 11,
+      "seconds": 13.949,
+      "overhead": 4.259
+    },
+    "brigade.test_worker_setup": {
+      "tests": 3,
+      "seconds": 4.025,
+      "overhead": 4.272
+    },
+    "brigade.test_worker_thread": {
+      "tests": 10,
+      "seconds": 4.155,
+      "overhead": 4.212
+    },
+    "brigade.tickets.test_after": {
+      "tests": 15,
+      "seconds": 6.407,
+      "overhead": 4.308
+    },
+    "brigade.tickets.test_after_lock": {
+      "tests": 4,
+      "seconds": 9.439,
+      "overhead": 4.542
+    },
+    "brigade.tickets.test_sweep": {
+      "tests": 20,
+      "seconds": 7.616,
+      "overhead": 4.33
+    },
+    "brigade.tickets.test_sweep_snapshot": {
+      "tests": 6,
+      "seconds": 1.853,
+      "overhead": 4.379
+    },
+    "brigade.wake.test_intake_webhook": {
+      "tests": 5,
+      "seconds": 1.381,
+      "overhead": 4.359
+    },
+    "brigade.wake.test_wake_1": {
+      "tests": 13,
+      "seconds": 18.284,
+      "overhead": 4.436
+    },
+    "brigade.wake.test_wake_2": {
+      "tests": 13,
+      "seconds": 17.037,
+      "overhead": 4.781
+    },
+    "brigade.wake.test_wake_3": {
+      "tests": 6,
+      "seconds": 3.36,
+      "overhead": 4.388
+    },
+    "brigade.wake.test_wake_4": {
+      "tests": 12,
+      "seconds": 5.785,
+      "overhead": 4.182
+    },
+    "brigade.wake.test_wake_5": {
+      "tests": 7,
+      "seconds": 4.72,
+      "overhead": 4.079
+    },
+    "brigade.watch.test_watch_1": {
+      "tests": 17,
+      "seconds": 23.961,
+      "overhead": 4.402
+    },
+    "brigade.watch.test_watch_2": {
+      "tests": 16,
+      "seconds": 14.945,
+      "overhead": 4.273
+    },
+    "brigade.watch.test_watch_3": {
+      "tests": 14,
+      "seconds": 16.813,
+      "overhead": 4.363
+    },
+    "brigade.watch.test_watch_after": {
+      "tests": 9,
+      "seconds": 4.538,
+      "overhead": 4.165
+    },
+    "brigade.worker_briefs.test_brief_files": {
+      "tests": 5,
+      "seconds": 2.746,
+      "overhead": 4.123
+    },
+    "brigade.worker_briefs.test_claims_cap": {
+      "tests": 4,
+      "seconds": 1.358,
+      "overhead": 4.496
+    },
+    "brigade.worker_briefs.test_claims_cap_rounds": {
+      "tests": 3,
+      "seconds": 1.155,
+      "overhead": 4.31
+    },
+    "brigade.worker_briefs.test_report_retry": {
+      "tests": 1,
+      "seconds": 0.464,
+      "overhead": 4.094
+    },
+    "check_tests.test_capacity": {
+      "tests": 4,
+      "seconds": 0.151,
+      "overhead": 4.443
+    },
+    "check_tests.test_changes": {
+      "tests": 10,
+      "seconds": 0.051,
+      "overhead": 4.452
+    },
+    "check_tests.test_checkout": {
+      "tests": 16,
+      "seconds": 0.151,
+      "overhead": 4.324
+    },
+    "check_tests.test_fence": {
+      "tests": 17,
+      "seconds": 0.302,
+      "overhead": 4.396
+    },
+    "check_tests.test_fence_brigade": {
+      "tests": 21,
+      "seconds": 0.202,
+      "overhead": 4.421
+    },
+    "check_tests.test_fence_landing": {
+      "tests": 21,
+      "seconds": 0.202,
+      "overhead": 4.654
+    },
+    "check_tests.test_fragments": {
+      "tests": 37,
+      "seconds": 0.504,
+      "overhead": 4.544
+    },
+    "check_tests.test_home_paths": {
+      "tests": 5,
+      "seconds": 0.0,
+      "overhead": 4.029
+    },
+    "check_tests.test_readme": {
+      "tests": 21,
+      "seconds": 34.63,
+      "overhead": 4.795
+    },
+    "check_tests.test_retired_tools": {
+      "tests": 3,
+      "seconds": 0.0,
+      "overhead": 4.307
+    },
+    "check_tests.test_size_limit": {
+      "tests": 27,
+      "seconds": 1.158,
+      "overhead": 4.578
+    },
+    "check_tests.test_size_relative": {
+      "tests": 11,
+      "seconds": 0.503,
+      "overhead": 4.235
+    },
+    "check_tests.test_tree_rules": {
+      "tests": 17,
+      "seconds": 10.421,
+      "overhead": 4.385
+    },
+    "check_tests.test_tstack_pin": {
+      "tests": 3,
+      "seconds": 0.151,
+      "overhead": 4.373
+    },
+    "install_tests.test_fresh": {
+      "tests": 2,
+      "seconds": 1.32,
+      "overhead": 4.014
+    },
+    "install_tests.test_in_process": {
+      "tests": 2,
+      "seconds": 0.151,
+      "overhead": 3.996
+    },
+    "install_tests.test_part_01": {
+      "tests": 15,
+      "seconds": 7.438,
+      "overhead": 4.246
+    },
+    "install_tests.test_part_02": {
+      "tests": 12,
+      "seconds": 7.002,
+      "overhead": 4.159
+    },
+    "install_tests.test_part_03": {
+      "tests": 8,
+      "seconds": 3.655,
+      "overhead": 4.874
+    },
+    "install_tests.test_part_04": {
+      "tests": 14,
+      "seconds": 7.21,
+      "overhead": 4.504
+    },
+    "install_tests.test_part_05": {
+      "tests": 12,
+      "seconds": 3.986,
+      "overhead": 4.17
+    },
+    "install_tests.test_part_06": {
+      "tests": 7,
+      "seconds": 11.437,
+      "overhead": 4.119
+    },
+    "install_tests.test_part_07": {
+      "tests": 9,
+      "seconds": 7.096,
+      "overhead": 4.046
+    },
+    "install_tests.test_part_08": {
+      "tests": 10,
+      "seconds": 6.357,
+      "overhead": 4.565
+    },
+    "install_tests.test_part_09": {
+      "tests": 13,
+      "seconds": 5.046,
+      "overhead": 4.617
+    },
+    "install_tests.test_part_10": {
+      "tests": 17,
+      "seconds": 5.651,
+      "overhead": 4.33
+    },
+    "install_tests.test_part_11": {
+      "tests": 14,
+      "seconds": 5.055,
+      "overhead": 4.302
+    },
+    "install_tests.test_part_12": {
+      "tests": 11,
+      "seconds": 3.948,
+      "overhead": 4.3
+    },
+    "install_tests.test_part_13": {
+      "tests": 10,
+      "seconds": 2.377,
+      "overhead": 4.429
+    },
+    "install_tests.test_part_14": {
+      "tests": 13,
+      "seconds": 6.415,
+      "overhead": 4.706
+    },
+    "install_tests.test_part_15": {
+      "tests": 15,
+      "seconds": 6.18,
+      "overhead": 4.342
+    },
+    "install_tests.test_part_16": {
+      "tests": 13,
+      "seconds": 5.314,
+      "overhead": 4.746
+    },
+    "install_tests.test_part_17": {
+      "tests": 18,
+      "seconds": 3.457,
+      "overhead": 4.349
+    },
+    "install_tests.test_part_18": {
+      "tests": 12,
+      "seconds": 2.138,
+      "overhead": 4.105
+    },
+    "install_tests.test_part_19": {
+      "tests": 16,
+      "seconds": 6.014,
+      "overhead": 4.28
+    },
+    "install_tests.test_part_20": {
+      "tests": 14,
+      "seconds": 2.227,
+      "overhead": 4.664
+    },
+    "install_tests.test_part_21": {
+      "tests": 10,
+      "seconds": 2.592,
+      "overhead": 4.566
+    },
+    "isolation_tests.test_adoption": {
+      "tests": 7,
+      "seconds": 0.515,
+      "overhead": 4.161
+    },
+    "isolation_tests.test_descriptor_paths": {
+      "tests": 9,
+      "seconds": 0.554,
+      "overhead": 3.928
+    },
+    "isolation_tests.test_environment": {
+      "tests": 1,
+      "seconds": 0.0,
+      "overhead": 4.359
+    },
+    "isolation_tests.test_home_isolation": {
+      "tests": 17,
+      "seconds": 0.151,
+      "overhead": 4.367
+    },
+    "isolation_tests.test_launch": {
+      "tests": 2,
+      "seconds": 12.548,
+      "overhead": 4.114
+    },
+    "isolation_tests.test_minimal_environment": {
+      "tests": 5,
+      "seconds": 0.819,
+      "overhead": 4.137
+    },
+    "isolation_tests.test_mount_alias": {
+      "tests": 4,
+      "seconds": 0.453,
+      "overhead": 4.216
+    },
+    "isolation_tests.test_original_roots": {
+      "tests": 4,
+      "seconds": 4.409,
+      "overhead": 4.152
+    },
+    "isolation_tests.test_record_safety": {
+      "tests": 8,
+      "seconds": 0.453,
+      "overhead": 4.911
+    },
+    "isolation_tests.test_static_activation": {
+      "tests": 2,
+      "seconds": 1.006,
+      "overhead": 4.045
+    },
+    "landing.identity.test_author": {
+      "tests": 29,
+      "seconds": 36.317,
+      "overhead": 4.612
+    },
+    "landing.identity.test_fence": {
+      "tests": 1,
+      "seconds": 2.73,
+      "overhead": 4.289
+    },
+    "landing.identity.test_pause": {
+      "tests": 25,
+      "seconds": 42.697,
+      "overhead": 4.604
+    },
+    "landing.identity.test_worktree": {
+      "tests": 14,
+      "seconds": 9.119,
+      "overhead": 4.463
+    },
+    "landing.in_process.test_descriptors": {
+      "tests": 8,
+      "seconds": 4.491,
+      "overhead": 4.528
+    },
+    "landing.in_process.test_parser_isolation": {
+      "tests": 3,
+      "seconds": 0.201,
+      "overhead": 4.482
+    },
+    "landing.in_process.test_transactions": {
+      "tests": 7,
+      "seconds": 9.762,
+      "overhead": 4.345
+    },
+    "landing.leases.test_claims": {
+      "tests": 22,
+      "seconds": 31.899,
+      "overhead": 4.314
+    },
+    "landing.leases.test_reservations": {
+      "tests": 13,
+      "seconds": 21.221,
+      "overhead": 4.446
+    },
+    "landing.leases.test_shares": {
+      "tests": 12,
+      "seconds": 21.135,
+      "overhead": 4.209
+    },
+    "landing.merge.test_awaiting": {
+      "tests": 14,
+      "seconds": 47.771,
+      "overhead": 4.348
+    },
+    "landing.merge.test_checks": {
+      "tests": 17,
+      "seconds": 43.817,
+      "overhead": 4.298
+    },
+    "landing.merge.test_forge": {
+      "tests": 15,
+      "seconds": 47.387,
+      "overhead": 4.855
+    },
+    "landing.merge.test_heads": {
+      "tests": 9,
+      "seconds": 36.881,
+      "overhead": 4.264
+    },
+    "landing.merge.test_init": {
+      "tests": 24,
+      "seconds": 29.616,
+      "overhead": 4.571
+    },
+    "landing.merge.test_rebuild": {
+      "tests": 12,
+      "seconds": 52.206,
+      "overhead": 4.295
+    },
+    "landing.merge.test_required": {
+      "tests": 14,
+      "seconds": 24.925,
+      "overhead": 4.639
+    },
+    "landing.merge.test_review": {
+      "tests": 10,
+      "seconds": 30.003,
+      "overhead": 4.461
+    },
+    "landing.push_local.test_failure_messages": {
+      "tests": 8,
+      "seconds": 5.716,
+      "overhead": 4.169
+    },
+    "landing.push_local.test_init_refusal": {
+      "tests": 10,
+      "seconds": 6.679,
+      "overhead": 4.41
+    },
+    "landing.push_local.test_no_checks_warning": {
+      "tests": 8,
+      "seconds": 5.828,
+      "overhead": 4.267
+    },
+    "landing.queue.test_contract": {
+      "tests": 17,
+      "seconds": 13.695,
+      "overhead": 4.403
+    },
+    "landing.queue.test_landing": {
+      "tests": 22,
+      "seconds": 42.936,
+      "overhead": 4.357
+    },
+    "landing.queue.test_prs": {
+      "tests": 19,
+      "seconds": 35.169,
+      "overhead": 4.307
+    },
+    "landing.queue.test_prune": {
+      "tests": 3,
+      "seconds": 12.46,
+      "overhead": 4.276
+    },
+    "landing.queue.test_settle_cleanup": {
+      "tests": 4,
+      "seconds": 9.605,
+      "overhead": 4.19
+    },
+    "landing.rebuilds.test_build_watch": {
+      "tests": 7,
+      "seconds": 6.591,
+      "overhead": 4.375
+    },
+    "landing.rebuilds.test_cleanup": {
+      "tests": 7,
+      "seconds": 11.267,
+      "overhead": 4.378
+    },
+    "landing.rebuilds.test_config": {
+      "tests": 5,
+      "seconds": 5.052,
+      "overhead": 4.165
+    },
+    "landing.rebuilds.test_conflicts": {
+      "tests": 12,
+      "seconds": 18.5,
+      "overhead": 4.269
+    },
+    "landing.rebuilds.test_interrupts": {
+      "tests": 4,
+      "seconds": 1.872,
+      "overhead": 4.334
+    },
+    "landing.rebuilds.test_payloads": {
+      "tests": 9,
+      "seconds": 9.949,
+      "overhead": 4.146
+    },
+    "landing.rebuilds.test_reaping": {
+      "tests": 3,
+      "seconds": 43.772,
+      "overhead": 4.311
+    },
+    "landing.slot.test_cap_flags": {
+      "tests": 10,
+      "seconds": 7.133,
+      "overhead": 4.271
+    },
+    "landing.slot.test_caps": {
+      "tests": 10,
+      "seconds": 17.314,
+      "overhead": 4.306
+    },
+    "landing.slot.test_darwin": {
+      "tests": 6,
+      "seconds": 26.59,
+      "overhead": 4.323
+    },
+    "landing.slot.test_exclusive_drain": {
+      "tests": 2,
+      "seconds": 1.572,
+      "overhead": 4.133
+    },
+    "landing.slot.test_group_signals": {
+      "tests": 6,
+      "seconds": 10.179,
+      "overhead": 4.186
+    },
+    "landing.slot.test_holder_records": {
+      "tests": 14,
+      "seconds": 7.789,
+      "overhead": 4.721
+    },
+    "landing.slot.test_ofd": {
+      "tests": 4,
+      "seconds": 4.955,
+      "overhead": 4.526
+    },
+    "landing.slot.test_order": {
+      "tests": 11,
+      "seconds": 33.495,
+      "overhead": 4.318
+    },
+    "landing.slot.test_record_files": {
+      "tests": 11,
+      "seconds": 3.32,
+      "overhead": 4.257
+    },
+    "landing.slot.test_tickets": {
+      "tests": 7,
+      "seconds": 3.183,
+      "overhead": 4.359
+    },
+    "landing.slot.test_wait_lines": {
+      "tests": 4,
+      "seconds": 4.239,
+      "overhead": 4.411
+    },
+    "landing.test_contests": {
+      "tests": 16,
+      "seconds": 31.412,
+      "overhead": 4.21
+    },
+    "landing.test_host_gh_guard": {
+      "tests": 6,
+      "seconds": 0.201,
+      "overhead": 4.122
+    },
+    "landing.test_lease_widen": {
+      "tests": 11,
+      "seconds": 10.76,
+      "overhead": 4.196
+    },
+    "landing.test_size_staged": {
+      "tests": 2,
+      "seconds": 1.446,
+      "overhead": 4.133
+    },
+    "landing.test_slot": {
+      "tests": 11,
+      "seconds": 8.45,
+      "overhead": 4.307
+    },
+    "landing.test_support": {
+      "tests": 2,
+      "seconds": 0.352,
+      "overhead": 4.184
+    },
+    "landing.test_times": {
+      "tests": 10,
+      "seconds": 22.445,
+      "overhead": 4.449
+    },
+    "landing.test_times_locked": {
+      "tests": 1,
+      "seconds": 5.382,
+      "overhead": 4.502
+    },
+    "landing.test_times_read_race": {
+      "tests": 1,
+      "seconds": 0.0,
+      "overhead": 4.451
+    },
+    "landing.token_limit.test_baseline_schema": {
+      "tests": 23,
+      "seconds": 9.765,
+      "overhead": 4.678
+    },
+    "landing.token_limit.test_baselines": {
+      "tests": 19,
+      "seconds": 19.791,
+      "overhead": 4.241
+    },
+    "landing.token_limit.test_land_time": {
+      "tests": 20,
+      "seconds": 21.159,
+      "overhead": 4.312
+    },
+    "landing.token_limit.test_relative": {
+      "tests": 8,
+      "seconds": 6.927,
+      "overhead": 4.297
+    },
+    "ops_tests.test_archive": {
+      "tests": 15,
+      "seconds": 3.351,
+      "overhead": 4.383
+    },
+    "ops_tests.test_archive_ancestry": {
+      "tests": 12,
+      "seconds": 1.61,
+      "overhead": 4.262
+    },
+    "ops_tests.test_archive_batches": {
+      "tests": 17,
+      "seconds": 1.863,
+      "overhead": 4.498
+    },
+    "ops_tests.test_config": {
+      "tests": 11,
+      "seconds": 4.678,
+      "overhead": 4.201
+    },
+    "ops_tests.test_scan": {
+      "tests": 2,
+      "seconds": 0.05,
+      "overhead": 4.133
+    },
+    "pstack_t3.test_build": {
+      "tests": 25,
+      "seconds": 12.475,
+      "overhead": 4.604
+    },
+    "pstack_t3.test_catalog_merge": {
+      "tests": 8,
+      "seconds": 0.05,
+      "overhead": 4.452
+    },
+    "pstack_t3.test_changelog": {
+      "tests": 4,
+      "seconds": 0.101,
+      "overhead": 4.343
+    },
+    "pstack_t3.test_code_delegate": {
+      "tests": 2,
+      "seconds": 0.0,
+      "overhead": 4.143
+    },
+    "pstack_t3.test_delegation_docs": {
+      "tests": 17,
+      "seconds": 0.0,
+      "overhead": 4.683
+    },
+    "pstack_t3.test_install": {
+      "tests": 9,
+      "seconds": 4.21,
+      "overhead": 4.263
+    },
+    "pstack_t3.test_modes": {
+      "tests": 20,
+      "seconds": 0.051,
+      "overhead": 4.259
+    },
+    "pstack_t3.test_roles": {
+      "tests": 16,
+      "seconds": 0.705,
+      "overhead": 4.295
+    },
+    "pstack_t3.test_roles_config": {
+      "tests": 18,
+      "seconds": 0.05,
+      "overhead": 4.308
+    },
+    "pstack_t3.test_runtime_docs": {
+      "tests": 9,
+      "seconds": 0.0,
+      "overhead": 4.448
+    },
+    "pstack_t3.test_secrets": {
+      "tests": 6,
+      "seconds": 0.0,
+      "overhead": 3.982
+    },
+    "pstack_t3.test_thread_docs": {
+      "tests": 26,
+      "seconds": 0.0,
+      "overhead": 4.631
+    },
+    "pstack_t3.test_verify_docs": {
+      "tests": 8,
+      "seconds": 0.0,
+      "overhead": 4.691
+    },
+    "pstack_t3.test_webhooks": {
+      "tests": 6,
+      "seconds": 0.0,
+      "overhead": 3.928
+    },
+    "pstack_t3.test_worktree": {
+      "tests": 7,
+      "seconds": 5.5,
+      "overhead": 4.159
+    },
+    "release_tests.test_archive_utf8": {
+      "tests": 1,
+      "seconds": 0.101,
+      "overhead": 4.348
+    },
+    "release_tests.test_fence_code": {
+      "tests": 3,
+      "seconds": 0.302,
+      "overhead": 4.351
+    },
+    "release_tests.test_helpers": {
+      "tests": 15,
+      "seconds": 0.051,
+      "overhead": 4.387
+    },
+    "release_tests.test_kind": {
+      "tests": 8,
+      "seconds": 1.219,
+      "overhead": 4.491
+    },
+    "release_tests.test_links": {
+      "tests": 2,
+      "seconds": 0.101,
+      "overhead": 4.141
+    },
+    "release_tests.test_notes_import_and_nesting": {
+      "tests": 3,
+      "seconds": 1.116,
+      "overhead": 4.398
+    },
+    "release_tests.test_notes_sections": {
+      "tests": 7,
+      "seconds": 1.572,
+      "overhead": 4.196
+    },
+    "release_tests.test_order": {
+      "tests": 10,
+      "seconds": 1.061,
+      "overhead": 4.383
+    },
+    "release_tests.test_oversize_new": {
+      "tests": 1,
+      "seconds": 0.151,
+      "overhead": 4.493
+    },
+    "release_tests.test_refusal": {
+      "tests": 18,
+      "seconds": 4.256,
+      "overhead": 4.474
+    },
+    "release_tests.test_rollover": {
+      "tests": 5,
+      "seconds": 0.553,
+      "overhead": 3.991
+    },
+    "release_tests.test_rule": {
+      "tests": 3,
+      "seconds": 0.0,
+      "overhead": 4.609
+    },
+    "release_tests.test_run": {
+      "tests": 24,
+      "seconds": 10.229,
+      "overhead": 4.562
+    },
+    "release_tests.test_stable_check": {
+      "tests": 4,
+      "seconds": 0.403,
+      "overhead": 4.267
+    },
+    "release_tests.test_undo": {
+      "tests": 6,
+      "seconds": 0.565,
+      "overhead": 3.877
+    },
+    "roles_tests.test_backup": {
+      "tests": 19,
+      "seconds": 1.208,
+      "overhead": 4.279
+    },
+    "roles_tests.test_backup_panel": {
+      "tests": 19,
+      "seconds": 2.983,
+      "overhead": 4.479
+    },
+    "roles_tests.test_backup_resume": {
+      "tests": 17,
+      "seconds": 1.057,
+      "overhead": 4.48
+    },
+    "roles_tests.test_backup_seats": {
+      "tests": 5,
+      "seconds": 0.774,
+      "overhead": 4.137
+    },
+    "roles_tests.test_check_brief": {
+      "tests": 24,
+      "seconds": 3.476,
+      "overhead": 4.563
+    },
+    "roles_tests.test_config_files": {
+      "tests": 11,
+      "seconds": 6.977,
+      "overhead": 4.231
+    },
+    "roles_tests.test_cursor": {
+      "tests": 5,
+      "seconds": 0.307,
+      "overhead": 4.076
+    },
+    "roles_tests.test_exclude": {
+      "tests": 15,
+      "seconds": 1.134,
+      "overhead": 4.382
+    },
+    "roles_tests.test_exclude_refusal": {
+      "tests": 8,
+      "seconds": 0.352,
+      "overhead": 4.401
+    },
+    "roles_tests.test_facade_compat": {
+      "tests": 4,
+      "seconds": 0.05,
+      "overhead": 4.265
+    },
+    "roles_tests.test_haiku": {
+      "tests": 11,
+      "seconds": 1.207,
+      "overhead": 4.073
+    },
+    "roles_tests.test_live_options": {
+      "tests": 8,
+      "seconds": 0.654,
+      "overhead": 4.251
+    },
+    "roles_tests.test_migration": {
+      "tests": 9,
+      "seconds": 0.353,
+      "overhead": 4.445
+    },
+    "roles_tests.test_mode_caps": {
+      "tests": 24,
+      "seconds": 1.602,
+      "overhead": 4.542
+    },
+    "roles_tests.test_mode_command": {
+      "tests": 21,
+      "seconds": 1.78,
+      "overhead": 4.892
+    },
+    "roles_tests.test_mode_functions": {
+      "tests": 4,
+      "seconds": 0.0,
+      "overhead": 4.267
+    },
+    "roles_tests.test_mode_lease": {
+      "tests": 22,
+      "seconds": 2.681,
+      "overhead": 4.301
+    },
+    "roles_tests.test_mode_sources": {
+      "tests": 23,
+      "seconds": 3.112,
+      "overhead": 4.578
+    },
+    "roles_tests.test_mode_write": {
+      "tests": 23,
+      "seconds": 1.487,
+      "overhead": 4.464
+    },
+    "roles_tests.test_opencode": {
+      "tests": 3,
+      "seconds": 1.776,
+      "overhead": 4.612
+    },
+    "roles_tests.test_opencode_fallback": {
+      "tests": 6,
+      "seconds": 0.302,
+      "overhead": 3.837
+    },
+    "roles_tests.test_opencode_panel": {
+      "tests": 8,
+      "seconds": 1.181,
+      "overhead": 4.232
+    },
+    "roles_tests.test_review_backups": {
+      "tests": 13,
+      "seconds": 1.224,
+      "overhead": 4.413
+    },
+    "roles_tests.test_runtime_mode": {
+      "tests": 19,
+      "seconds": 1.612,
+      "overhead": 4.463
+    },
+    "roles_tests.test_show": {
+      "tests": 3,
+      "seconds": 0.151,
+      "overhead": 4.603
+    },
+    "roles_tests.test_validate_allow": {
+      "tests": 4,
+      "seconds": 0.553,
+      "overhead": 4.324
+    },
+    "roles_tests.test_variant_cap": {
+      "tests": 8,
+      "seconds": 0.453,
+      "overhead": 4.169
+    },
+    "roles_tests.test_write_validate": {
+      "tests": 16,
+      "seconds": 2.38,
+      "overhead": 4.283
+    },
+    "runner_tests.test_cleanup": {
+      "tests": 8,
+      "seconds": 0.805,
+      "overhead": 4.089
+    },
+    "runner_tests.test_parent_exit": {
+      "tests": 3,
+      "seconds": 1.783,
+      "overhead": 4.753
+    },
+    "sync_upstream_tests.test_check_mode": {
+      "tests": 20,
+      "seconds": 6.446,
+      "overhead": 4.264
+    },
+    "sync_upstream_tests.test_excluded": {
+      "tests": 5,
+      "seconds": 1.574,
+      "overhead": 4.207
+    },
+    "sync_upstream_tests.test_layers": {
+      "tests": 11,
+      "seconds": 3.343,
+      "overhead": 4.022
+    },
+    "sync_upstream_tests.test_merge": {
+      "tests": 21,
+      "seconds": 9.046,
+      "overhead": 4.747
+    },
+    "sync_upstream_tests.test_merge_conflicts": {
+      "tests": 14,
+      "seconds": 5.757,
+      "overhead": 4.659
+    },
+    "sync_upstream_tests.test_sync_and_badge": {
+      "tests": 4,
+      "seconds": 5.726,
+      "overhead": 4.261
+    },
+    "test_activity_reviewers": {
+      "tests": 5,
+      "seconds": 0.05,
+      "overhead": 4.125
+    },
+    "test_brigade": {
+      "tests": 12,
+      "seconds": 7.19,
+      "overhead": 4.193
+    },
+    "test_brigade_fence": {
+      "tests": 1,
+      "seconds": 0.76,
+      "overhead": 3.881
+    },
+    "test_build": {
+      "tests": 17,
+      "seconds": 34.634,
+      "overhead": 4.517
+    },
+    "test_check": {
+      "tests": 2,
+      "seconds": 0.0,
+      "overhead": 4.14
+    },
+    "test_check_size": {
+      "tests": 2,
+      "seconds": 0.465,
+      "overhead": 4.025
+    },
+    "test_cli_reference": {
+      "tests": 10,
+      "seconds": 0.72,
+      "overhead": 4.059
+    },
+    "test_in_process": {
+      "tests": 4,
+      "seconds": 0.111,
+      "overhead": 4.315
+    },
+    "test_landing_areas": {
+      "tests": 2,
+      "seconds": 0.05,
+      "overhead": 4.141
+    },
+    "test_outsider_smoke": {
+      "tests": 13,
+      "seconds": 17.453,
+      "overhead": 4.529
+    },
+    "test_pstack_t3": {
+      "tests": 1,
+      "seconds": 0.0,
+      "overhead": 3.812
+    },
+    "test_run_tests": {
+      "tests": 117,
+      "seconds": 52.012,
+      "overhead": 5.066
+    },
+    "test_skill_commands": {
+      "tests": 5,
+      "seconds": 16.17,
+      "overhead": 4.122
+    },
+    "test_sync_tstack": {
+      "tests": 3,
+      "seconds": 0.0,
+      "overhead": 4.596
+    }
   }
 }
