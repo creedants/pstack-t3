@@ -15,7 +15,7 @@ DEFAULT_OVERHEAD = 1.0
 
 @dataclass(frozen=True)
 class ModuleCost:
-    """What one module cost in the recording. `tests` is its test count then, `seconds` the sum of its measured test seconds, and `overhead` the typical span of one shard of it less the gaps of that shard's tests."""
+    """What one module cost in the recording. `seconds` and `tests` hold its measured seconds per test, and `overhead` the typical span of one shard of it less the gaps of that shard's tests."""
 
     tests: int
     seconds: float
@@ -43,9 +43,11 @@ class Costs:
 def read_durations(path=None) -> Costs:
     """Return the recorded module costs and the defaults for a module with no record.
 
-    Read `path`, or the durations file beside this module. A missing, unreadable, empty, or malformed file
-    yields no record and the defaults. Invalid entries are skipped when possible; a read error falls back to
-    no record and the defaults. Coverage never depends on what the file holds.
+    Read `path`, or the durations file beside this module. Each module's record is a list of its measured
+    seconds per test and the typical overhead of one shard of it. A missing, unreadable, empty, or malformed
+    file yields no module record and the built-in defaults; a file whose module entries are partly invalid
+    keeps its own defaults and the entries it can read. Nothing a file holds can raise out of the split, and
+    coverage never depends on what the file holds.
     """
     try:
         return _read_durations(path)
@@ -83,36 +85,32 @@ def _read_durations(path=None) -> Costs:
         for key, value in raw.items():
             if not isinstance(key, str):
                 continue
-            if not isinstance(value, dict):
+            if not isinstance(value, (list, tuple)) or len(value) != 2:
                 continue
-            tests = value.get("tests")
-            seconds = value.get("seconds")
-            overhead = value.get("overhead")
-            if isinstance(tests, bool) or not isinstance(tests, int):
+            rate, overhead = value
+            valid = True
+            for number in (rate, overhead):
+                if isinstance(number, bool) or not isinstance(number, (int, float)):
+                    valid = False
+                elif not number >= 0 or not math.isfinite(number):
+                    valid = False
+            if not valid:
                 continue
-            if not tests > 0:
-                continue
-            if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
-                continue
-            if not seconds >= 0 or not math.isfinite(seconds):
-                continue
-            if isinstance(overhead, bool) or not isinstance(overhead, (int, float)):
-                continue
-            if not overhead >= 0 or not math.isfinite(overhead):
-                continue
-            modules[key] = ModuleCost(tests, float(seconds), float(overhead))
+            modules[key] = ModuleCost(1, float(rate), float(overhead))
     return Costs(modules, float(default_seconds), float(default_overhead))
 
 
 def part_of(plan: tuple[Test, ...], count: int, costs: Costs) -> dict[int, int]:
     """Return the 1-based part each test's seq belongs to.
 
-    Tests of one module always run in one part, except that a module estimated above one part's share of
-    the default worker count runs one test per shard, so one heavy shard cannot set that part's wall time.
-    The estimate is the module's recorded seconds per test times its count plus one recorded overhead for
-    each shard its count makes; a split test costs its module's per-test rate plus one overhead. The answer
-    depends only on module names, test counts, and the durations data, so every part job of a run computes
-    the same split. Every test is placed exactly once for any count of 1 or more and any durations data.
+    Tests of one module run in one part, with two exceptions. A plan with fewer modules than parts places
+    every test on its own, so a part that can hold one gets one. A module estimated above one part's share
+    of the default worker count is placed one test at a time, so its tests can land in different parts. The
+    estimate is the module's recorded seconds per test times its count plus one recorded overhead for each
+    shard its count makes; a test placed on its own costs its module's seconds per test plus one overhead.
+    The answer depends only on the plan discovery returned and the durations data, so every part job of a
+    run computes the same split. Every test is placed exactly once for any count of 1 or more and any
+    durations data.
     """
     by_module: dict[str, list[Test]] = {}
     for test in plan:

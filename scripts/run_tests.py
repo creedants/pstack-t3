@@ -34,8 +34,8 @@ To regenerate the durations file, run `python3 scripts/run_tests.py --record-dur
 run is one ordinary run of the suite, so the workers `-j` names and their contention are part of every number
 it writes. The measurement for a test is the gap the runner reads between that worker's start and result
 events. Polling and scheduling affect the error. Each shard's overhead is its worker's span less the gaps of
-its tests. The file holds one record per module with its test count, the sum of its measured test seconds,
-and the typical overhead of one shard of it. A test whose start and result events are read together has
+its tests. The file holds one record per module, as that module's measured seconds per test and the typical
+overhead of one shard of it. A test whose start and result events are read together has
 no measurement. A module the file does not name takes `default_seconds` per test and `default_overhead`
 per shard. A stale or missing durations file costs balance and never coverage.
 
@@ -45,11 +45,12 @@ verdict, that verdict is a pass, a skip, or an expected failure read from the re
 shard, and each shard of the run finished cleanly. A run with no `--part` selects
 every test discovery returned. A shard holds the tests of one module, and the modules with the most tests are
 built first. The part split keeps a module's tests in one part, except that a module estimated above one
-part's share of the default worker count runs one test per shard, so one heavy shard cannot set that part's
-wall time. Each module goes to the part with the smallest estimated total by the rule above, ties to the
-lowest part number. A module the durations file does not name takes a stated default per test and per shard.
-The assignment depends only on module names, test counts, and the durations file, so each part job of a run
-computes the same split. A part run starts its most expensive shards first while a full run keeps build order.
+part's share of the default worker count is placed one test at a time, so its tests can land in different
+parts, and a plan with fewer modules than parts places every test on its own. Each item goes to the part
+with the smallest estimated total by the rule above, ties to the lowest part number. A module the durations
+file does not name takes a stated default per test and per shard.
+The assignment depends only on the plan discovery returned and the durations file, so each part job of a
+run computes the same split. A part run starts its most expensive shards first while a full run keeps build order.
 Without `--record-durations`, a run with `--part i/n` selects part i of n by the rule above and no other test. So each of these makes
 the run exit with another status than 0. A failing assertion. An error in a test or in a fixture. A module
 that fails to import. A worker that exits or is killed before it reported that it had finished, as when a
@@ -134,7 +135,7 @@ def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = N
 
 
 def summarize_durations(plan: tuple[Test, ...], measured: dict[str, float], spans: list[tuple[str, tuple[int, ...], float]]) -> dict:
-    """Return the durations document `record_durations` writes, with one record per module."""
+    """Return the durations document `record_durations` writes: one record per module, as its measured seconds per test and the median overhead of one shard of it."""
     by_seq = {test.seq: test for test in plan}
     counts: dict[str, int] = {}
     for test in plan:
@@ -158,15 +159,31 @@ def summarize_durations(plan: tuple[Test, ...], measured: dict[str, float], span
         default_overhead = round(statistics.median(all_overheads), 3)
     else:
         default_overhead = DEFAULT_OVERHEAD
-    modules: dict[str, dict] = {}
+    modules: dict[str, list] = {}
     for module in sorted(set(counts) | set(per_module)):
-        seconds = round(sum(measured.get(test.id, 0.0) for test in plan if test.module == module), 3)
+        count = counts.get(module, 0)
+        seconds = sum(measured.get(test.id, 0.0) for test in plan if test.module == module)
         if module in per_module and per_module[module]:
             overhead = round(statistics.median(per_module[module]), 3)
         else:
             overhead = default_overhead
-        modules[module] = {"tests": counts.get(module, 0), "seconds": seconds, "overhead": overhead}
+        modules[module] = [round(seconds / count, 3) if count else 0.0, overhead]
     return {"default_seconds": default_seconds, "default_overhead": default_overhead, "modules": modules}
+
+
+def format_durations(doc: dict) -> str:
+    """Return the durations file text. Each module sits on one line, so the file stays small and its diffs stay readable."""
+    lines = ["{",
+             f'  "default_seconds": {doc["default_seconds"]},',
+             f'  "default_overhead": {doc["default_overhead"]},',
+             '  "modules": {']
+    names = sorted(doc["modules"])
+    for index, name in enumerate(names):
+        rate, overhead = doc["modules"][name]
+        comma = "," if index < len(names) - 1 else ""
+        lines.append(f"    {json.dumps(name)}: [{rate}, {overhead}]{comma}")
+    lines.extend(["  }", "}"])
+    return "\n".join(lines) + "\n"
 
 
 def record_durations(start: Path, jobs: int, timeout: float, out: Path) -> int:
@@ -231,7 +248,7 @@ def record_durations(start: Path, jobs: int, timeout: float, out: Path) -> int:
         if gap > 0:
             measured[ident] = gap
     doc = summarize_durations(plan, measured, spans)
-    data = json.dumps(doc, indent=2) + "\n"
+    data = format_durations(doc)
     out.write_text(data)
     size = len(data.encode("utf-8"))
     print(f"run_tests: measured {len(measured)} tests, {len(spans)} shards, wrote {len(doc['modules'])} modules, "

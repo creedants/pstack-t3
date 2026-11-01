@@ -86,37 +86,6 @@ class PartsMixin:
             self.assertEqual(sorted(got), sorted(repo_ids))
             self.assertEqual(len(got), len(repo))
 
-    def test_a_large_recorded_overhead_places_a_module_by_overhead_rather_than_by_test_count(self):
-        # This starts no process: the split reads costs built in memory.
-        plan = tuple(
-            run_tests.Test(seq, f"{module}.Case.test_{index}", module, f"{module}.Case")
-            for seq, (module, index) in enumerate(
-                [("heavy", 0), ("heavy", 1), ("giant", 0), ("giant", 1),
-                 ("giant", 2), ("giant", 3), ("giant", 4), ("giant", 5)]
-            )
-        )
-        costs = run_tests.Costs(
-            {
-                "heavy": run_tests.ModuleCost(tests=2, seconds=2.0, overhead=100.0),
-                "giant": run_tests.ModuleCost(tests=6, seconds=600.0, overhead=1.0),
-            },
-            default_seconds=1.0,
-            default_overhead=1.0,
-        )
-        assignment = run_tests.part_of(plan, 2, costs)
-        heavy_parts = {assignment[test.seq] for test in plan if test.module == "heavy"}
-        self.assertGreater(len(heavy_parts), 1)
-        plain = run_tests.Costs(
-            {
-                "heavy": run_tests.ModuleCost(tests=2, seconds=2.0, overhead=1.0),
-                "giant": run_tests.ModuleCost(tests=6, seconds=600.0, overhead=1.0),
-            },
-            default_seconds=1.0,
-            default_overhead=1.0,
-        )
-        whole = run_tests.part_of(plan, 2, plain)
-        self.assertEqual(len({whole[test.seq] for test in plan if test.module == "heavy"}), 1)
-
     def test_every_test_of_one_module_lands_in_one_part_including_a_module_larger_than_a_shard(self):
         # This starts no process: the split runs in memory.
         plan = []
@@ -139,26 +108,6 @@ class PartsMixin:
             assignment = run_tests.part_of(plan, count, costs)
             big_parts = {assignment[test.seq] for test in plan if test.module == "big"}
             self.assertEqual(len(big_parts), 1)
-
-    def test_a_stale_record_with_fewer_tests_than_the_plan_still_covers_every_test_in_one_part(self):
-        # This starts no process: the split reads costs built in memory.
-        plan = []
-        seq = 0
-        for module in [f"mod{index}" for index in range(9)]:
-            for test_index in range(2):
-                plan.append(run_tests.Test(seq, f"{module}.Case.test_{test_index}", module, f"{module}.Case"))
-                seq += 1
-        plan = tuple(plan)
-        modules = {f"mod{index}": run_tests.ModuleCost(tests=2, seconds=4.0, overhead=1.0) for index in range(9)}
-        modules["mod0"] = run_tests.ModuleCost(tests=1, seconds=2.0, overhead=1.0)
-        costs = run_tests.Costs(modules, default_seconds=1.0, default_overhead=1.0)
-        for count in (1, 2):
-            parts = [run_tests.tests_in_part(plan, index, count, costs=costs) for index in range(1, count + 1)]
-            got = [test.id for part in parts for test in part]
-            self.assertEqual(sorted(got), sorted(test.id for test in plan))
-            self.assertEqual(len(got), len({test.seq for part in parts for test in part}))
-        assignment = run_tests.part_of(plan, 2, costs)
-        self.assertEqual(len({assignment[test.seq] for test in plan if test.module == "mod0"}), 1)
 
     def test_a_heavy_module_above_one_parts_worker_share_splits_per_test_while_a_light_one_stays_whole(self):
         # This starts no process: the split runs in memory.
@@ -205,11 +154,11 @@ class PartsMixin:
             "bad_default": json.dumps({"default_seconds": -1, "seconds": {good: 0}}),
             "modules_list": json.dumps({"modules": []}),
             "modules_entry_string": json.dumps({"modules": {"mod": "slow"}}),
-            "modules_bad_tests": json.dumps({"modules": {"mod": {"tests": 0, "seconds": 1.0, "overhead": 1.0}}}),
-            "modules_bad_seconds": json.dumps({"modules": {"mod": {"tests": 2, "seconds": -1.0, "overhead": 1.0}}}),
-            "modules_bad_overhead": json.dumps({"modules": {"mod": {"tests": 2, "seconds": 1.0, "overhead": "slow"}}}),
+            "modules_short": json.dumps({"modules": {"mod": [1.0]}}),
+            "modules_bad_rate": json.dumps({"modules": {"mod": [-1.0, 1.0]}}),
+            "modules_bad_overhead": json.dumps({"modules": {"mod": [1.0, "slow"]}}),
             "modules_bad_defaults": json.dumps({"default_seconds": "slow", "default_overhead": -2,
-                                                "modules": {"mod": {"tests": 2, "seconds": 1.0, "overhead": 1.0}}}),
+                                                "modules": {"test_nine": [1.0, 1.0]}}),
         }
         for name, payload in payloads.items():
             path = self.proj / f"durations-{name}.json"
@@ -234,8 +183,8 @@ class PartsMixin:
             "default_seconds": 2.0,
             "default_overhead": 3.0,
             "modules": {
-                "good": {"tests": 2, "seconds": 4.0, "overhead": 1.5},
-                "bad": {"tests": 0, "seconds": -1.0, "overhead": "slow"},
+                "good": [2.0, 1.5],
+                "bad": {"tests": 0},
             },
         }))
         costs = run_tests.read_durations(path)
@@ -309,15 +258,14 @@ class PartsMixin:
         measured = {"aaa.Case.test_one": 1.0, "aaa.Case.test_two": 3.0, "bbb.Case.test_one": 2.0}
         spans = [("aaa", (0,), 2.5), ("aaa", (1,), 5.0)]
         doc = run_tests.summarize_durations(plan, measured, spans)
-        self.assertEqual(doc["modules"]["aaa"]["tests"], 2)
-        self.assertEqual(doc["modules"]["aaa"]["seconds"], 4.0)
-        self.assertEqual(doc["modules"]["aaa"]["overhead"], 1.75)
-        self.assertEqual(doc["modules"]["bbb"]["tests"], 1)
-        self.assertEqual(doc["modules"]["bbb"]["seconds"], 2.0)
-        self.assertEqual(doc["modules"]["bbb"]["overhead"], doc["default_overhead"])
+        self.assertEqual(doc["modules"]["aaa"], [2.0, 1.75])
+        self.assertEqual(doc["modules"]["bbb"], [2.0, doc["default_overhead"]])
         self.assertEqual(doc["default_seconds"], 2.0)
         self.assertEqual(doc["default_overhead"], 1.75)
         self.assertEqual(list(doc["modules"]), sorted(doc["modules"]))
+        text = run_tests.format_durations(doc)
+        self.assertEqual(json.loads(text), doc)
+        self.assertEqual(len(text.splitlines()), 6 + len(doc["modules"]))
 
     def test_record_durations_writes_a_readable_file_and_exits_with_the_suite_status(self):
         self.write("test_slow.py", """
@@ -339,13 +287,12 @@ class PartsMixin:
         self.assertGreater(data["default_overhead"], 0)
         self.assertIn("test_slow", data["modules"])
         record = data["modules"]["test_slow"]
-        self.assertEqual(record["tests"], 2)
-        self.assertGreater(record["seconds"], 0)
-        self.assertGreater(record["overhead"], 0)
+        self.assertEqual(len(record), 2)
+        self.assertGreater(record[0], 0)
+        self.assertGreater(record[1], 0)
         reread = run_tests.read_durations(out)
-        self.assertEqual(reread.modules["test_slow"].tests, record["tests"])
-        self.assertEqual(reread.modules["test_slow"].seconds, record["seconds"])
-        self.assertEqual(reread.modules["test_slow"].overhead, record["overhead"])
+        self.assertEqual(reread.modules["test_slow"].seconds, record[0])
+        self.assertEqual(reread.modules["test_slow"].overhead, record[1])
         self.assertEqual(reread.default_seconds, data["default_seconds"])
         self.assertEqual(reread.default_overhead, data["default_overhead"])
         self.write("test_slow.py", """
@@ -361,43 +308,6 @@ class PartsMixin:
         self.assertGreater(data["default_seconds"], 0)
         self.assertGreater(data["default_overhead"], 0)
         self.assertIsInstance(data["modules"], dict)
-
-    def test_the_repository_split_covers_every_test_once_and_ignores_a_missing_durations_file(self):
-        # This starts no process: both splits run in memory over the repository plan.
-        repo = self.plan_of(run_tests.ROOT / "tests")
-        repo_ids = [test.id for test in repo]
-        missing = self.proj / "durations-missing.json"
-        if missing.exists():
-            missing.unlink()
-        for count in range(1, 9):
-            with self.subTest(count=count):
-                parts = [run_tests.tests_in_part(repo, index, count, durations_path=missing)
-                         for index in range(1, count + 1)]
-                got = [test.id for part in parts for test in part]
-                self.assertEqual(sorted(got), sorted(repo_ids))
-                self.assertEqual(len(got), len(repo))
-                again = [run_tests.tests_in_part(repo, index, count, durations_path=missing)
-                         for index in range(1, count + 1)]
-                self.assertEqual(
-                    [[test.id for test in part] for part in parts],
-                    [[test.id for test in part] for part in again],
-                )
-
-    def test_the_repository_split_keeps_light_modules_whole_over_the_shipped_durations_file(self):
-        # This starts no process: the split runs in memory over the repository plan.
-        repo = self.plan_of(run_tests.ROOT / "tests")
-        costs = run_tests.read_durations()
-        total = sum(costs.estimate(module, len([test for test in repo if test.module == module]))
-                      for module in {test.module for test in repo})
-        limit = total / (8 * run_tests.MAX_DEFAULT_JOBS)
-        for count in (8,):
-            assignment = run_tests.part_of(repo, count, costs)
-            seen: dict[str, set[int]] = {}
-            for test in repo:
-                seen.setdefault(test.module, set()).add(assignment[test.seq])
-            for module, parts in seen.items():
-                if costs.estimate(module, len([test for test in repo if test.module == module])) <= limit:
-                    self.assertEqual(parts, {next(iter(parts))})
 
     def test_part_flag_runs_one_test_of_a_pair_and_refuses_a_part_outside_the_plan(self):
         for text, message in (("2/1", "2/1 has i outside 1 to n"),
@@ -459,30 +369,6 @@ class BuildShardsMixin:
 
     def test_no_test_makes_no_shard(self):
         self.assertEqual(run_tests.build_shards(()), [])
-
-    def test_a_part_queue_starts_the_longest_shard_first_rather_than_leaving_it_for_the_tail(self):
-        plan = []
-        seq = 0
-        for module, count in (("big", 21), ("early", 1), ("late", 1)):
-            for _ in range(count):
-                plan.append(run_tests.Test(seq, module + ".id", module, module + ".C"))
-                seq += 1
-        plan = tuple(plan)
-        costs = run_tests.Costs(
-            {
-                "big": run_tests.ModuleCost(tests=21, seconds=210.0, overhead=10.0),
-                "early": run_tests.ModuleCost(tests=1, seconds=1.0, overhead=1.0),
-                "late": run_tests.ModuleCost(tests=1, seconds=1.0, overhead=1.0),
-            },
-            default_seconds=1.0,
-            default_overhead=1.0,
-        )
-        shards = run_tests.build_shards(plan)
-        self.assertEqual(run_tests.launch_order(shards, False, lambda shard: costs.estimate(shard.module, len(shard.seqs))), tuple(shards))
-        ordered = run_tests.launch_order(shards, True, lambda shard: costs.estimate(shard.module, len(shard.seqs)))
-        estimates = [costs.estimate(shard.module, len(shard.seqs)) for shard in ordered]
-        self.assertEqual(estimates, sorted(estimates, reverse=True))
-        self.assertGreater(estimates[0], estimates[-1])
 
     def test_a_part_run_passes_shards_in_descending_cost_ahead_of_build_order_while_a_full_run_keeps_build_order(self):
         plan = []

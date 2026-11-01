@@ -1,5 +1,7 @@
 - kind upkeep
-- The part split now groups a module's tests in one part and estimates each module from its recorded test seconds plus the measured overhead of each shard it makes
-- A module estimated above one part's share of the default worker count runs one test per shard, so one heavy shard cannot set that part's wall time
+- The part split now keeps a module's tests in one part and estimates each module from its recorded seconds per test plus the measured overhead of each shard it makes
+- A module estimated above one part's share of the default worker count is placed one test at a time, so its tests can land in different parts
+- A part run starts its most expensive shards first, so the longest one is not left as a tail
 - The recording now writes one record per module instead of the slowest 104 tests, so it accounts for the time no single test owns
+- One record per module is a measured seconds per test and the typical overhead of one shard of it, which keeps the file inside the size limit
 - The 15000-byte budget is gone
