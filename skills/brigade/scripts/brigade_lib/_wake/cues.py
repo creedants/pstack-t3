@@ -25,7 +25,8 @@ from brigade_lib.items import attempt_starts
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
 from brigade_lib.store import MESSAGE_ONLY, ROUND_KIND, TABLES, reporting_of, round_budget_of, store_path
-from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels, request_files, ticket_age_of
+from brigade_lib.tickets import (AGE_KINDS, EVERY_ROW, filed_at, label_words, priority_of, read_labels, request_files,
+                                 ticket_age_of)
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
 from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
 from brigade_lib._wake.occasions import blocked_needs_user, budget_reached, decision_holds, fresh_decision_ids, from_user_request, is_drained, merge_accepted, reply_for, request_text, wake_label
@@ -99,9 +100,22 @@ def housekeeping(dish):
 
 
 def _ticket_age_on(snapshot):
-    """Whether an evening sheet runs ticket age. The snapshot holds no settings, and warn is the store's bound method, so this reads the one key from the store the sheet was read from."""
+    """Whether an evening sheet runs ticket age.
+
+    It runs when aging is on and a waiting ticket could be old enough to move. The snapshot holds no
+    settings, and warn is the store's bound method, so the limit comes from the store the sheet was read
+    from. The command applies every other exclusion again under the lock, so a sheet may ask for one
+    more run than it moves.
+    """
     store = getattr(snapshot.warn, "__self__", None)
-    return store is None or ticket_age_of(store.meta) > 0
+    days = ticket_age_of(store.meta) if store is not None else 0
+    if not days:
+        return False
+    limit = timedelta(days=days)
+    return any(ticket["state"] == "waiting" and ticket["kind"] in AGE_KINDS and priority_of(ticket) == "low"
+               and ticket["decision"] != "yes" and not ticket["ref"]
+               and snapshot.moment - filed_at(ticket) > limit
+               for ticket in snapshot.tickets)
 
 
 def prefix_cues(snapshot, trigger, failure):

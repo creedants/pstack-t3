@@ -241,6 +241,7 @@ class AgeMixin:
 
     def test_next_evening_runs_ticket_age_before_the_report_see_line(self):
         self.open()
+        self.old_low(days=15)
         sheet = self.next_sheet("evening")
         lines = sheet.splitlines()
         self.assertIn("run ticket age", lines)
@@ -249,8 +250,15 @@ class AgeMixin:
                                     "and the closeout path. Otherwise at most three sentences and then the close output."))
         self.assertEqual(lines[-1], "reply: yes (evening: report)")
 
+    def test_next_evening_prints_no_age_run_for_a_young_waiting_list(self):
+        self.open()
+        self.old_low(days=3)
+        self.assertNotIn("ticket age", self.next_sheet("evening"))
+
+
     def test_next_evening_prints_no_age_run_after_set_zero(self):
         self.open()
+        self.old_low(days=15)
         self.brigade("set", "--ticket-age", "0")
         sheet = self.next_sheet("evening")
         self.assertNotIn("ticket age", sheet)
