@@ -45,7 +45,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off] [--notify COMMAND]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--ticket-age N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off] [--notify COMMAND]
 ```
 
 record a setting
@@ -70,6 +70,7 @@ record a setting
 | `--scratch-dir DIR` |  |  |  | the parent directory briefs pass to mktemp -d -p; an absolute path outside /tmp; "" clears it |
 | `--low-reserve N` |  |  |  | the workers still idle while a low ticket waits behind an urgent or normal one; "" clears it to 1 |
 | `--round-budget N` |  |  |  | the send-backs that owe a round decision; "" clears it to 3 |
+| `--ticket-age N` |  |  |  | the days a waiting low-priority polish or upkeep ticket may sit before ticket age moves it to notes.tsv; 0 or an empty value turns aging off |
 | `--liveness-ms N` |  |  |  | the interval a liveness schedule uses, a whole number of at least 60000; "" clears it |
 | `--change-note-dir DIR` |  |  |  | the repository-relative directory holding one change-note fragment per branch; "" clears it, and an unset key leases no fragment |
 | `--cooldown-minutes N` |  |  |  | the minutes a cooled seat stays out of a launch; "" clears it to 60 |
@@ -89,7 +90,7 @@ brigade.py [flags] ticket <action>
 
 add, list, update, move, take, or record paths on tickets on the rail
 
-`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`, `notes`, `sweep`.
+`<action>` is one of `add`, `list`, `set`, `move`, `take`, `paths`, `notes`, `sweep`, `age`.
 
 ## brigade.py ticket add
 
@@ -100,7 +101,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--summary SUMMARY` |  |  |  |  |
-| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files at most one waiting ticket per item, and only when no ticket from that report exists yet, for the first follow-up marked Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; any other marked follow-up whose text is not on the rail prints not filed and goes to notes.tsv; every other follow-up whose text is not on the rail goes to notes.tsv keyed by the tracked paths it quotes; changes the ticket table, the log, and lastActivityAt when it files a ticket, and notes.tsv when it notes one; each ticket takes the goal of the report's item, and when that item has a kind the ticket takes fix at priority urgent or normal and polish at low; a follow-up is filed with no --priority, so it is low |
+| `--from-report FILE` |  |  |  | an item report under reports/, such as D2.md; files one waiting ticket per item at most, only when none from that report exists yet, for the first follow-up marked Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; every other such follow-up goes to notes.tsv keyed by the tracked paths it quotes, printing not filed when marked; a filed ticket changes the ticket table, the log, and lastActivityAt, and a note changes notes.tsv; each ticket takes its item's goal, and when that item has a kind the ticket is fix at urgent or normal, polish at low; filed with no --priority, so it is low |
 | `--dry-run` |  |  |  | with --from-report: print what it would add or note, and what is already noted; it changes no store file |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
@@ -209,6 +210,19 @@ list waiting tickets filed more than N days ago that have no kind or no goal, or
 | `--confirm DIGEST` |  |  |  | the digest the list printed; needs --drop or --goal, and refuses a stale digest |
 
 Give at most one of `--drop`, `--goal`.
+
+## brigade.py ticket age
+
+```text
+brigade.py [flags] ticket age [--older-than N] [--dry-run]
+```
+
+move waiting low-priority polish or upkeep tickets filed more than N days ago to notes.tsv
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--older-than N` |  |  |  | use this many days instead of the stored set --ticket-age limit for this run; takes 1 or more |
+| `--dry-run` |  |  |  | print what it would move; it changes no table |
 
 ## brigade.py goal
 

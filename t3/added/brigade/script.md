@@ -66,13 +66,17 @@ Each command's text below is the text that moved out of the command block in [th
 
 **`$B set --cooldown-minutes`.** the minutes a cooled seat stays out of a launch. A whole number of 1 or more. `""` clears it to 60. Read back through the JSON that set prints.
 
+**`$B set --ticket-age`.** days before `ticket age` moves a waiting low-priority polish or upkeep ticket, default 14; `0` or `""` turns aging off.
+
 ### ticket
 
 **`$B ticket add`.** prints T<n>. `--request` refuses a second ticket for that request. `--again` lifts the same-summary refusal in Filing tracker work step 4. `--kind` is required with `--summary`. `--goal` takes an open or paused goal, and without it the ticket is unassigned.
 
-**`$B ticket add --from-report`.** only a follow-up marked `Safety:`, `Privacy:`, or `Correctness:` becomes a ticket. Case does not count. The parser removes leading whitespace, then one contiguous run of `*`, `_`, or backtick marks, then leading whitespace again. The marker word must be followed immediately by `:`. At most one ticket per item, and only when no ticket from that report exists yet. Any other marked follow-up whose text is not on the rail prints `not filed, <name> takes one ticket per item` and goes to `notes.tsv`. A follow-up whose text is already on the rail in any state is skipped. Every other follow-up goes to `notes.tsv` keyed by the tracked paths it quotes. A run that files a ticket changes the ticket table, the log, and `lastActivityAt`, and a run that notes a follow-up changes `notes.tsv`. `--dry-run` prints `would add` for a ticket it would file, `would note` for a note it would add, `already noted` for a note already in `notes.tsv`, and `not filed` for a marked follow-up it would not file, and changes no store file. It takes no `--kind` and no `--goal`. Each ticket takes the goal of the report's item, whatever that goal's state. When that item has a kind, the ticket is polish, because a follow-up is filed with no priority and a report ticket with no priority is low. When the item has no kind, the ticket has no kind.
+**`$B ticket add --from-report`.** only a follow-up marked `Safety:`, `Privacy:`, or `Correctness:` becomes a ticket, whatever its case. The marker follows leading whitespace, one run of `*`, `_`, or backtick marks, and more whitespace, with `:` right after the word. One ticket per item at most, and only when none from that report exists yet. Any other marked follow-up whose text is not on the rail prints `not filed, <name> takes one ticket per item` and goes to `notes.tsv`. One whose text is already on the rail in any state is skipped. Every other follow-up goes to `notes.tsv` keyed by the tracked paths it quotes. Filing a ticket changes the ticket table, the log, and `lastActivityAt`; noting one changes `notes.tsv`. `--dry-run` prints `would add`, `would note`, `already noted`, and `not filed`, and changes no store file. It takes no `--kind` and no `--goal`. Each ticket takes the report item's goal, whatever its state. A ticket is polish when the item has a kind, because a follow-up is filed with no priority and so reads low; with no kind, neither has one.
 
 **`$B ticket notes --paths a.py,b.py` and `--all`.** prints the notes that name those paths, or every note.
+
+**`$B ticket age`.** moves waiting low-priority polish and upkeep tickets past the limit to `notes.tsv` and drops them. The evening wake runs it when aging is on.
 
 **`$B ticket set T<n>`.** at least one flag. `--paths ""` clears the recorded paths.
 

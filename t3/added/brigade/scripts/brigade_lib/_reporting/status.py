@@ -26,7 +26,7 @@ from brigade_lib._watch.seats import report_is_current
 from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, report_threads
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural, stored
 from brigade_lib.store import CLOSED_GOAL_STATES, IN_FLIGHT_STATES, KINDS, Restaurant, holder_prefix, is_admin, parse_row, reporting_of, siblings, store_path
-from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell
+from brigade_lib.tickets import EVERY_ROW, Label, Tally, aged_since, filed_at, finished_requests, handed_count, intake_list, request_files, sibling_named, tell
 
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -176,3 +176,23 @@ def claims_cap_reports(restaurant):
     return over
 
 
+def waiting_section(restaurant, since):
+    rows = restaurant.rows("rail.tsv")
+    waiting = [row for row in rows if row["state"] == "waiting"]
+    aged = aged_since(restaurant, since)
+    if not waiting and not aged:
+        return []
+    if waiting:
+        now = datetime.fromisoformat(seam.now().replace("Z", "+00:00"))
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        oldest = max((now - filed_at(row)).days for row in waiting)
+        head = f"{plural(len(waiting), 'waiting ticket')}, oldest {oldest} days old"
+    else:
+        head = "no waiting ticket"
+    tail = f"{aged} aged out since the last report" if aged else "no ticket aged out since the last report"
+    lines = ["## Waiting list", "", f"- {head}; {tail}."]
+    if not restaurant.meta.get("autofire"):
+        lines.append("- no auto-start level is recorded; the default is normal; "
+                     "set --autofire decides which priorities start on their own.")
+    return lines + [""]

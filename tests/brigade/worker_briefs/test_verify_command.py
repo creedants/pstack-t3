@@ -89,6 +89,10 @@ class VerifyCommandMixin:
             "- T8: Importer crashes", "- T9: Tune the pool", "- T10: Tidy the guide", "- T11: Pick a database", "- T12: Trim the pool", "",
             "## Dropped", "", "- T13: Old idea", "- D8 (T8): Split the importer", "",
             "## Decisions for you", "", "- Q1: Drop Windows 7 support? Options: yes, no. Default if no answer: no.",
+            "", "## Waiting list", "",
+            "- 5 waiting tickets, oldest 0 days old; no ticket aged out since the last report.",
+            "- no auto-start level is recorded; the default is normal; "
+            "set --autofire decides which priorities start on their own.",
             "", "## Send-back reasons (last 7 days)", "", "unrecorded 1",
             "", "## Reviewer hit rate (last 7 days)", "",
             "codex/gpt-6.1-sol  rounds 4  pass 3  pass-with-edits 0  send-backs 1  upheld 0  overruled 0  rate n/a",

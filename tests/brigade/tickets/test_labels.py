@@ -69,7 +69,11 @@ class LabelsMixin:
         self.assertEqual(out["ticket list"], "T1 waiting normal [user] a")
         self.assertEqual(out["startable"].splitlines()[2], "T1 normal, 0m: unknown, no paths recorded")
         self.assertEqual(out["close --dry-run"].splitlines()[4:], ["## New tickets, not started", "", "- T1: a",
-                                                                  "", "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.",
+                                                                  "", "## Waiting list", "",
+                                                                  "- 1 waiting ticket, oldest 0 days old; no ticket aged out since the last report.",
+                                                                  "- no auto-start level is recorded; the default is normal; "
+                                                                  "set --autofire decides which priorities start on their own.", "",
+                                                                  "## Send-back reasons (last 7 days)", "", "No send-backs in the last 7 days.",
                                                                   "", "## Reviewer hit rate (last 7 days)", "", "No reviewed rounds in the last 7 days.",
                                                                   "", "## Spend", "", "none",
                                                                   "", "## Follow-up share", "",
