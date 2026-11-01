@@ -1,0 +1,5 @@
+- kind upkeep
+- The part split now groups a module's tests in one part and estimates each module from its recorded test seconds plus the measured overhead of each shard it makes
+- A module estimated above one part's share of the default worker count runs one test per shard, so one heavy shard cannot set that part's wall time
+- The recording now writes one record per module instead of the slowest 104 tests, so it accounts for the time no single test owns
+- The 15000-byte budget is gone
