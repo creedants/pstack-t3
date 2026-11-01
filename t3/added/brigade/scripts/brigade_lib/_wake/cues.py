@@ -105,7 +105,7 @@ def _ticket_age_on(snapshot):
     It runs when aging is on and a waiting ticket could be old enough to move. The snapshot holds no
     settings, and warn is the store's bound method, so the limit comes from the store the sheet was read
     from. The command applies every other exclusion again under the lock, so a sheet may ask for one
-    more run than it moves.
+    more run than it moves. A snapshot with no store behind warn asks for nothing.
     """
     store = getattr(snapshot.warn, "__self__", None)
     days = ticket_age_of(store.meta) if store is not None else 0
