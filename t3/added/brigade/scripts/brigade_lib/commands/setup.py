@@ -11,7 +11,7 @@ from brigade_lib.leases import kind_limits, next_owner, repository_cap, require_
 from brigade_lib.shared import BrigadeError, clean
 from brigade_lib.store import AUTOFIRE, MODES, REPORTING, change_note_dir, is_admin, liveness_of, low_reserve_of, open_restaurant, round_budget_of, sibling_lines, siblings
 from brigade_lib.notify import shown
-from brigade_lib.tickets import intake_list
+from brigade_lib.tickets import intake_list, ticket_age_of
 
 COMMANDS = ("open", "set")
 
@@ -67,6 +67,9 @@ def register_set(sub):
                         "\"\" clears it to 1")
     p.add_argument("--round-budget", metavar="N",
                    help="the send-backs that owe a round decision; \"\" clears it to 3")
+    p.add_argument("--ticket-age", metavar="N",
+                   help="the days a waiting low-priority polish or upkeep ticket may sit before ticket age moves it "
+                        "to notes.tsv; 0 or an empty value turns aging off")
     p.add_argument("--liveness-ms", metavar="N",
                    help="the interval a liveness schedule uses, a whole number of at least 60000; \"\" clears it")
     p.add_argument("--change-note-dir", metavar="DIR",
@@ -100,7 +103,7 @@ def validate_settings(meta):
     """Refuse a stored setting that does not parse, before this command writes it over.
 
     It checks contextCap, coordinatorProvider, caps, review, lowReserve, roundBudget, livenessMs, affectedTests, sharedDocs,
-    docTimebox, changeNoteDir, cooldownMinutes, and prCredit, by calling each setting's reader predicate, so a value accepted here is a value that reader
+    docTimebox, changeNoteDir, cooldownMinutes, ticketAge, and prCredit, by calling each setting's reader predicate, so a value accepted here is a value that reader
     accepts. A missing key keeps its default.
     """
     effective_cap(meta)
@@ -108,6 +111,7 @@ def validate_settings(meta):
     kind_limits(meta)
     low_reserve_of(meta)
     round_budget_of(meta)
+    ticket_age_of(meta)
     liveness_of(meta)
     layout(meta)
     doc_policy(meta)

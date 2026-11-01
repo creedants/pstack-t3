@@ -27,7 +27,7 @@ from brigade_lib.leases import holding_blocks
 from brigade_lib.reports import item_report
 from brigade_lib.shared import BrigadeError
 from brigade_lib.store import GOAL_STATES, KINDS, NOTHING_HANDED, PRIORITIES_BY_RANK, TICKET_STATES
-from brigade_lib.tickets import EVERY_ROW, GOALS_ONLY, Assign, Drop, add_goal, add_ticket, after_change, file_follow_ups, finish_request, follow_ups, frozen_label, in_flight_tickets, count_labels, move_ticket, open_goal, read_labels, read_waits, record_paths, set_goal, sibling_rails, sweep_tickets, take_inbox, take_tickets, ticket_paths, tracked_paths
+from brigade_lib.tickets import EVERY_ROW, GOALS_ONLY, Assign, Drop, add_goal, add_ticket, after_change, file_follow_ups, finish_request, follow_ups, frozen_label, in_flight_tickets, count_labels, move_ticket, open_goal, prepare_age, read_labels, read_waits, record_paths, register_age, run_age, set_goal, sibling_rails, sweep_tickets, take_inbox, take_tickets, ticket_paths, tracked_paths
 from brigade_lib.reporting import goal_lines
 from brigade_lib.wake import ticket_lines
 
@@ -41,14 +41,13 @@ def register_ticket(sub):
     how = a.add_mutually_exclusive_group(required=True)
     how.add_argument("--summary")
     how.add_argument("--from-report", metavar="FILE",
-                     help="an item report under reports/, such as reports/D2.md; files at most one waiting ticket per "
-                          "item, and only when no ticket from that report exists yet, for the first follow-up marked "
-                          "Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; any "
-                          "other marked follow-up whose text is not on the rail prints not filed and goes to notes.tsv; "
-                          "every other follow-up whose text is not on the rail goes to notes.tsv keyed by the tracked "
-                          "paths it quotes; changes the ticket table, the log, and lastActivityAt when it files a ticket, "
-                          "and notes.tsv when it notes one; each ticket takes the goal of the report's item, and when that "
-                          "item has a kind the ticket takes fix at priority urgent or normal and polish at low; a "
+                     help="an item report under reports/, such as reports/D2.md; files one waiting ticket per "
+                          "item at most, only when none from that report exists yet, for the first follow-up marked "
+                          "Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; every "
+                          "other such follow-up goes to notes.tsv keyed by the tracked paths it quotes, printing not filed "
+                          "when marked; a filed ticket changes the ticket table, the log, and lastActivityAt, "
+                          "and a note changes notes.tsv; each ticket takes its item's goal, and when that "
+                          "item has a kind the ticket is fix at priority urgent or normal, polish at low; a "
                           "follow-up is filed with no --priority, so it is low")
     a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add or note, and what is already noted; it changes no store file")
     a.add_argument("--source", default="user")
@@ -62,7 +61,7 @@ def register_ticket(sub):
                    help="missing reads as urgent from upstream, low from report, and normal from every other source")
     a.add_argument("--paths", default="", action=OncePaths, help="comma-separated files and directories the work will touch; given once")
     a.add_argument("--decision", action="store_true",
-                   help="the ticket asks the owner to decide; the startable command never lists it as startable")
+                   help="the ticket asks the owner to decide; startable never lists it")
     a.add_argument("--kind", choices=KINDS, help="the kind of work; a ticket added with --summary is refused without it")
     a.add_argument("--goal", metavar="G<n>",
                    help="with --summary: the goal this ticket belongs to, which must be open or paused; without it the "
@@ -113,6 +112,7 @@ def register_ticket(sub):
                              "needs the digest the list printed as --confirm")
     a.add_argument("--confirm", metavar="DIGEST",
                    help="the digest the list printed; needs --drop or --goal, and refuses a stale digest")
+    register_age(t)
 
 
 def register_goal(sub):
@@ -140,9 +140,9 @@ def register_goal(sub):
                    help="one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; "
                         "with --state done, what shows the done test is met; with --state dropped, why the goal is "
                         "dropped; refused without --state done or --state dropped")
-    a.add_argument("--name", help="replaces the goal's name; refused when it is empty or only whitespace")
-    a.add_argument("--purpose", help="replaces the goal's purpose; refused when it is empty or only whitespace")
-    a.add_argument("--done", help="replaces the goal's done test; refused when it is empty or only whitespace")
+    a.add_argument("--name", help="replaces the goal's name; refused when empty or whitespace-only")
+    a.add_argument("--purpose", help="replaces the goal's purpose; refused when empty or whitespace-only")
+    a.add_argument("--done", help="replaces the goal's done test; refused when empty or whitespace-only")
     a.add_argument("--share",
                    help='a whole number of 1 or more, recorded as the goal\'s share of the worker slots; "" clears it; '
                         "goal list prints it, and the refill holds a ticket of the goal back once that many slots "
@@ -212,6 +212,8 @@ def handle_ticket(restaurant, args):
             raise BrigadeError("--confirm needs --drop or --goal")
         if (args.drop or args.goal is not None) and args.confirm is None:
             raise BrigadeError("--drop or --goal needs --confirm")
+    if args.action == "age":
+        prepare_age(restaurant, args)
     if getattr(args, "after", None) is not None:
         args.waits = read_waits(restaurant, args.after)
     rails = None
@@ -250,6 +252,8 @@ def handle_locked(restaurant, args, view):
                     return sweep_tickets(restaurant, args.older_than, action, args.confirm)
             with restaurant.checked():
                 return sweep_tickets(restaurant, args.older_than, None, None)
+        if args.action == "age":
+            return run_age(restaurant, args)
         if args.action == "notes":
             if args.all:
                 with restaurant.checked():

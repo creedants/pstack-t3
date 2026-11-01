@@ -10,7 +10,7 @@ from brigade_lib import notify
 from brigade_lib.leases import require_workers
 from brigade_lib.shared import BrigadeError, clean, command_words
 from brigade_lib.store import CHANGE_NOTE_KEY, LIVENESS_KEY, LOW_RESERVE_KEY, MODES, ROUND_BUDGET_KEY, SCRATCH_KEY, parse_change_note_dir, parse_liveness_ms, parse_low_reserve, parse_round_budget, scratch_parent_text
-from brigade_lib.tickets import cap_pairs, intake_list, review_pairs, set_intake
+from brigade_lib.tickets import TICKET_AGE_KEY, cap_pairs, intake_list, parse_ticket_age, review_pairs, set_intake
 
 
 def _json_setting(args, name, flag):
@@ -136,6 +136,8 @@ def setting_changes(restaurant, args):
             changes[SCRATCH_KEY] = scratch
         else:
             drop.append(SCRATCH_KEY)
+    if args.ticket_age is not None:
+        changes[TICKET_AGE_KEY] = parse_ticket_age(args.ticket_age)
     _clear_or_parse(args.low_reserve, LOW_RESERVE_KEY, parse_low_reserve, changes, drop)
     _clear_or_parse(args.round_budget, ROUND_BUDGET_KEY, parse_round_budget, changes, drop)
     _clear_or_parse(args.liveness_ms, LIVENESS_KEY, parse_liveness_ms, changes, drop)

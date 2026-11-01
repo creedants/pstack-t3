@@ -28,7 +28,7 @@ from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural
 from brigade_lib.store import CLOSED_GOAL_STATES, KINDS, Restaurant, holder_prefix, is_admin, parse_row, reporting_of, siblings, store_path
 from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell
 from brigade_lib._reporting.admin import admin_sections
-from brigade_lib._reporting.status import GROUPED_SECTIONS, SECTIONS, status_line
+from brigade_lib._reporting.status import GROUPED_SECTIONS, SECTIONS, status_line, waiting_section
 
 REPAIR = {
     "link": "remove the link and leave its target as it is",
@@ -98,6 +98,7 @@ def report(restaurant, write=True):
         lines.append("")
     if len(lines) == 4:
         lines += ["Nothing new.", ""]
+    lines += waiting_section(restaurant, since)
     lines += send_back_section(restaurant.rows("pass.tsv"), stamp, restaurant)
     lines += hit_section(restaurant.rows("pass.tsv"), restaurant.rows("edits.tsv"), restaurant.rows("86.tsv"), stamp)
     lines += spend_section(restaurant, since)

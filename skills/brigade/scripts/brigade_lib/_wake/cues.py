@@ -25,7 +25,7 @@ from brigade_lib.items import attempt_starts
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
 from brigade_lib.store import MESSAGE_ONLY, ROUND_KIND, TABLES, reporting_of, round_budget_of, store_path
-from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels, request_files
+from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels, request_files, ticket_age_of
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
 from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
 from brigade_lib._wake.occasions import blocked_needs_user, budget_reached, decision_holds, fresh_decision_ids, from_user_request, is_drained, merge_accepted, reply_for, request_text, wake_label
@@ -96,6 +96,12 @@ def housekeeping(dish):
     return (f"Finish with the old worker for thread {thread}, branch {branch}, and pull request {pr} for {dish['id']}. "
             f"If its run is still open, interrupt it and hang the attempt, then archive it. "
             f"Remove the worktree and delete the branch after that. Do not claim they are already gone.")
+
+
+def _ticket_age_on(snapshot):
+    """Whether an evening sheet runs ticket age. The snapshot holds no settings, and warn is the store's bound method, so this reads the one key from the store the sheet was read from."""
+    store = getattr(snapshot.warn, "__self__", None)
+    return store is None or ticket_age_of(store.meta) > 0
 
 
 def prefix_cues(snapshot, trigger, failure):
@@ -176,8 +182,12 @@ def prefix_cues(snapshot, trigger, failure):
             cues.append(See("Morning service is not a report."))
         return cues
     if wake == "evening":
-        return [See("Write the evening report for this reporting level. At digest, plain sentences and the closeout path. "
-                    "Otherwise at most three sentences and then the close output.")]
+        cues = []
+        if _ticket_age_on(snapshot):
+            cues.append(Run(("ticket", "age")))
+        cues.append(See("Write the evening report for this reporting level. At digest, plain sentences and the closeout path. "
+                        "Otherwise at most three sentences and then the close output."))
+        return cues
     if wake == "user":
         first = "Answer the question first." if trigger.question else "Answer the user first."
         return [See(first), See("File the work the message asks for with ticket add.")]

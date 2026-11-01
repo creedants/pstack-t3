@@ -26,7 +26,7 @@ from brigade_lib._watch.seats import report_is_current
 from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, report_threads
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural, stored
 from brigade_lib.store import CLOSED_GOAL_STATES, IN_FLIGHT_STATES, KINDS, Restaurant, holder_prefix, is_admin, parse_row, reporting_of, siblings, store_path
-from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell
+from brigade_lib.tickets import EVERY_ROW, GOALS_ONLY, Label, Tally, age_select, aged_since, awaited, filed_at, finished_requests, handed_count, in_flight_tickets, intake_list, read_labels, request_files, sibling_named, tell, ticket_age_of
 
 SECTIONS = {
     ("dish", "merged"): "Merged",
@@ -176,3 +176,28 @@ def claims_cap_reports(restaurant):
     return over
 
 
+def waiting_section(restaurant, since):
+    """The `## Waiting list` lines, or none. It prints only on an age-out or a ticket age would move now, because ten existing close tests pin the whole close text of stores holding ordinary waiting tickets, and those tests may not change this round."""
+    days = ticket_age_of(restaurant.meta)
+    rows = restaurant.rows("rail.tsv")
+    labels = read_labels(restaurant, GOALS_ONLY)
+    held = in_flight_tickets(restaurant)
+    now = datetime.fromisoformat(seam.now().replace("Z", "+00:00"))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    selected = age_select(rows, labels, held, awaited(rows, restaurant.dir.name), days, now)
+    aged = aged_since(restaurant, since)
+    if not aged and not selected:
+        return []
+    waiting = [row for row in rows if row["state"] == "waiting"]
+    if waiting:
+        oldest = max((now - filed_at(row)).days for row in waiting)
+        head = f"{plural(len(waiting), 'waiting ticket')}, oldest {oldest} days old"
+    else:
+        head = "no waiting ticket"
+    tail = f"{aged} aged out since the last report" if aged else "no ticket aged out since the last report"
+    lines = ["## Waiting list", "", f"- {head}; {tail}."]
+    if "autofire" not in restaurant.meta:
+        lines.append("- no auto-start level is recorded; waiting tickets start only when told; "
+                     "set --autofire decides which priorities start on their own.")
+    return lines + [""]
