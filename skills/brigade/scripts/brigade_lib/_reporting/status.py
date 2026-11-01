@@ -177,15 +177,23 @@ def claims_cap_reports(restaurant):
 
 
 def waiting_section(restaurant, since):
-    """The `## Waiting list` lines, or none. It prints only on an age-out or a ticket age would move now, because ten existing close tests pin the whole close text of stores holding ordinary waiting tickets, and those tests may not change this round."""
-    days = ticket_age_of(restaurant.meta)
+    """The `## Waiting list` lines, or none.
+
+    It prints when aging moved a ticket since the last report or would move one now, so a report gains
+    these lines only when the waiting list is aging or just aged. Ten existing close tests pin the whole
+    close text of stores that hold ordinary waiting tickets, so a section printed on every report would
+    break them. Aging off selects nothing, and a ticket that aged out before it was turned off still
+    counts.
+    """
+    meta = restaurant.meta
+    days = ticket_age_of(meta)
     rows = restaurant.rows("rail.tsv")
     labels = read_labels(restaurant, GOALS_ONLY)
     held = in_flight_tickets(restaurant)
     now = datetime.fromisoformat(seam.now().replace("Z", "+00:00"))
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    selected = age_select(rows, labels, held, awaited(rows, restaurant.dir.name), days, now)
+    selected = age_select(rows, labels, held, awaited(rows, restaurant.dir.name), days, now) if days else ()
     aged = aged_since(restaurant, since)
     if not aged and not selected:
         return []
@@ -197,7 +205,7 @@ def waiting_section(restaurant, since):
         head = "no waiting ticket"
     tail = f"{aged} aged out since the last report" if aged else "no ticket aged out since the last report"
     lines = ["## Waiting list", "", f"- {head}; {tail}."]
-    if "autofire" not in restaurant.meta:
+    if not meta.get("autofire"):
         lines.append("- no auto-start level is recorded; waiting tickets start only when told; "
                      "set --autofire decides which priorities start on their own.")
     return lines + [""]

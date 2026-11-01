@@ -41,14 +41,14 @@ def register_ticket(sub):
     how = a.add_mutually_exclusive_group(required=True)
     how.add_argument("--summary")
     how.add_argument("--from-report", metavar="FILE",
-                     help="an item report under reports/, such as reports/D2.md; files one waiting ticket per "
+                     help="an item report under reports/, such as D2.md; files one waiting ticket per "
                           "item at most, only when none from that report exists yet, for the first follow-up marked "
                           "Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; every "
                           "other such follow-up goes to notes.tsv keyed by the tracked paths it quotes, printing not filed "
                           "when marked; a filed ticket changes the ticket table, the log, and lastActivityAt, "
                           "and a note changes notes.tsv; each ticket takes its item's goal, and when that "
-                          "item has a kind the ticket is fix at priority urgent or normal, polish at low; a "
-                          "follow-up is filed with no --priority, so it is low")
+                          "item has a kind the ticket is fix at urgent or normal, polish at low; filed "
+                          "with no --priority, so it is low")
     a.add_argument("--dry-run", action="store_true", help="with --from-report: print what it would add or note, and what is already noted; it changes no store file")
     a.add_argument("--source", default="user")
     a.add_argument("--ref", default="")
@@ -61,7 +61,7 @@ def register_ticket(sub):
                    help="missing reads as urgent from upstream, low from report, and normal from every other source")
     a.add_argument("--paths", default="", action=OncePaths, help="comma-separated files and directories the work will touch; given once")
     a.add_argument("--decision", action="store_true",
-                   help="the ticket asks the owner to decide; startable never lists it")
+                   help="the ticket asks the owner to decide; the startable command never lists it as startable")
     a.add_argument("--kind", choices=KINDS, help="the kind of work; a ticket added with --summary is refused without it")
     a.add_argument("--goal", metavar="G<n>",
                    help="with --summary: the goal this ticket belongs to, which must be open or paused; without it the "
@@ -140,9 +140,9 @@ def register_goal(sub):
                    help="one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; "
                         "with --state done, what shows the done test is met; with --state dropped, why the goal is "
                         "dropped; refused without --state done or --state dropped")
-    a.add_argument("--name", help="replaces the goal's name; refused when empty or whitespace-only")
-    a.add_argument("--purpose", help="replaces the goal's purpose; refused when empty or whitespace-only")
-    a.add_argument("--done", help="replaces the goal's done test; refused when empty or whitespace-only")
+    a.add_argument("--name", help="replaces the goal's name; refused when it is empty or only whitespace")
+    a.add_argument("--purpose", help="replaces the goal's purpose; refused when it is empty or only whitespace")
+    a.add_argument("--done", help="replaces the goal's done test; refused when it is empty or only whitespace")
     a.add_argument("--share",
                    help='a whole number of 1 or more, recorded as the goal\'s share of the worker slots; "" clears it; '
                         "goal list prints it, and the refill holds a ticket of the goal back once that many slots "

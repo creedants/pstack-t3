@@ -101,7 +101,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
 | `--summary SUMMARY` |  |  |  |  |
-| `--from-report FILE` |  |  |  | an item report under reports/, such as reports/D2.md; files one waiting ticket per item at most, only when none from that report exists yet, for the first follow-up marked Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; every other such follow-up goes to notes.tsv keyed by the tracked paths it quotes, printing not filed when marked; a filed ticket changes the ticket table, the log, and lastActivityAt, and a note changes notes.tsv; each ticket takes its item's goal, and when that item has a kind the ticket is fix at priority urgent or normal, polish at low; a follow-up is filed with no --priority, so it is low |
+| `--from-report FILE` |  |  |  | an item report under reports/, such as D2.md; files one waiting ticket per item at most, only when none from that report exists yet, for the first follow-up marked Safety:, Privacy:, or Correctness: whose text is not on the rail; case does not count; every other such follow-up goes to notes.tsv keyed by the tracked paths it quotes, printing not filed when marked; a filed ticket changes the ticket table, the log, and lastActivityAt, and a note changes notes.tsv; each ticket takes its item's goal, and when that item has a kind the ticket is fix at urgent or normal, polish at low; filed with no --priority, so it is low |
 | `--dry-run` |  |  |  | with --from-report: print what it would add or note, and what is already noted; it changes no store file |
 | `--source SOURCE` |  |  | `user` |  |
 | `--ref REF` |  |  |  |  |
@@ -109,7 +109,7 @@ brigade.py [flags] ticket add (--summary SUMMARY | --from-report FILE) [--dry-ru
 | `--again` |  |  |  | with --source user and no --ref: add the ticket even when a waiting or assigned ticket of this store has the same summary. Case, leading and trailing whitespace, and the length of a whitespace run do not count |
 | `--priority PRIORITY` |  | `urgent`, `normal`, `low` |  | missing reads as urgent from upstream, low from report, and normal from every other source |
 | `--paths PATHS` |  |  |  | comma-separated files and directories the work will touch; given once |
-| `--decision` |  |  |  | the ticket asks the owner to decide; startable never lists it |
+| `--decision` |  |  |  | the ticket asks the owner to decide; the startable command never lists it as startable |
 | `--kind KIND` |  | `feature`, `fix`, `polish`, `upkeep`, `study` |  | the kind of work; a ticket added with --summary is refused without it |
 | `--goal G<n>` |  |  |  | with --summary: the goal this ticket belongs to, which must be open or paused; without it the ticket is unassigned |
 | `--after AFTER` |  |  |  | T\<n> or \<sibling>/T\<n> to wait for; "" clears it |
@@ -221,7 +221,7 @@ move waiting low-priority polish or upkeep tickets filed more than N days ago to
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--older-than N` |  |  |  | list tickets filed strictly more than this many days ago; takes 1 or more |
+| `--older-than N` |  |  |  | use this many days instead of the stored set --ticket-age limit for this run; takes 1 or more |
 | `--dry-run` |  |  |  | print what it would move; it changes no table |
 
 ## brigade.py goal
@@ -262,9 +262,9 @@ change a goal's state, name, purpose, done test, or share
 | `id` | yes |  |  |  |
 | `--state STATE` |  | `open`, `paused`, `done`, `dropped` |  | paused starts no ticket of the goal, whatever its priority or the auto-start level. The goal's items in flight finish and land. A move to done or to dropped needs --evidence, and is refused while a ticket of the goal is waiting, an item of the goal is in progress, in review, passed, sent back, blocked, or waiting to land, or an assigned ticket of the goal is not in an item of the goal. A done or dropped goal moves only to open. |
 | `--evidence EVIDENCE` |  |  |  | one line, stored with the time in the goal's closed cell when the goal moves to done or dropped; with --state done, what shows the done test is met; with --state dropped, why the goal is dropped; refused without --state done or --state dropped |
-| `--name NAME` |  |  |  | replaces the goal's name; refused when empty or whitespace-only |
-| `--purpose PURPOSE` |  |  |  | replaces the goal's purpose; refused when empty or whitespace-only |
-| `--done DONE` |  |  |  | replaces the goal's done test; refused when empty or whitespace-only |
+| `--name NAME` |  |  |  | replaces the goal's name; refused when it is empty or only whitespace |
+| `--purpose PURPOSE` |  |  |  | replaces the goal's purpose; refused when it is empty or only whitespace |
+| `--done DONE` |  |  |  | replaces the goal's done test; refused when it is empty or only whitespace |
 | `--share SHARE` |  |  |  | a whole number of 1 or more, recorded as the goal's share of the worker slots; "" clears it; goal list prints it, and the refill holds a ticket of the goal back once that many slots hold the goal's items |
 
 ## brigade.py goal list

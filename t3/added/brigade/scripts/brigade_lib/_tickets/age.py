@@ -153,7 +153,7 @@ def register_age(t):
     """The ticket age subparser on the ticket subparsers."""
     a = t.add_parser("age", help="move waiting low-priority polish or upkeep tickets filed more than N days ago to notes.tsv")
     a.add_argument("--older-than", type=int, metavar="N",
-                   help="list tickets filed strictly more than this many days ago; takes 1 or more")
+                   help="use this many days instead of the stored set --ticket-age limit for this run; takes 1 or more")
     a.add_argument("--dry-run", action="store_true", help="print what it would move; it changes no table")
 
 
