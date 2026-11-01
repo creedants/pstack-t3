@@ -41,12 +41,12 @@ What this runner guarantees. The tests are trusted code. They can be wrong, slow
 are not written to defeat the runner. A run exits 0 only when each test the run selected has exactly one
 verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the test's
 shard, and each shard of the run finished cleanly. A run with no `--part` selects
-every test discovery returned. Modules are sorted by descending test count and then by name. Tests in a module are sorted by id.
-Tests are ordered by their recorded seconds, longest first with ties by test id, and each test goes to the
-part with the smallest running total, ties to the lowest part number. A test the durations file does not
-record takes a stated default. The assignment depends only on test ids and the durations file, so each part
-job of a run computes the same split. A run with `--part i/n` selects part i of n by the rule above and no
-other test. So each of these makes
+every test discovery returned. A shard holds the tests of one module, and the modules with the most tests are
+built first. The part split orders tests by their recorded seconds, longest first with ties by test id, and
+sends each test to the part with the smallest running total, ties to the lowest part number. A test the
+durations file does not record takes a stated default. The assignment depends only on test ids and the
+durations file, so each part job of a run computes the same split. A run with `--part i/n` selects part i of
+n by the rule above and no other test. So each of these makes
 the run exit with another status than 0. A failing assertion. An error in a test or in a fixture. A module
 that fails to import. A worker that exits or is killed before it reported that it had finished, as when a
 test calls `os._exit`. A worker past
