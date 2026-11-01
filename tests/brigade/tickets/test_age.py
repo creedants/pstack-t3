@@ -53,7 +53,7 @@ class AgeMixin:
         self.hand_edit("rail.tsv", ident, kind="")
         self.assertEqual(self.brigade("ticket", "age", "--dry-run"), "nothing old enough to age out")
 
-    def test_age_leaves_a_ticket_with_an_empty_priority_unlisted(self):
+    def test_age_leaves_a_ticket_whose_priority_cell_is_empty_and_reads_normal_unlisted(self):
         self.open()
         self.brigade("ticket", "add", "--kind", "polish", "--summary", "old work")
         self.refile("T1", days=15)
@@ -94,6 +94,16 @@ class AgeMixin:
         self.assertNotIn(f"{first} ", out)
         self.assertIn("T2 15d polish: second", out.splitlines()[0])
         self.assertIn("1 ticket would age out", out.splitlines()[-1])
+
+    def test_age_leaves_a_ticket_a_sibling_coordinator_waits_on_unlisted(self):
+        self.open()
+        ident = self.old_low(days=15)
+        sibling = self.at.parent / "docs"
+        self.run_at(sibling, "open", "--project-root", str(self.project), "--name", "Docs")
+        self.run_at(sibling, "ticket", "add", "--kind", "fix", "--summary", "waits on the other store",
+                    "--after", f"perf/{ident}")
+        self.assertEqual(self.brigade("ticket", "age", "--dry-run"), "nothing old enough to age out")
+
 
     def test_age_leaves_a_ticket_a_label_freeze_holds_back_unlisted(self):
         self.open()

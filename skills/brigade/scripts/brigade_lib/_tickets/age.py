@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from brigade_lib import seam
 from brigade_lib._notes import append_notes, note_rows
 from brigade_lib._tickets.after import key_of
+from brigade_lib._tickets.rail import sibling_rails
 from brigade_lib._tickets.labels import GOALS_ONLY, Label, frozen_label, in_flight_tickets, label_words, read_labels
 from brigade_lib._tickets.paths import paths_of, priority_of, tracked_paths
 from brigade_lib._tickets.sweep import filed_at
@@ -68,6 +69,23 @@ def awaited(rows, own):
     return waited
 
 
+def sibling_waits(restaurant, own):
+    """The ids of this store's tickets that a sibling's waiting ticket waits on through after.
+
+    Call it before the store lock. sibling_rails reads each sibling's rail without holding this
+    store's lock, the way ticket add --after reads one.
+    """
+    found = set()
+    for directory, table in sibling_rails(restaurant).items():
+        for row in table:
+            if row["state"] != "waiting" or not row["after"]:
+                continue
+            store, ident = key_of(directory.name, row["after"])
+            if store == own:
+                found.add(ident)
+    return found
+
+
 def age_select(rows, labels, held, waited, days, now):
     """The waiting low-priority polish or upkeep rows filed strictly more than days ago, as Aged.
 
@@ -118,19 +136,20 @@ def age_text(aged, write):
     return "\n".join(lines)
 
 
-def age_tickets(restaurant, days, write, tracked):
+def age_tickets(restaurant, days, write, tracked, sibling_waited=()):
     """Move each selected ticket's summary to notes.tsv, then drop it.
 
     A list prints each ticket and exits 0, or prints nothing old enough when empty.
     An apply first appends one ledger row per recorded path, or one note row when the ticket
     records no path, then drops the ticket with a note naming the age-out. The ledger's own
     (path, item, same_text(text)) key drops a second note on retry, and the retry makes one
-    state change. Call it under the caller's lock.
+    state change. sibling_waited holds the ticket ids a sibling's waiting ticket waits on,
+    read by sibling_waits before the lock. Call it under the caller's lock.
     """
     rows = restaurant.rows("rail.tsv")
     labels = read_labels(restaurant, GOALS_ONLY)
     held = in_flight_tickets(restaurant)
-    waited = awaited(rows, restaurant.dir.name)
+    waited = awaited(rows, restaurant.dir.name) | set(sibling_waited)
     now = datetime.fromisoformat(seam.now().replace("Z", "+00:00"))
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
@@ -162,6 +181,7 @@ def prepare_age(restaurant, args):
     if args.older_than is not None and args.older_than < 1:
         raise BrigadeError("--older-than takes a whole number of 1 or more")
     args.tracked = None if args.dry_run else tracked_paths(restaurant.meta["projectRoot"])
+    args.sibling_waited = sibling_waits(restaurant, restaurant.dir.name)
 
 
 def run_age(restaurant, args):
@@ -171,6 +191,7 @@ def run_age(restaurant, args):
         return "ticket aging is off; set --ticket-age N turns it on"
     if not args.dry_run:
         with restaurant.guarded():
-            return age_tickets(restaurant, days, True, getattr(args, "tracked", None))
+            return age_tickets(restaurant, days, True, getattr(args, "tracked", None),
+                               getattr(args, "sibling_waited", ()))
     with restaurant.checked():
-        return age_tickets(restaurant, days, False, None)
+        return age_tickets(restaurant, days, False, None, getattr(args, "sibling_waited", ()))
