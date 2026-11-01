@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None, doc: str | None = None) -> int:
     parser.add_argument("--part", type=parse_part,
                         help="Run part i of n, written as i/n. i is an integer from 1 to n. With no --part, the run selects every test discovery returned.")
     parser.add_argument("--record-durations", default=None, metavar="PATH",
-                        help="Run the whole suite once and write the seconds measured for each test to PATH, then exit with the suite status. The run is the ordinary one, so -j and its contention shape the numbers. scripts/run_tests.py --record-durations is the documented path to a fresh durations file.")
+                        help="Run the whole suite once, ignoring --part, and write the slowest measured test durations to PATH within a 15000-byte budget, then exit with the suite status. The run uses -j with the landing slot cap. Regenerate the durations file with python3 scripts/run_tests.py --record-durations PATH.")
     parser.add_argument("--list", help=argparse.SUPPRESS)
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -94,13 +94,13 @@ def main(argv: list[str] | None = None, doc: str | None = None) -> int:
     start = Path(args.start_directory).resolve()
     if args.list:
         return list_main(start, Path(args.list))
-    if args.record_durations:
-        import run_tests as _facade
-
-        return _facade.record_durations(start, args.jobs, args.timeout, Path(args.record_durations))
     jobs, lowered = jobs_in_slot(args.jobs, os.environ)
     if lowered:
         print(lowered, file=sys.stderr, flush=True)
+    if args.record_durations:
+        import run_tests as _facade
+
+        return _facade.record_durations(start, jobs, args.timeout, Path(args.record_durations))
     try:
         return run(start, jobs, args.timeout, args.part)
     except Exception as refusal:

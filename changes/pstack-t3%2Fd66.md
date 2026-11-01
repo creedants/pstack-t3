@@ -1,4 +1,4 @@
-- kind fix
+- kind upkeep
 - Split each Linux suite into eight duration-balanced parts per Python version and gated pull request CI on them
 - Moved the headless-browser probe into its own pull request Linux job and push macOS job with a shared anchor
 - Moved the generated-files check into its own job that starts at once on both events

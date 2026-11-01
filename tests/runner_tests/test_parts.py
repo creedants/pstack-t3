@@ -168,32 +168,142 @@ class PartsMixin:
                 by_id_second = {test.id: run_tests.part_of(second, count, seconds, 1.0)[test.seq] for test in second}
                 self.assertEqual(by_id_first, by_id_second)
 
+    def test_recording_durations_caps_the_worker_count_at_the_landing_slot_limit(self):
+        import io
+
+        seen = []
+        original_record = run_tests.record_durations
+
+        def fake_record(start, jobs, timeout, out):
+            seen.append(jobs)
+            return 0
+
+        run_tests.record_durations = fake_record
+        self.addCleanup(setattr, run_tests, "record_durations", original_record)
+        saved_slot = os.environ.get("LAND_SLOT")
+        saved_files = os.environ.get("LAND_SLOT_FILES")
+        os.environ["LAND_SLOT"] = "worker"
+        os.environ["LAND_SLOT_FILES"] = "worker-0"
+
+        def restore_slot():
+            if saved_slot is None:
+                os.environ.pop("LAND_SLOT", None)
+            else:
+                os.environ["LAND_SLOT"] = saved_slot
+            if saved_files is None:
+                os.environ.pop("LAND_SLOT_FILES", None)
+            else:
+                os.environ["LAND_SLOT_FILES"] = saved_files
+
+        self.addCleanup(restore_slot)
+        previous = sys.stderr
+        sink = io.StringIO()
+        sys.stderr = sink
+        self.addCleanup(setattr, sys, "stderr", previous)
+        out = self.proj / "durations.json"
+        self.assertEqual(run_tests.main(["-s", str(self.tests), "-j", "8", "--record-durations", str(out)]), 0)
+        self.assertEqual(seen, [4])
+        self.assertIn("lowered to 4", sink.getvalue())
+
     def test_record_durations_writes_seconds_for_each_test_it_measures(self):
-        # This starts a process because the check is the runner CLI writing a durations file.
+        one = run_tests.Test(0, "test_slow.SlowTest.test_one", "test_slow", "test_slow.SlowTest")
+        two = run_tests.Test(1, "test_slow.SlowTest.test_two", "test_slow", "test_slow.SlowTest")
+        three = run_tests.Test(2, "test_slow.SlowTest.test_three", "test_slow", "test_slow.SlowTest")
+        plan = (one, two, three)
+
+        def start_line(seq):
+            return json.dumps({"ev": "start", "seq": seq})
+
+        def result_line(seq):
+            return json.dumps({"ev": "result", "seq": seq, "status": "ok", "problems": []})
+
+        batches = [
+            [start_line(0)],
+            [result_line(0)],
+            [start_line(1)],
+            [result_line(1)],
+            [start_line(2), result_line(2)],
+        ]
+        clocks = [10.0, 10.25, 11.0, 11.5, 12.0]
+
+        class FakeClock:
+            def __init__(self, values):
+                self.values = list(values)
+                self.index = 0
+
+            def monotonic(self):
+                value = self.values[self.index]
+                self.index += 1
+                return value
+
+        original_list_tests = run_tests.list_tests
+        original_run = run_tests.run
+        original_time = run_tests.time
+        run_tests.list_tests = lambda start, scratch, timeout, pause: plan
+        self.addCleanup(setattr, run_tests, "list_tests", original_list_tests)
+        self.addCleanup(setattr, run_tests, "run", original_run)
+        self.addCleanup(setattr, run_tests, "time", original_time)
+
+        def fake_run(start, jobs, timeout, part=None, *, list_tests_fn=None):
+            found = list_tests_fn(start, None, timeout, None)
+            self.assertEqual(tuple(test.seq for test in found), (0, 1, 2))
+            channel_path = self.proj / "channel.jsonl"
+            channel = run_tests.Channel(channel_path)
+            self.addCleanup(channel.close)
+            handle = open(channel_path, "a")
+            self.addCleanup(handle.close)
+            for lines in batches:
+                for line in lines:
+                    handle.write(line + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+                channel.read()
+            return 0
+
+        run_tests.run = fake_run
+        run_tests.time = FakeClock(clocks)
+        out = self.proj / "durations.json"
+        self.assertEqual(run_tests.record_durations(Path(self.tests), 1, 30.0, out), 0)
+        data = json.loads(out.read_text())
+        self.assertEqual(data["seconds"], {one.id: 0.25, two.id: 0.5})
+        self.assertNotIn(three.id, data["seconds"])
+        reread, default = run_tests.read_durations(out)
+        self.assertEqual(reread, data["seconds"])
+        self.assertEqual(default, data["default_seconds"])
+        self.assertGreater(default, 0)
+
+    def test_record_durations_writes_a_readable_file_and_exits_with_the_suite_status(self):
         self.write("test_slow.py", """
-            import time
             import unittest
 
             class SlowTest(unittest.TestCase):
                 def test_one(self):
-                    time.sleep(0.3)
+                    pass
 
                 def test_two(self):
-                    time.sleep(0.3)
+                    pass
         """)
         out = self.proj / "durations.json"
         result = self.runner("--record-durations", str(out))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(out.is_file())
         data = json.loads(out.read_text())
-        self.assertIn("default_seconds", data)
-        self.assertEqual(len(data["seconds"]), 2)
-        for ident, seconds in data["seconds"].items():
-            self.assertTrue(ident.endswith(("test_one", "test_two")), ident)
-            self.assertGreater(seconds, 0)
+        self.assertGreater(data["default_seconds"], 0)
+        self.assertIsInstance(data["seconds"], dict)
         reread, default = run_tests.read_durations(out)
-        self.assertEqual(set(reread), set(data["seconds"]))
+        self.assertEqual(reread, data["seconds"])
         self.assertEqual(default, data["default_seconds"])
+        self.write("test_slow.py", """
+            import unittest
+
+            class SlowTest(unittest.TestCase):
+                def test_one(self):
+                    self.assertEqual(1, 2)
+        """)
+        failed = self.runner("--record-durations", str(out))
+        self.assertEqual(failed.returncode, 1, failed.stderr)
+        data = json.loads(out.read_text())
+        self.assertGreater(data["default_seconds"], 0)
+        self.assertIsInstance(data["seconds"], dict)
 
     def test_part_flag_runs_one_test_of_a_pair_and_refuses_a_part_outside_the_plan(self):
         for text, message in (("2/1", "2/1 has i outside 1 to n"),

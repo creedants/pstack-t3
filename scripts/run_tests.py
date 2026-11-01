@@ -33,8 +33,8 @@ That is NO TESTS RAN from Python 3.12 on and OK before it.
 To regenerate the durations file, run `python3 scripts/run_tests.py --record-durations <path>`. The recording
 run is one ordinary run of the suite, so the workers `-j` names and their contention are part of every number
 it writes. The measurement for a test is the gap the runner reads between that worker's start and result
-events, so it carries up to one poll interval of error, and a test that starts and ends inside one poll reads
-as no measurement. Only the slowest tests fit the file's 15000-byte budget, and every test the file does not
+events. Polling and scheduling affect the error. A test whose start and result events are read together has
+no measurement. Only the slowest tests fit the file's 15000-byte budget, and every test the file does not
 record takes `default_seconds`. A stale or missing durations file costs balance and never coverage.
 
 What this runner guarantees. The tests are trusted code. They can be wrong, slow, flaky, or broken, and they
@@ -45,8 +45,8 @@ every test discovery returned. A shard holds the tests of one module, and the mo
 built first. The part split orders tests by their recorded seconds, longest first with ties by test id, and
 sends each test to the part with the smallest running total, ties to the lowest part number. A test the
 durations file does not record takes a stated default. The assignment depends only on test ids and the
-durations file, so each part job of a run computes the same split. A run with `--part i/n` selects part i of
-n by the rule above and no other test. So each of these makes
+durations file, so each part job of a run computes the same split. Without `--record-durations`, a run with
+`--part i/n` selects part i of n by the rule above and no other test. So each of these makes
 the run exit with another status than 0. A failing assertion. An error in a test or in a fixture. A module
 that fails to import. A worker that exits or is killed before it reported that it had finished, as when a
 test calls `os._exit`. A worker past

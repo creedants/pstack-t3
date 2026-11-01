@@ -15,8 +15,8 @@ def read_durations(path=None) -> tuple[dict[str, float], float]:
     """Return the recorded seconds per test id and the default for a test with no record.
 
     Read `path`, or the durations file beside this module. A missing, unreadable, empty, or malformed file
-    yields no record and the default, and one bad entry is skipped rather than the whole file, so coverage
-    never depends on what the file holds.
+    yields no record and the default. Invalid entries are skipped when possible; a read error falls back to
+    no record and the default. Coverage never depends on what the file holds.
     """
     try:
         return _read_durations(path)
