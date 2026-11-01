@@ -105,7 +105,7 @@ def part_of(plan: tuple[Test, ...], count: int, costs: Costs) -> dict[int, int]:
     """Return the 1-based part each test's seq belongs to.
 
     Tests of one module run in one part, with two exceptions. A plan with fewer modules than parts places
-    every test on its own, so a part that can hold one gets one. A module estimated above one part's share
+    every test on its own. A module estimated above one part's share
     of the default worker count is placed one test at a time, so its tests can land in different parts. The
     estimate is the module's recorded seconds per test times its count plus one recorded overhead for each
     shard its count makes; a test placed on its own by the heavy-module rule costs its module's seconds per
