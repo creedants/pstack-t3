@@ -47,7 +47,11 @@ from .support import (
     unittest,
 )
 from .workflow import (
+    BROWSER_LINUX,
+    BROWSER_MACOS,
+    GENERATED,
     MACOS_PARTS,
+    PARTS,
     job_body,
     macos_part_run,
 )
@@ -59,6 +63,19 @@ SELECT_BROWSER_SOCKET_OFFSET = 22 + 16 + 45
 
 # 1 + 10 + pid + 1 + 8 scratch name, 5 shard home, 4 worker TMPDIR, 12 browser temp dir, 45 suffix (reports/D7.md in the brigade store).
 WORKER_SOCKET_OFFSET = 1 + 10 + 7 + 1 + 8 + 5 + 4 + 12 + 45
+
+GENERATED_RUN = (
+    "python3 scripts/build.py\n"
+    "git diff --exit-code -- skills docs/skills.md docs/cli\n"
+    "test -z \"$(git status --porcelain -- skills docs/skills.md docs/cli)\"\n"
+)
+
+JOB_ORDER = (
+    tuple(f"part_310_{index}" for index in range(1, PARTS + 1))
+    + tuple(f"part_312_{index}" for index in range(1, PARTS + 1))
+    + ("test_310", "test_312", GENERATED, BROWSER_LINUX, BROWSER_MACOS)
+    + MACOS_PARTS
+)
 
 
 def workflow_environment(text):
@@ -103,21 +120,23 @@ def macos_path_length(path):
 
 
 class CiJobsMixin:
-    def test_ci_runs_twelve_part_jobs_and_two_gates(self):
+    def test_ci_runs_sixteen_linux_parts_two_browser_jobs_generated_and_two_gates(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         try:
             import yaml
         except ImportError:
-            self.assertIn("needs: [part_310_1, part_310_2, part_310_3, part_310_4]", text)
-            self.assertIn("needs: [part_312_1, part_312_2, part_312_3, part_312_4, macos_312_1, macos_312_2, macos_312_3, macos_312_4]", text)
+            self.assertIn("needs: [part_310_1, part_310_2, part_310_3, part_310_4, part_310_5, part_310_6, part_310_7, part_310_8, browser_linux, generated]", text)
+            self.assertIn("needs: [part_312_1, part_312_2, part_312_3, part_312_4, part_312_5, part_312_6, part_312_7, part_312_8, browser_linux, generated, browser_macos, macos_312_1, macos_312_2, macos_312_3, macos_312_4]", text)
             self.assertEqual(text.count("if: always()"), 2)
             self.assertIn("PSTACK_TEST_REAL_PROCESS: '1'", text)
             self.assertNotIn("real_312", text)
             self.assertNotIn("--real-process-share", text)
-            self.assertNotIn("github.event_name == 'pull_request'", text)
             self.assertIsNone(job_body(text.splitlines(keepends=True), "macos_312"))
+            for version, prefix in (("3.10", "part_310"), ("3.12", "part_312")):
+                for index in range(1, PARTS + 1):
+                    self.assertIn(f"name: part ({version}, {index}/{PARTS})", text)
+                    self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/{PARTS}"), 2)
             for index in range(1, 5):
-                self.assertEqual(text.count(f"python3 scripts/run_tests.py --part {index}/4"), 3)
                 body = job_body(text.splitlines(keepends=True), f"macos_312_{index}")
                 self.assertIsNotNone(body)
                 joined = "".join(body)
@@ -129,6 +148,8 @@ class CiJobsMixin:
                 self.assertIn("if: github.event_name == 'push'", joined)
                 self.assertEqual(joined.count(f"python3 scripts/run_tests.py --part {index}/4"), 1)
                 self.assertNotIn("--real-process-share", joined)
+                self.assertNotIn("select_browser", joined)
+                self.assertNotIn("Generated skills match the sources", joined)
                 self.assertIn("grep -E '^Ran [0-9]+ tests? in '", joined)
                 self.assertIn("grep -E '^(OK|FAILED)'", joined)
                 self.assertIn("grep -E '^(FAIL|ERROR): '", joined)
@@ -136,63 +157,86 @@ class CiJobsMixin:
                 for other in range(1, 5):
                     if other != index:
                         self.assertNotIn(f"--part {other}/4", joined)
-                if index == 1:
-                    self.assertIn("Generated skills match the sources", joined)
-                else:
-                    self.assertNotIn("Generated skills match the sources", joined)
+            self.assertIn("name: generated files", text)
+            self.assertIn("name: browser (linux)", text)
+            self.assertIn("name: browser (macOS)", text)
             return
         jobs = yaml.safe_load(text)["jobs"]
-        self.assertEqual(list(jobs), [
-            "part_310_1", "part_310_2", "part_310_3", "part_310_4",
-            "part_312_1", "part_312_2", "part_312_3", "part_312_4",
-            "test_310", "test_312",
-            "macos_312_1", "macos_312_2", "macos_312_3", "macos_312_4",
-        ])
+        self.assertEqual(list(jobs), list(JOB_ORDER))
         for version, prefix in (("3.10", "part_310"), ("3.12", "part_312")):
-            for index in range(1, 5):
+            for index in range(1, PARTS + 1):
                 job = jobs[f"{prefix}_{index}"]
-                self.assertEqual(job["name"], f"part ({version}, {index}/4)")
+                self.assertEqual(job["name"], f"part ({version}, {index}/{PARTS})")
                 self.assertEqual(job["runs-on"], "ubuntu-latest")
-                self.assertNotIn("if", job)
+                self.assertEqual(job.get("if"), "github.event_name == 'pull_request'")
                 self.assertNotIn("strategy", job)
+                self.assertNotIn("needs", job)
                 setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
                 self.assertEqual(setup["with"]["python-version"], version)
                 self.assertIsInstance(setup["with"]["python-version"], str)
                 self.assertEqual(job["steps"][0]["uses"], "actions/checkout@v7")
                 runs = [step["run"] for step in job["steps"] if "run" in step]
-                self.assertEqual(len(runs), 3)
-                self.assertEqual(runs[0], "pip install pyyaml")
-                self.assertIn("select_browser", runs[1])
-                self.assertEqual(runs[2], f"python3 scripts/run_tests.py --part {index}/4")
+                self.assertEqual(runs, ["pip install pyyaml", f"python3 scripts/run_tests.py --part {index}/{PARTS}"])
+                self.assertEqual(len(job["steps"]), 4)
                 self.assertFalse(any(step.get("name") == "Generated skills match the sources" for step in job["steps"]))
+                self.assertFalse(any("select_browser" in step.get("run", "") for step in job["steps"]))
         self.assertNotIn("real_312", text)
         self.assertNotIn("--real-process-share", text)
         self.assertNotIn("strategy:", text)
         self.assertNotIn("fail-fast", text)
+        generated = jobs[GENERATED]
+        self.assertEqual(generated["name"], "generated files")
+        self.assertEqual(generated["runs-on"], "ubuntu-latest")
+        self.assertNotIn("if", generated)
+        self.assertNotIn("needs", generated)
+        self.assertEqual(generated["steps"][0]["uses"], "actions/checkout@v7")
+        self.assertEqual(generated["steps"][1]["uses"], "actions/setup-python@v7")
+        self.assertEqual(generated["steps"][1]["with"]["python-version"], "3.12")
+        self.assertEqual(generated["steps"][2]["run"], "pip install pyyaml")
+        skill = next(step for step in generated["steps"] if step.get("name") == "Generated skills match the sources")
+        self.assertEqual(skill["run"], GENERATED_RUN)
+        self.assertEqual(len(generated["steps"]), 4)
+        for job_id, runner, event in ((BROWSER_LINUX, "ubuntu-latest", "pull_request"), (BROWSER_MACOS, "macos-latest", "push")):
+            job = jobs[job_id]
+            self.assertIn("browser", job["name"])
+            self.assertEqual(job["runs-on"], runner)
+            self.assertEqual(job.get("if"), f"github.event_name == '{event}'")
+            self.assertNotIn("needs", job)
+            self.assertEqual(job["steps"][0]["uses"], "actions/checkout@v7")
+            self.assertEqual(job["steps"][1]["uses"], "actions/setup-python@v7")
+            self.assertEqual(job["steps"][1]["with"]["python-version"], "3.12")
+            self.assertEqual(job["steps"][2]["run"], "pip install pyyaml")
+            probe = [step["run"] for step in job["steps"] if "run" in step and "select_browser" in step["run"]]
+            self.assertEqual(len(probe), 1)
+            self.assertIn("select_browser(directory, timeout=60)", probe[0])
+        probe_jobs = [job_id for job_id, job in jobs.items()
+                      if any("select_browser" in step.get("run", "") for step in job.get("steps", []))]
+        self.assertEqual(sorted(probe_jobs), sorted([BROWSER_LINUX, BROWSER_MACOS]))
         for version, gate, prefix in (("3.10", "test_310", "part_310"), ("3.12", "test_312", "part_312")):
             job = jobs[gate]
             self.assertEqual(job["name"], f"test ({version})")
             self.assertEqual(job["if"], "always()")
-            if gate == "test_312":
-                self.assertEqual(job["needs"], [f"part_312_{index}" for index in range(1, 5)] + list(MACOS_PARTS))
-            else:
-                self.assertEqual(job["needs"], [f"{prefix}_{index}" for index in range(1, 5)])
             self.assertEqual(job["runs-on"], "ubuntu-latest")
-            setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v7")
-            self.assertEqual(setup["with"]["python-version"], version)
-            self.assertIsInstance(setup["with"]["python-version"], str)
-            check = next(step["run"] for step in job["steps"] if step.get("name") != "Generated skills match the sources" and "needs." in step.get("run", ""))
-            for index in range(1, 5):
-                self.assertIn(f'test "${{{{ needs.{prefix}_{index}.result }}}}" = success', check)
+            self.assertEqual(len(job["steps"]), 1)
+            step = job["steps"][0]
+            self.assertNotIn("uses", step)
+            self.assertNotIn("name", step)
+            self.assertNotIn("checkout", step.get("run", ""))
+            self.assertNotIn("setup-python", step.get("run", ""))
+            self.assertNotIn("pip install", step.get("run", ""))
+            self.assertNotIn("scripts/build.py", step.get("run", ""))
+            check = step["run"]
+            for index in range(1, PARTS + 1):
+                self.assertIn(f'test "${{{{ needs.{prefix}_{index}.result }}}}" = "$linux"', check)
+            self.assertIn('test "${{ needs.browser_linux.result }}" = "$linux"', check)
+            self.assertIn('test "${{ needs.generated.result }}" = success', check)
             self.assertNotIn("real_312", check)
-            skill = next(step for step in job["steps"] if step.get("name") == "Generated skills match the sources")
-            self.assertEqual(skill["run"], "python3 scripts/build.py\n"
-                             "git diff --exit-code -- skills docs/skills.md docs/cli\n"
-                             "test -z \"$(git status --porcelain -- skills docs/skills.md docs/cli)\"\n")
+        self.assertEqual(jobs["test_312"]["needs"], [f"part_312_{index}" for index in range(1, PARTS + 1)] + ["browser_linux", "generated", "browser_macos"] + list(MACOS_PARTS))
+        self.assertEqual(jobs["test_310"]["needs"], [f"part_310_{index}" for index in range(1, PARTS + 1)] + ["browser_linux", "generated"])
+        self.assertIn('test "${{ needs.browser_macos.result }}" = "$macos"', jobs["test_312"]["steps"][0]["run"])
         named = [job_id for job_id, job in jobs.items()
                  if any(step.get("name") == "Generated skills match the sources" for step in job["steps"])]
-        self.assertEqual(named, ["test_310", "test_312", "macos_312_1"])
-        self.assertNotIn("macos_312", jobs)
+        self.assertEqual(named, [GENERATED])
         for index in range(1, 5):
             macos = jobs[f"macos_312_{index}"]
             self.assertEqual(macos["name"], f"macOS (3.12, {index}/4)")
@@ -202,22 +246,34 @@ class CiJobsMixin:
             self.assertNotIn("needs", macos)
             self.assertNotIn("env", macos)
             steps = macos["steps"]
-            self.assertEqual(len(steps), 6 if index == 1 else 5)
+            self.assertEqual(len(steps), 4)
             self.assertEqual(steps[0].get("uses"), "actions/checkout@v7")
             self.assertEqual(steps[1].get("uses"), "actions/setup-python@v7")
             self.assertEqual(steps[1]["with"]["python-version"], "3.12")
             self.assertIsInstance(steps[1]["with"]["python-version"], str)
             self.assertEqual(steps[2].get("run"), "pip install pyyaml")
-            self.assertIn("select_browser", steps[3]["run"])
-            self.assertEqual(steps[4].get("name"), f"Test part {index}/4")
-            self.assertEqual(steps[4]["run"], macos_part_run(index))
-            self.assertNotIn("--real-process-share", steps[4]["run"])
-            if index == 1:
-                self.assertEqual(steps[5].get("name"), "Generated skills match the sources")
-                self.assertNotIn("if", steps[5])
-                gate_skill = next(step for step in jobs["test_312"]["steps"]
-                                  if step.get("name") == "Generated skills match the sources")
-                self.assertEqual(steps[5]["run"], gate_skill["run"])
+            self.assertFalse(any("select_browser" in step.get("run", "") for step in steps))
+            self.assertFalse(any(step.get("name") == "Generated skills match the sources" for step in steps))
+            self.assertEqual(steps[3].get("name"), f"Test part {index}/4")
+            self.assertEqual(steps[3]["run"], macos_part_run(index))
+            self.assertNotIn("--real-process-share", steps[3]["run"])
+
+    def test_the_browser_probe_step_is_shared_by_anchor_and_alias(self):
+        try:
+            import yaml
+        except ImportError:
+            text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+            self.assertEqual(text.count("&select_browser"), 1)
+            self.assertEqual(text.count("*select_browser"), 1)
+            return
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        jobs = yaml.safe_load(text)["jobs"]
+        linux_probe = [step["run"] for step in jobs[BROWSER_LINUX]["steps"] if "run" in step and "select_browser" in step["run"]]
+        macos_probe = [step["run"] for step in jobs[BROWSER_MACOS]["steps"] if "run" in step and "select_browser" in step["run"]]
+        self.assertEqual(len(linux_probe), 1)
+        self.assertEqual(macos_probe, linux_probe)
+        self.assertEqual(text.count("&select_browser"), 1)
+        self.assertEqual(text.count("*select_browser"), 1)
 
     def test_the_browser_step_creates_its_temporary_directory_with_ignore_cleanup_errors(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -228,10 +284,9 @@ class CiJobsMixin:
             self.assertIn(needle, text)
             return
         jobs = yaml.safe_load(text)["jobs"]
-        for prefix in ("part_310", "part_312"):
-            for index in range(1, 5):
-                runs = [step["run"] for step in jobs[f"{prefix}_{index}"]["steps"] if "run" in step]
-                self.assertIn(needle, runs[1])
+        for job_id in (BROWSER_LINUX, BROWSER_MACOS):
+            runs = [step["run"] for step in jobs[job_id]["steps"] if "run" in step]
+            self.assertIn(needle, runs[-1])
 
     def test_the_browser_step_tries_select_browser_again_when_the_first_try_returns_no_path(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -242,11 +297,11 @@ class CiJobsMixin:
             self.assertEqual(text.count("select_browser(directory, timeout=60)"), 1)
             return
         jobs = yaml.safe_load(text)["jobs"]
-        for prefix in ("part_310", "part_312"):
-            for index in range(1, 5):
-                runs = [step["run"] for step in jobs[f"{prefix}_{index}"]["steps"] if "run" in step]
-                self.assertEqual(runs[1].count("select_browser(directory)"), 1)
-                self.assertEqual(runs[1].count("select_browser(directory, timeout=60)"), 1)
+        for job_id in (BROWSER_LINUX, BROWSER_MACOS):
+            runs = [step["run"] for step in jobs[job_id]["steps"] if "run" in step]
+            probe = next(run for run in runs if "select_browser" in run)
+            self.assertEqual(probe.count("select_browser(directory)"), 1)
+            self.assertEqual(probe.count("select_browser(directory, timeout=60)"), 1)
 
     def test_the_workflow_concurrency_group_is_the_workflow_and_ref_with_cancel_in_progress(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()

@@ -8,6 +8,12 @@ GATE_BLOCK_MUTATIONS = ("or_true", "set_plus_e", "if_false")
 
 MACOS_PARTS = ("macos_312_1", "macos_312_2", "macos_312_3", "macos_312_4")
 
+PARTS = 8
+
+BROWSER_LINUX = "browser_linux"
+BROWSER_MACOS = "browser_macos"
+GENERATED = "generated"
+
 def gate_readers() -> tuple[str, ...]:
     try:
         import yaml
@@ -83,12 +89,12 @@ def indent_workflow_switch(text: str) -> WorkflowSwitch:
     if value != "'1'":
         raise AssertionError("cannot find the real-process switch")
     for gate, part_prefix in GATES:
-        jobs = [gate, *(f"{part_prefix}_{index}" for index in range(1, 5))]
+        jobs = [gate, *(f"{part_prefix}_{index}" for index in range(1, PARTS + 1))]
         for job in jobs:
             body = job_body(lines, job)
             if body is None or any(key in line for line in body):
                 raise AssertionError("cannot find the real-process switch")
-    for job_id in MACOS_PARTS:
+    for job_id in (*MACOS_PARTS, BROWSER_LINUX, BROWSER_MACOS, GENERATED):
         body = job_body(lines, job_id)
         if body is None or any(key in line for line in body):
             raise AssertionError("cannot find the real-process switch")
@@ -228,7 +234,7 @@ def result_block_span(lines: list[str], prefix: str) -> tuple[int, int, int, str
     stop = start + 1
     while stop < len(lines) and ("${{ needs." + prefix + "_") in lines[stop]:
         stop += 1
-    if stop - start != 4:
+    if stop - start != PARTS:
         raise AssertionError("cannot find the result block of " + prefix)
     indent = len(lines[start]) - len(lines[start].lstrip(" "))
     block = "".join(line[indent:] for line in lines[start:stop])
@@ -263,14 +269,15 @@ def workflow_with_gate_mutation(text: str, name: str) -> str:
 
 def report_failed_part(script: str, prefix: str) -> None:
     if "macos_312" in script:
-        status = gate_script_status(script, prefix, ("failure", "success", "success", "success"), macos=("success",) * 4)
+        status = gate_script_status(script, prefix, ("failure",) + ("success",) * (PARTS - 1), macos=("success",) * 4)
     else:
-        status = gate_script_status(script, prefix, ("failure", "success", "success", "success"))
+        status = gate_script_status(script, prefix, ("failure",) + ("success",) * (PARTS - 1))
     if status == 0:
         raise AssertionError("gate exited 0 with a failed part")
 
 def gate_script_status(
-    script: str, prefix: str, results: tuple[str, ...], macos: tuple[str, ...] | None = None, event: str = "push"
+    script: str, prefix: str, results: tuple[str, ...], macos: tuple[str, ...] | None = None, event: str = "push",
+    browser_linux: str | None = None, browser_macos: str | None = None, generated: str | None = None,
 ) -> int:
     body = script
     for index, result in enumerate(results, start=1):
@@ -280,6 +287,12 @@ def gate_script_status(
         body = body.replace(token, result, 1)
     if "${{ needs.real_312.result }}" in body:
         raise AssertionError("real_312")
+    if event == "push":
+        linux_expected, macos_expected = "skipped", "success"
+    elif event == "pull_request":
+        linux_expected, macos_expected = "success", "skipped"
+    else:
+        linux_expected, macos_expected = "success", "success"
     macos_tokens = ["${{ needs." + job_id + ".result }}" for job_id in MACOS_PARTS]
     has_macos_tokens = any(token in body for token in macos_tokens)
     if has_macos_tokens and macos is None:
@@ -295,6 +308,17 @@ def gate_script_status(
                 raise AssertionError(token)
             while token in body:
                 body = body.replace(token, result, 1)
+
+    def fill(token: str, value: str | None, fallback: str) -> None:
+        nonlocal body
+        if token in body:
+            body = body.replace(token, value if value is not None else fallback)
+        elif value is not None:
+            raise AssertionError(token + " passed but no such token")
+
+    fill("${{ needs." + BROWSER_LINUX + ".result }}", browser_linux, linux_expected)
+    fill("${{ needs." + BROWSER_MACOS + ".result }}", browser_macos, macos_expected)
+    fill("${{ needs." + GENERATED + ".result }}", generated, "success")
     if "${{" in body:
         raise AssertionError(body)
     completed = subprocess.run(
@@ -304,4 +328,3 @@ def gate_script_status(
         env=dict(os.environ, GITHUB_EVENT_NAME=event),
     )
     return completed.returncode
-
