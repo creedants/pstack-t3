@@ -1,0 +1,2 @@
+- kind feature
+- `ticket age` moves waiting low-priority polish and upkeep tickets filed more than the limit ago to `notes.tsv` and drops them. The limit sits in `restaurant.json` under `ticketAge`, defaults to 14 days, is set with `set --ticket-age N`, and 0 or `""` turns aging off. The evening wake runs `ticket age` before the report cue, and the evening report gains a `## Waiting list` section when aging moved a ticket or would move one now.
