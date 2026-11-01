@@ -15,7 +15,7 @@ DEFAULT_OVERHEAD = 1.0
 
 @dataclass(frozen=True)
 class ModuleCost:
-    """What one module cost in the recording. `seconds` and `tests` hold its measured seconds per test, and `overhead` the typical span of one shard of it less the gaps of that shard's tests."""
+    """What one module cost in the recording. A record read from the file holds one test whose seconds are that module's measured seconds per test, and `overhead` is the typical span of one shard of it less the gaps of that shard's tests."""
 
     tests: int
     seconds: float
@@ -46,8 +46,9 @@ def read_durations(path=None) -> Costs:
     Read `path`, or the durations file beside this module. Each module's record is a list of its measured
     seconds per test and the typical overhead of one shard of it. A missing, unreadable, empty, or malformed
     file yields no module record and the built-in defaults; a file whose module entries are partly invalid
-    keeps its own defaults and the entries it can read. Nothing a file holds can raise out of the split, and
-    coverage never depends on what the file holds.
+    keeps its own defaults and the entries it can read, except that a number too large to read as a float
+    costs the whole record. Nothing a file holds can raise out of the split, and coverage never depends on
+    what the file holds.
     """
     try:
         return _read_durations(path)
@@ -107,7 +108,8 @@ def part_of(plan: tuple[Test, ...], count: int, costs: Costs) -> dict[int, int]:
     every test on its own, so a part that can hold one gets one. A module estimated above one part's share
     of the default worker count is placed one test at a time, so its tests can land in different parts. The
     estimate is the module's recorded seconds per test times its count plus one recorded overhead for each
-    shard its count makes; a test placed on its own costs its module's seconds per test plus one overhead.
+    shard its count makes; a test placed on its own by the heavy-module rule costs its module's seconds per
+    test plus one overhead, and the fewer-modules rule shares its module's estimate evenly.
     The answer depends only on the plan discovery returned and the durations data, so every part job of a
     run computes the same split. Every test is placed exactly once for any count of 1 or more and any
     durations data.
