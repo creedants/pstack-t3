@@ -32,6 +32,7 @@ from tests.runner_tests.test_ci_jobs import CiJobsMixin
 from tests.runner_tests.test_ids_and_fixtures import IdsFixturesMixin
 from tests.runner_tests.test_lifecycle import LifecycleMixin
 from tests.runner_tests.test_parts import BuildShardsMixin, PartsMixin
+from tests.runner_tests.test_parts_costs import PartsCostsMixin
 from tests.runner_tests.test_result_files import ResultFilesMixin
 from tests.runner_tests.test_results import ResultsMixin
 from tests.runner_tests.test_sweeps import SweepMixin, SweepsMixin
@@ -67,6 +68,7 @@ class RunTestsTest(
     ResultFilesMixin,
     SweepsMixin,
     PartsMixin,
+    PartsCostsMixin,
     CiJobsMixin,
     CiGatesMixin,
     RunnerCase,

@@ -87,7 +87,6 @@ class PartsMixin:
             self.assertEqual(len(got), len(repo))
 
     def test_every_test_of_one_module_lands_in_one_part_including_a_module_larger_than_a_shard(self):
-        # This starts no process: the split runs in memory.
         plan = []
         seq = 0
         for module, count in (("big", run_tests.SHARD_SIZE + 5), ("giant", 200), ("giant2", 200)):
@@ -110,7 +109,6 @@ class PartsMixin:
             self.assertEqual(len(big_parts), 1)
 
     def test_a_heavy_module_above_one_parts_worker_share_splits_per_test_while_a_light_one_stays_whole(self):
-        # This starts no process: the split runs in memory.
         plan = []
         seq = 0
         for module, count in (("heavy", 4), ("mid", 4), ("small", 4), ("tiny", 4)):
@@ -177,7 +175,6 @@ class PartsMixin:
                     self.assertTrue(all(parts))
 
     def test_a_malformed_module_entry_falls_back_to_defaults_while_valid_modules_still_record(self):
-        # This starts no process: the costs are read from a file the test writes.
         path = self.proj / "durations.json"
         path.write_text(json.dumps({
             "default_seconds": 2.0,
@@ -249,7 +246,6 @@ class PartsMixin:
         self.assertIn("lowered to 4", sink.getvalue())
 
     def test_summarize_durations_sums_test_seconds_and_medians_shard_overheads_rather_than_dropping_modules(self):
-        # This starts no process: the summary runs in memory.
         plan = (
             run_tests.Test(0, "aaa.Case.test_one", "aaa", "aaa.Case"),
             run_tests.Test(1, "aaa.Case.test_two", "aaa", "aaa.Case"),
