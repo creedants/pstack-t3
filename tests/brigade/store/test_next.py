@@ -45,6 +45,7 @@ class NextMixin:
             "reply: no (routine: morning service)"]))
         self.assertEqual(self.next_sheet("evening"), "\n".join([
             "wake: evening", "reporting: milestones",
+            "run ticket age",
             "see Write the evening report for this reporting level. At digest, plain sentences and the closeout path. "
             "Otherwise at most three sentences and then the close output.",
             "run close",

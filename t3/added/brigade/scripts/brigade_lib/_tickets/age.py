@@ -5,7 +5,7 @@ from brigade_lib._notes import append_notes, note_rows
 from brigade_lib._tickets.after import key_of
 from brigade_lib._tickets.rail import sibling_rails
 from brigade_lib._tickets.labels import GOALS_ONLY, Label, frozen_label, in_flight_tickets, label_words, read_labels
-from brigade_lib._tickets.paths import paths_of, priority_of, tracked_paths
+from brigade_lib._tickets.paths import paths_of, tracked_paths
 from brigade_lib._tickets.sweep import filed_at
 from brigade_lib.compact import refuse_setting
 from brigade_lib.shared import BrigadeError, plural
@@ -90,7 +90,7 @@ def age_select(rows, labels, held, waited, days, now):
     """The waiting low-priority polish or upkeep rows filed strictly more than days ago, as Aged.
 
     A row is selected only when it is waiting, no item in flight names it, its kind is polish or
-    upkeep, its priority reads low, it is not marked as a decision, it has no ref, no ticket waits
+    upkeep, its priority cell is low, it is not marked as a decision, it has no ref, no ticket waits
     on it through after, and its filed time is strictly more than days ago.
     """
     found = []
@@ -102,7 +102,7 @@ def age_select(rows, labels, held, waited, days, now):
         label = labels.tickets[row["id"]]
         if label.kind not in AGE_KINDS:
             continue
-        if priority_of(row) != "low":
+        if row["priority"] != "low":
             continue
         if row["decision"] == "yes":
             continue

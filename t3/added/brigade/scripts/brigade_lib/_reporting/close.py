@@ -26,7 +26,7 @@ from brigade_lib.leases import holding_blocks
 from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, hit_section, send_back_section
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, plural
 from brigade_lib.store import CLOSED_GOAL_STATES, KINDS, Restaurant, holder_prefix, is_admin, parse_row, reporting_of, siblings, store_path
-from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell
+from brigade_lib.tickets import EVERY_ROW, Label, Tally, finished_requests, handed_count, intake_list, read_labels, request_files, sibling_named, tell, ticket_age_of
 from brigade_lib._reporting.admin import admin_sections
 from brigade_lib._reporting.status import GROUPED_SECTIONS, SECTIONS, status_line, waiting_section
 
@@ -75,6 +75,8 @@ def events_since(restaurant, since):
 
 def report(restaurant, write=True):
     meta = restaurant.meta
+    # a stored ticketAge that does not parse refuses the report, as it refuses the evening sheet
+    ticket_age_of(meta)
     since = meta.get("lastReportAt") or ""
     latest = events_since(restaurant, since)
     sections = {title: [] for title in SECTIONS.values()}

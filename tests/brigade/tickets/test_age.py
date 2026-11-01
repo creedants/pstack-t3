@@ -53,16 +53,20 @@ class AgeMixin:
         self.hand_edit("rail.tsv", ident, kind="")
         self.assertEqual(self.brigade("ticket", "age", "--dry-run"), "nothing old enough to age out")
 
-    def test_age_leaves_a_ticket_whose_priority_cell_is_empty_and_reads_normal_unlisted(self):
+    def test_age_leaves_a_ticket_unlisted_when_its_priority_cell_is_empty_or_normal(self):
         self.open()
         self.brigade("ticket", "add", "--kind", "polish", "--summary", "old work")
         self.refile("T1", days=15)
+        self.brigade("ticket", "add", "--kind", "polish", "--priority", "normal", "--summary", "normal work")
+        self.refile("T2", days=15)
         self.assertEqual(self.brigade("ticket", "age", "--dry-run"), "nothing old enough to age out")
 
-    def test_age_leaves_a_normal_ticket_unlisted(self):
+    def test_age_leaves_an_empty_priority_report_ticket_unlisted(self):
         self.open()
-        self.brigade("ticket", "add", "--kind", "polish", "--priority", "normal", "--summary", "old work")
+        self.brigade("set", "--intake", "report")
+        self.brigade("ticket", "add", "--source", "report", "--kind", "polish", "--summary", "implicit low")
         self.refile("T1", days=15)
+        self.assertEqual(self.table_row(self.at, "rail.tsv", "T1")["priority"], "")
         self.assertEqual(self.brigade("ticket", "age", "--dry-run"), "nothing old enough to age out")
 
     def test_age_leaves_an_urgent_ticket_unlisted(self):
@@ -141,6 +145,14 @@ class AgeMixin:
                                           for row in rows})
         selected = age_select(rows, labels, {}, set(), 14, now)
         self.assertEqual([ticket.id for ticket in selected], ["T2", "T10"])
+
+    def test_age_select_leaves_an_empty_priority_cell_unlisted(self):
+        now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        row = {"id": "T1", "at": (now - timedelta(days=15)).isoformat(), "state": "waiting",
+               "source": "report", "ref": "", "dish": "", "summary": "implicit low", "priority": "",
+               "paths": "", "decision": "", "kind": "polish", "goal": "", "after": ""}
+        labels = SimpleNamespace(tickets={"T1": Label("polish", "")})
+        self.assertEqual(age_select([row], labels, {}, set(), 14, now), ())
 
     def test_age_moves_a_15_day_old_low_polish_ticket(self):
         self.open()
@@ -239,6 +251,17 @@ class AgeMixin:
         self.assertIn("ticketAge", err)
         self.assertIn("it is not a whole number of 0 or more", err)
 
+    def test_close_refuses_a_hand_written_bad_ticket_age(self):
+        self.open()
+        path = self.at / "restaurant.json"
+        meta = json.loads(path.read_text())
+        meta["ticketAge"] = "soon"
+        path.write_text(json.dumps(meta, indent=2) + "\n")
+        code, out, err = self.close_run("--dry-run")
+        self.assertEqual(code, 1)
+        self.assertIn("ticketAge", err)
+        self.assertIn("it is not a whole number of 0 or more", err)
+
     def test_next_evening_runs_ticket_age_before_the_report_see_line(self):
         self.open()
         self.old_low(days=15)
@@ -250,10 +273,14 @@ class AgeMixin:
                                     "and the closeout path. Otherwise at most three sentences and then the close output."))
         self.assertEqual(lines[-1], "reply: yes (evening: report)")
 
-    def test_next_evening_prints_no_age_run_for_a_young_waiting_list(self):
+    def test_next_evening_prints_the_age_run_for_a_young_waiting_list(self):
         self.open()
         self.old_low(days=3)
-        self.assertNotIn("ticket age", self.next_sheet("evening"))
+        self.assertIn("run ticket age", self.next_sheet("evening").splitlines())
+
+    def test_next_evening_prints_the_age_run_for_an_empty_store(self):
+        self.open()
+        self.assertIn("run ticket age", self.next_sheet("evening").splitlines())
 
 
     def test_next_evening_prints_no_age_run_after_set_zero(self):
@@ -278,7 +305,7 @@ class AgeMixin:
         self.assertEqual(code, 0)
         self.assertIn("## Waiting list", out)
         self.assertIn("- 1 waiting ticket, oldest 0 days old; 2 aged out since the last report.", out)
-        self.assertIn("- no auto-start level is recorded; waiting tickets start only when told; "
+        self.assertIn("- no auto-start level is recorded; the default is normal; "
                       "set --autofire decides which priorities start on their own.", out)
         self.brigade("set", "--autofire", "normal")
         code, out, err = self.close_run("--dry-run")
@@ -286,9 +313,15 @@ class AgeMixin:
         self.assertIn("## Waiting list", out)
         self.assertNotIn("no auto-start level is recorded", out)
 
-    def test_close_prints_no_waiting_section_for_a_fresh_waiting_list(self):
+    def test_close_prints_the_waiting_section_for_a_fresh_waiting_list(self):
         self.open()
         self.brigade("ticket", "add", "--kind", "polish", "--priority", "low", "--summary", "fresh")
+        code, out, err = self.close_run("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("- 1 waiting ticket, oldest 0 days old; no ticket aged out since the last report.", out)
+
+    def test_close_prints_no_waiting_section_for_an_empty_store(self):
+        self.open()
         code, out, err = self.close_run("--dry-run")
         self.assertEqual(code, 0)
         self.assertNotIn("Waiting list", out)
