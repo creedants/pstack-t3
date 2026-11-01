@@ -92,6 +92,109 @@ class PartsMixin:
             self.assertEqual(len(got), len(repo))
             self.assertTrue(all(parts))
 
+    def test_a_heavy_recorded_duration_puts_that_test_alone_in_its_part(self):
+        # This starts no process: the split reads a durations file the test writes.
+        self.write("test_quad.py", """
+            import unittest
+
+            class QuadTest(unittest.TestCase):
+                def test_a(self):
+                    pass
+
+                def test_b(self):
+                    pass
+
+                def test_c(self):
+                    pass
+
+                def test_heavy(self):
+                    pass
+        """)
+        plan = self.plan_of(self.tests)
+        heavy = next(test.id for test in plan if test.id.endswith("test_heavy"))
+        durations = self.proj / "durations.json"
+        durations.write_text(json.dumps({"default_seconds": 1.0, "seconds": {heavy: 1000.0}}))
+        first = [test.id for test in run_tests.tests_in_part(plan, 1, 2, durations_path=durations)]
+        second = [test.id for test in run_tests.tests_in_part(plan, 2, 2, durations_path=durations)]
+        self.assertEqual(first, [heavy])
+        self.assertEqual(len(second), 3)
+        self.assertNotIn(heavy, second)
+
+    def test_a_broken_durations_file_still_covers_every_test_exactly_once(self):
+        # This starts no process: the split reads files the test writes.
+        lines = ["import unittest", "", "class NineTest(unittest.TestCase):"]
+        for index in range(9):
+            lines.append(f"    def test_{index:02d}(self):")
+            lines.append("        pass")
+        self.write("test_nine.py", "\n".join(lines) + "\n")
+        plan = self.plan_of(self.tests)
+        ids = [test.id for test in plan]
+        good = ids[0]
+        payloads = {
+            "missing": None,
+            "empty": "",
+            "not_json": "not json",
+            "list": "[1, 2]",
+            "seconds_list": '{"seconds": []}',
+            "slow_string": json.dumps({"seconds": {good: "slow"}}),
+            "bad_default": json.dumps({"default_seconds": -1, "seconds": {good: 0}}),
+        }
+        for name, payload in payloads.items():
+            path = self.proj / f"durations-{name}.json"
+            if payload is None:
+                if path.exists():
+                    path.unlink()
+            else:
+                path.write_text(payload)
+            for count in range(1, 9):
+                with self.subTest(payload=name, count=count):
+                    parts = [run_tests.tests_in_part(plan, index, count, durations_path=path)
+                             for index in range(1, count + 1)]
+                    got = [test.id for part in parts for test in part]
+                    self.assertEqual(sorted(got), sorted(ids))
+                    self.assertEqual(len(got), len({test.seq for part in parts for test in part}))
+                    self.assertTrue(all(parts))
+
+    def test_the_split_does_not_depend_on_plan_order(self):
+        # This starts no process: the split runs in memory.
+        first = tuple(run_tests.Test(seq, f"mod.Case.test_{name}", "mod", "mod.Case")
+                      for seq, name in enumerate("abcd"))
+        second = tuple(run_tests.Test(seq, f"mod.Case.test_{name}", "mod", "mod.Case")
+                       for seq, name in enumerate("dcba"))
+        seconds = {"mod.Case.test_d": 100.0}
+        for count in (1, 2, 3, 4):
+            with self.subTest(count=count):
+                by_id_first = {test.id: run_tests.part_of(first, count, seconds, 1.0)[test.seq] for test in first}
+                by_id_second = {test.id: run_tests.part_of(second, count, seconds, 1.0)[test.seq] for test in second}
+                self.assertEqual(by_id_first, by_id_second)
+
+    def test_record_durations_writes_seconds_for_each_test_it_measures(self):
+        # This starts a process because the check is the runner CLI writing a durations file.
+        self.write("test_slow.py", """
+            import time
+            import unittest
+
+            class SlowTest(unittest.TestCase):
+                def test_one(self):
+                    time.sleep(0.3)
+
+                def test_two(self):
+                    time.sleep(0.3)
+        """)
+        out = self.proj / "durations.json"
+        result = self.runner("--record-durations", str(out))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(out.is_file())
+        data = json.loads(out.read_text())
+        self.assertIn("default_seconds", data)
+        self.assertEqual(len(data["seconds"]), 2)
+        for ident, seconds in data["seconds"].items():
+            self.assertTrue(ident.endswith(("test_one", "test_two")), ident)
+            self.assertGreater(seconds, 0)
+        reread, default = run_tests.read_durations(out)
+        self.assertEqual(set(reread), set(data["seconds"]))
+        self.assertEqual(default, data["default_seconds"])
+
     def test_part_flag_runs_one_test_of_a_pair_and_refuses_a_part_outside_the_plan(self):
         for text, message in (("2/1", "2/1 has i outside 1 to n"),
                               ("1/0", "1/0 has n below 1"),

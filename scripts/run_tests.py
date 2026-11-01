@@ -30,13 +30,23 @@ the runner did not start the tests, 5 when it is NO TESTS RAN, and 130 when SIGI
 When discovery returns no test, the report ends as `python3 -m unittest discover` ends on the same Python.
 That is NO TESTS RAN from Python 3.12 on and OK before it.
 
+To regenerate the durations file, run `python3 scripts/run_tests.py --record-durations <path>`. The recording
+run is one ordinary run of the suite, so the workers `-j` names and their contention are part of every number
+it writes. The measurement for a test is the gap the runner reads between that worker's start and result
+events, so it carries up to one poll interval of error, and a test that starts and ends inside one poll reads
+as no measurement. Only the slowest tests fit the file's 15000-byte budget, and every test the file does not
+record takes `default_seconds`. A stale or missing durations file costs balance and never coverage.
+
 What this runner guarantees. The tests are trusted code. They can be wrong, slow, flaky, or broken, and they
 are not written to defeat the runner. A run exits 0 only when each test the run selected has exactly one
 verdict, that verdict is a pass, a skip, or an expected failure read from the result file of the test's
 shard, and each shard of the run finished cleanly. A run with no `--part` selects
 every test discovery returned. Modules are sorted by descending test count and then by name. Tests in a module are sorted by id.
-Part i of n is every test whose index in that sequence, counting from 0, leaves remainder i - 1 when divided
-by n. A run with `--part i/n` selects part i of n by the rule above and no other test. So each of these makes
+Tests are ordered by their recorded seconds, longest first with ties by test id, and each test goes to the
+part with the smallest running total, ties to the lowest part number. A test the durations file does not
+record takes a stated default. The assignment depends only on test ids and the durations file, so each part
+job of a run computes the same split. A run with `--part i/n` selects part i of n by the rule above and no
+other test. So each of these makes
 the run exit with another status than 0. A failing assertion. An error in a test or in a fixture. A module
 that fails to import. A worker that exits or is killed before it reported that it had finished, as when a
 test calls `os._exit`. A worker past
@@ -70,7 +80,10 @@ process has, and a removal that fails leaves it.
 """
 from __future__ import annotations
 
+import json
+import statistics
 import sys
+import time
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -78,7 +91,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _run_tests import ACTIVE, DEFAULT_TIMEOUT, ENTRY, MAX_DEFAULT_JOBS, NO_TESTS, POLL_SECONDS, PR_SET_CHILD_SUBREAPER, PROGRESS_SECONDS, QUOTED_BYTES, QUOTED_LINES, ROOT as _PKG_ROOT, SEP1, SEP2, SHARD_SIZE, SWEEP_SECONDS
 from _run_tests.events import EVENTS, STATUSES, PROBLEM, SETUP, Accounting, Channel, Ended, Ledger, LedgerError, Outcome, OUTCOMES, Problem, Refusal, Interrupted, Running, Shard, Test, Verdict, exit_status, fails, kinds, parse_event, plural, quoted, shaped, tallies, verdict_of
-from _run_tests.plan import build_shards, launch_order, tests_in_part
+from _run_tests.plan import DEFAULT_SECONDS, build_shards, launch_order, part_of, read_durations, tests_in_part
 from _run_tests.pool import kill_group, launch, list_tests, read_output, run_pool
 from _run_tests.pool import run as _pool_run
 from _run_tests.processes import Watch, adopt_orphans, children_by_parent, start_child
@@ -112,8 +125,70 @@ def child_env(environ: dict[str, str], home: Path, start: Path) -> dict[str, str
 processes.child_env = child_env
 
 
-def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = None) -> int:
-    return _pool_run(start, jobs, timeout, part, _list_tests=list_tests, _run_pool=run_pool, _Watch=Watch)
+def run(start: Path, jobs: int, timeout: float, part: tuple[int, int] | None = None, *, list_tests_fn=None) -> int:
+    return _pool_run(start, jobs, timeout, part, _list_tests=list_tests_fn or list_tests, _run_pool=run_pool, _Watch=Watch)
+
+
+def record_durations(start: Path, jobs: int, timeout: float, out: Path) -> int:
+    stamps: dict[int, dict[str, float]] = {}
+    original_read = Channel.read
+
+    def wrapped(self, last: bool = False) -> bool:
+        before = len(self.events)
+        try:
+            return original_read(self, last=last)
+        finally:
+            now = time.monotonic()
+            for event in self.events[before:]:
+                if event.get("ev") in ("start", "result"):
+                    stamps.setdefault(event["seq"], {})[event["ev"]] = now
+
+    plan_holder: dict[str, tuple[Test, ...]] = {}
+
+    def listing(start_arg: Path, scratch: Path, timeout_arg: float, pause) -> tuple[Test, ...]:
+        plan = list_tests(start_arg, scratch, timeout_arg, pause)
+        plan_holder["plan"] = plan
+        return plan
+
+    Channel.read = wrapped
+    try:
+        status = run(start, jobs, timeout, list_tests_fn=listing)
+    finally:
+        Channel.read = original_read
+    by_seq = {test.seq: test.id for test in plan_holder.get("plan", ())}
+    measured: dict[str, float] = {}
+    for seq, times in stamps.items():
+        ident = by_seq.get(seq)
+        if ident is None or "start" not in times or "result" not in times:
+            continue
+        gap = times["result"] - times["start"]
+        if gap > 0:
+            measured[ident] = gap
+    ordered = sorted(measured.items(), key=lambda item: (-item[1], item[0]))
+    written: dict[str, float] = {}
+    for ident, seconds in ordered:
+        trial = dict(written)
+        trial[ident] = seconds
+        left_out = [value for key, value in ordered if key not in trial]
+        trial_default = round(statistics.median(left_out), 2) if left_out else DEFAULT_SECONDS
+        blob = json.dumps({"default_seconds": trial_default, "seconds": trial}, indent=2) + "\n"
+        if len(blob.encode("utf-8")) > 15000:
+            break
+        written = trial
+    left = [value for key, value in ordered if key not in written]
+    default = round(statistics.median(left), 2) if left else DEFAULT_SECONDS
+    data = json.dumps({"default_seconds": default, "seconds": written}, indent=2) + "\n"
+    while len(data.encode("utf-8")) > 15000 and written:
+        dropped = min(written, key=lambda key: (written[key], key))
+        del written[dropped]
+        left = [value for key, value in ordered if key not in written]
+        default = round(statistics.median(left), 2) if left else DEFAULT_SECONDS
+        data = json.dumps({"default_seconds": default, "seconds": written}, indent=2) + "\n"
+    out.write_text(data)
+    size = len(data.encode("utf-8"))
+    print(f"run_tests: measured {len(measured)} tests, wrote {len(written)} durations, "
+          f"default_seconds {default}, {size} bytes to {out}", file=sys.stderr, flush=True)
+    return status
 
 
 def _child(argv: list[str]) -> bool:

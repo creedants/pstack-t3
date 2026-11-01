@@ -1,0 +1,7 @@
+- kind fix
+- Split each Linux suite into eight duration-balanced parts per Python version and gated pull request CI on them
+- Moved the headless-browser probe into its own pull request Linux job and push macOS job with a shared anchor
+- Moved the generated-files check into its own job that starts at once on both events
+- Kept the whole suite on Python 3.10 and 3.12 for every pull request and skipped the Linux parts on push to main
+- Added duration recording to the test runner with a size-budgeted durations file that never breaks coverage
+- Taught the part splitter to balance by recorded seconds with a default for unrecorded tests

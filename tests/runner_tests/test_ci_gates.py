@@ -48,6 +48,7 @@ from .workflow import (
     GATES,
     GATE_BLOCK_MUTATIONS,
     MACOS_PARTS,
+    PARTS,
     dedent_block,
     gate_readers,
     gate_script_status,
@@ -73,7 +74,7 @@ MACOS_MUTATIONS = (
 )
 
 def macos_result_line(job_id: str) -> str:
-    return 'test "${{ needs.' + job_id + '.result }}" = "$expected"'
+    return 'test "${{ needs.' + job_id + '.result }}" = "$macos"'
 
 def macos_comment(index: int, job_id: str) -> str:
     return (
@@ -82,7 +83,7 @@ def macos_comment(index: int, job_id: str) -> str:
     )
 
 def assert_macos_blocking(case, text: str) -> None:
-    expected_needs = "needs: [part_312_1, part_312_2, part_312_3, part_312_4, " + ", ".join(MACOS_PARTS) + "]"
+    expected_needs = "needs: [part_312_1, part_312_2, part_312_3, part_312_4, part_312_5, part_312_6, part_312_7, part_312_8, browser_linux, generated, browser_macos, " + ", ".join(MACOS_PARTS) + "]"
     case.assertIn(expected_needs, text, "macos needs pins the blocking rule.")
     for job_id in MACOS_PARTS:
         case.assertIn(macos_result_line(job_id), text, "macos result line pins the blocking rule.")
@@ -105,7 +106,7 @@ def assert_macos_blocking(case, text: str) -> None:
     except ImportError:
         return
     jobs = yaml.safe_load(text)["jobs"]
-    case.assertEqual(jobs["test_312"]["needs"], ["part_312_1", "part_312_2", "part_312_3", "part_312_4"] + list(MACOS_PARTS), "macos needs pins the blocking rule.")
+    case.assertEqual(jobs["test_312"]["needs"], [f"part_312_{index}" for index in range(1, PARTS + 1)] + ["browser_linux", "generated", "browser_macos"] + list(MACOS_PARTS), "macos needs pins the blocking rule.")
     for job_id in MACOS_PARTS:
         steps = jobs[job_id]["steps"]
         case.assertFalse(any("continue-on-error" in step for step in steps), "macos continue-on-error pins the blocking rule.")
@@ -146,11 +147,11 @@ class CiGatesMixin:
     def test_a_gate_exits_nonzero_for_failure_cancelled_skipped_or_an_empty_part_result(self):
         # This starts a process because the check is an exit status.
         cases = (
-            (("success", "success", "success", "success"), True),
-            (("failure", "success", "success", "success"), False),
-            (("success", "cancelled", "success", "success"), False),
-            (("success", "success", "skipped", "success"), False),
-            (("success", "success", "success", ""), False),
+            (("success",) * PARTS, True),
+            (("failure",) + ("success",) * (PARTS - 1), False),
+            (("success", "cancelled") + ("success",) * (PARTS - 2), False),
+            (("success",) * (PARTS - 1) + ("skipped",), False),
+            (("success",) * (PARTS - 1) + ("",), False),
         )
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         for reader in gate_readers():
@@ -158,13 +159,79 @@ class CiGatesMixin:
                 for results, ok in cases:
                     with self.subTest(reader=reader, prefix=prefix, results=results):
                         if "macos_312" in script:
-                            status = gate_script_status(script, prefix, results, macos=("success",) * 4)
+                            status = gate_script_status(script, prefix, results, macos=("skipped",) * 4, event="pull_request")
                         else:
-                            status = gate_script_status(script, prefix, results)
+                            status = gate_script_status(script, prefix, results, event="pull_request")
                         if ok:
                             self.assertEqual(status, 0)
                         else:
                             self.assertNotEqual(status, 0)
+
+    def test_a_linux_part_result_other_than_the_event_expects_fails_the_gate(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            for prefix, script in gate_scripts(text, reader):
+                for event, good, bad in (("push", "skipped", "success"), ("pull_request", "success", "skipped")):
+                    with self.subTest(reader=reader, prefix=prefix, event=event):
+                        macos = ("success",) * 4 if event == "push" else ("skipped",) * 4
+                        if "macos_312" in script:
+                            self.assertEqual(gate_script_status(script, prefix, (good,) * PARTS, macos=macos, event=event), 0)
+                        else:
+                            self.assertEqual(gate_script_status(script, prefix, (good,) * PARTS, event=event), 0)
+                        for position in range(PARTS):
+                            results = (good,) * position + (bad,) + (good,) * (PARTS - 1 - position)
+                            with self.subTest(position=position):
+                                if "macos_312" in script:
+                                    status = gate_script_status(script, prefix, results, macos=macos, event=event)
+                                else:
+                                    status = gate_script_status(script, prefix, results, event=event)
+                                self.assertNotEqual(status, 0)
+
+    def test_the_gates_exit_nonzero_on_an_unknown_event(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            for prefix, script in gate_scripts(text, reader):
+                for macos in (None, ("skipped",) * 4, ("success",) * 4):
+                    with self.subTest(reader=reader, prefix=prefix, macos=macos):
+                        if "macos_312" in script and macos is None:
+                            continue
+                        if "macos_312" not in script and macos is not None:
+                            continue
+                        self.assertNotEqual(
+                            gate_script_status(script, prefix, ("success",) * PARTS, macos=macos, event="schedule"),
+                            0,
+                        )
+
+    def test_the_gates_require_the_browser_and_generated_jobs(self):
+        # This starts a process because the check is an exit status.
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for reader in gate_readers():
+            for prefix, script in gate_scripts(text, reader):
+                for event in ("push", "pull_request"):
+                    good = "skipped" if event == "push" else "success"
+                    macos = ("success",) * 4 if event == "push" else ("skipped",) * 4
+                    base = dict(macos=macos) if "macos_312" in script else {}
+                    with self.subTest(reader=reader, prefix=prefix, event=event, job="browser_linux"):
+                        self.assertNotEqual(
+                            gate_script_status(script, prefix, (good,) * PARTS, event=event, browser_linux="failure", **base),
+                            0,
+                        )
+                    with self.subTest(reader=reader, prefix=prefix, event=event, job="generated"):
+                        self.assertNotEqual(
+                            gate_script_status(script, prefix, (good,) * PARTS, event=event, generated="failure", **base),
+                            0,
+                        )
+        script = dict(gate_scripts(text, gate_readers()[0]))["part_312"]
+        for event, macos_good in (("push", "success"), ("pull_request", "skipped")):
+            with self.subTest(event=event, job="browser_macos"):
+                # This starts a process because the check is an exit status.
+                self.assertNotEqual(
+                    gate_script_status(script, "part_312", ("success" if event == "pull_request" else "skipped",) * PARTS,
+                                       macos=(macos_good,) * 4, event=event, browser_macos="failure"),
+                    0,
+                )
 
     def test_switch_appears_only_at_workflow_root_with_value_1_and_in_no_job(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -195,10 +262,8 @@ class CiGatesMixin:
                 with self.subTest(mutation=name, reader=reader):
                     original = dict(gate_scripts(text, reader))
                     for prefix, script in gate_scripts(mutated, reader):
-                        expected = mutate_gate_block(name, result_block(text, prefix))
-                        if prefix == "part_312":
-                            # The macos rule follows the four part lines and the mutation leaves it as it is.
-                            expected += "".join(original[prefix].splitlines(keepends=True)[4:])
+                        block = result_block(text, prefix)
+                        expected = original[prefix].replace(block, mutate_gate_block(name, block), 1)
                         self.assertEqual(script, expected)
                         with self.assertRaises(AssertionError) as caught:
                             report_failed_part(script, prefix)
@@ -207,12 +272,12 @@ class CiGatesMixin:
     def test_a_folded_gate_block_fails_instead_of_running_its_selected_lines(self):
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
         lines = text.splitlines(keepends=True)
-        for prefix in ("part_310", "part_312"):
-            start, _stop, _indent, _block = result_block_span(lines, prefix)
-            marker = lines[start - 1]
-            if marker.rstrip("\n").lstrip(" ") != "- run: |":
-                raise AssertionError(prefix)
-            lines[start - 1] = marker.replace("run: |", "run: >", 1)
+        for gate, _prefix in GATES:
+            header = next(index for index, line in enumerate(lines)
+                          if line.rstrip("\n").startswith(" ") and line.rstrip("\n").strip() == gate + ":")
+            marker = next(index for index in range(header + 1, len(lines))
+                          if lines[index].rstrip("\n").lstrip(" ") == "- run: |")
+            lines[marker] = lines[marker].replace("run: |", "run: >", 1)
         folded = "".join(lines)
         with self.assertRaises(AssertionError) as caught:
             gate_scripts(folded, "indent")
@@ -228,14 +293,14 @@ class CiGatesMixin:
         for reader in gate_readers():
             script = dict(gate_scripts(text, reader))["part_312"]
             self.assertEqual(
-                gate_script_status(script, "part_312", ("success",) * 4, macos=("success",) * 4, event="push"), 0
+                gate_script_status(script, "part_312", ("skipped",) * PARTS, macos=("success",) * 4, event="push"), 0
             )
             for position in range(4):
                 for bad in ("failure", "cancelled", "skipped", ""):
                     with self.subTest(reader=reader, position=position, bad=bad):
                         macos = ("success",) * position + (bad,) + ("success",) * (3 - position)
                         self.assertNotEqual(
-                            gate_script_status(script, "part_312", ("success",) * 4, macos=macos, event="push"),
+                            gate_script_status(script, "part_312", ("skipped",) * PARTS, macos=macos, event="push"),
                             0,
                         )
 
@@ -246,7 +311,7 @@ class CiGatesMixin:
             script = dict(gate_scripts(text, reader))["part_312"]
             self.assertEqual(
                 gate_script_status(
-                    script, "part_312", ("success",) * 4, macos=("skipped",) * 4, event="pull_request"
+                    script, "part_312", ("success",) * PARTS, macos=("skipped",) * 4, event="pull_request"
                 ),
                 0,
             )
@@ -256,7 +321,7 @@ class CiGatesMixin:
                         macos = ("skipped",) * position + (bad,) + ("skipped",) * (3 - position)
                         self.assertNotEqual(
                             gate_script_status(
-                                script, "part_312", ("success",) * 4, macos=macos, event="pull_request"
+                                script, "part_312", ("success",) * PARTS, macos=macos, event="pull_request"
                             ),
                             0,
                         )
@@ -270,7 +335,7 @@ class CiGatesMixin:
                 with self.subTest(reader=reader, macos=macos):
                     self.assertNotEqual(
                         gate_script_status(
-                            script, "part_312", ("success",) * 4, macos=macos, event="schedule"
+                            script, "part_312", ("success",) * PARTS, macos=macos, event="schedule"
                         ),
                         0,
                     )
@@ -297,8 +362,9 @@ class CiGatesMixin:
                         status = gate_script_status(
                             scripts["part_312"],
                             "part_312",
-                            ("success",) * 4,
+                            ("skipped",) * PARTS,
                             macos=("skipped", "success", "success", "success"),
+                            event="push",
                         )
                         self.assertEqual(status, 0)
                 if name == "or_true_on_macos_312_2":
@@ -307,8 +373,8 @@ class CiGatesMixin:
                         status = gate_script_status(
                             scripts["part_312"],
                             "part_312",
-                            ("success",) * 4,
+                            ("skipped",) * PARTS,
                             macos=("success", "failure", "success", "success"),
+                            event="push",
                         )
                         self.assertEqual(status, 0)
-
