@@ -68,9 +68,9 @@ def _merged_prs(root, limit):
     return found
 
 
-def _api(root, endpoint, fields=()):
+def _api(root, endpoint):
     try:
-        found = _run_gh(["api", endpoint, *[word for pair in fields for word in pair]], root)
+        found = _run_gh(["api", endpoint], root)
     except ValueError as error:
         raise ValueError(str(error)) from None
     if not isinstance(found, dict):
@@ -79,7 +79,7 @@ def _api(root, endpoint, fields=()):
 
 
 def _workflow_runs(root, repo, head, pr):
-    found = _api(root, f"repos/{repo}/actions/runs", (("-f", f"head_sha={head}"), ("-f", "per_page=5")))
+    found = _api(root, f"repos/{repo}/actions/runs?head_sha={head}&per_page=5")
     runs = found.get("workflow_runs")
     if not isinstance(runs, list) or not runs:
         raise ValueError(f"gh api actions/runs for PR {pr} named no workflow runs")
@@ -94,22 +94,24 @@ def _jobs(root, repo, run_id, pr):
     return jobs
 
 
-def _annotations(root, repo, head, pr):
-    """Every annotation message on a failed or cancelled check run for this head sha."""
-    try:
-        found = _api(root, f"repos/{repo}/commits/{head}/check-runs")
-    except ValueError as error:
-        raise ValueError(str(error)) from None
-    runs = found.get("check_runs")
-    if not isinstance(runs, list):
-        raise ValueError(f"gh api check-runs for PR {pr} printed no check_runs list")
+def _annotations(root, repo, jobs, pr):
+    """Every annotation message on a failed or cancelled job of this pull request.
+
+    A job's check_run_url names its check run, whose annotations name a lost
+    runner or an exceeded time limit. Run 41343828374 pins the lost form and
+    run 41371125499 pins the time-limit form with its test step still running.
+    """
     messages = []
-    for check in runs:
-        if not isinstance(check, dict) or check.get("conclusion") not in ("failure", "cancelled"):
+    seen = set()
+    for job in jobs:
+        if job.get("conclusion") not in ("failure", "cancelled"):
             continue
-        ident = check.get("id")
-        if ident is None:
-            raise ValueError(f"gh api check-runs for PR {pr} named a check with no id")
+        ident = str(job.get("check_run_url") or "").rstrip("/").rpartition("/")[2]
+        if not ident.isdigit():
+            raise ValueError(f"gh api attempts/1/jobs for PR {pr} named a job with no check run")
+        if ident in seen:
+            continue
+        seen.add(ident)
         try:
             noted = _run_gh(["api", f"repos/{repo}/check-runs/{ident}/annotations"], root)
         except ValueError as error:
@@ -165,7 +167,7 @@ def fetch_runs(root, known_prs, limit=10):
                     ends.append(_at(job["completed_at"], "completed_at"))
             if not starts:
                 raise ValueError(f"gh api attempts/1/jobs for PR {number} named no completed job")
-            notes = _annotations(root, repo, head, number)
+            notes = _annotations(root, repo, jobs, number)
             lowered = [message.casefold() for message in notes]
             lost = sum(1 for message in lowered if "lost communication" in message)
             stops = 0

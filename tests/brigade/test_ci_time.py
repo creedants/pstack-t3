@@ -76,19 +76,20 @@ class CiTimeMixin:
             ("repo", "view", "--json", "nameWithOwner"): (0, json.dumps({"nameWithOwner": "o/r"})),
             ("pr", "list", "--state", "merged", "--limit", "10",
              "--json", "number,mergedAt,createdAt,headRefOid"): (0, json.dumps(prs)),
-            ("api", "repos/o/r/actions/runs", "-f", "head_sha=sha712", "-f", "per_page=5"):
+            ("api", "repos/o/r/actions/runs?head_sha=sha712&per_page=5"):
                 (0, json.dumps({"workflow_runs": [{"id": 701, "run_attempt": 1},
                                                   {"id": 702, "run_attempt": 2}]})),
-            ("api", "repos/o/r/actions/runs", "-f", "head_sha=sha713", "-f", "per_page=5"):
+            ("api", "repos/o/r/actions/runs?head_sha=sha713&per_page=5"):
                 (0, json.dumps({"workflow_runs": [{"id": 703, "run_attempt": 1}]})),
-            ("api", "repos/o/r/actions/runs", "-f", "head_sha=sha714", "-f", "per_page=5"):
+            ("api", "repos/o/r/actions/runs?head_sha=sha714&per_page=5"):
                 (0, json.dumps({"workflow_runs": [{"id": 704, "run_attempt": 1}]})),
-            ("api", "repos/o/r/actions/runs", "-f", "head_sha=sha715", "-f", "per_page=5"):
+            ("api", "repos/o/r/actions/runs?head_sha=sha715&per_page=5"):
                 (0, json.dumps({"workflow_runs": [{"id": 705, "run_attempt": 1}]})),
             ("api", "repos/o/r/actions/runs/701/attempts/1/jobs"):
                 (0, json.dumps({"jobs": [{"id": 11, "status": "completed", "conclusion": "failure",
                                           "started_at": stamp(d2, 0, "09:34:55"),
-                                          "completed_at": stamp(d2, 0, "09:42:03"), "steps": []}]})),
+                                          "completed_at": stamp(d2, 0, "09:42:03"), "steps": [],
+                                          "check_run_url": "https://api.github.com/repos/o/r/check-runs/7011"}]})),
             ("api", "repos/o/r/actions/runs/702/attempts/1/jobs"):
                 (0, json.dumps({"jobs": [{"id": 12, "status": "completed", "conclusion": "success",
                                           "started_at": stamp(d2, 0, "09:44:00"),
@@ -101,17 +102,13 @@ class CiTimeMixin:
                 (0, json.dumps({"jobs": [{"id": 14, "status": "completed", "conclusion": "cancelled",
                                           "started_at": stamp(d1, 0, "09:30:00"),
                                           "completed_at": stamp(d1, 0, "09:50:00"),
+                                          "check_run_url": "https://api.github.com/repos/o/r/check-runs/7041",
                                           "steps": [{"name": "test", "status": "cancelled"}]}]})),
             ("api", "repos/o/r/actions/runs/705/attempts/1/jobs"):
                 (0, json.dumps({"jobs": [{"id": 15, "status": "completed", "conclusion": "success",
                                           "started_at": stamp(d1, 0, "10:30:00"),
                                           "completed_at": stamp(d1, 0, "10:36:30"), "steps": []}]})),
-            ("api", "repos/o/r/commits/sha712/check-runs"):
-                (0, json.dumps({"check_runs": [{"id": 7011, "conclusion": "failure"}]})),
-            ("api", "repos/o/r/commits/sha713/check-runs"): (0, json.dumps({"check_runs": []})),
-            ("api", "repos/o/r/commits/sha714/check-runs"):
-                (0, json.dumps({"check_runs": [{"id": 7041, "conclusion": "cancelled"}]})),
-            ("api", "repos/o/r/commits/sha715/check-runs"): (0, json.dumps({"check_runs": []})),
+
             ("api", "repos/o/r/check-runs/7011/annotations"):
                 (0, json.dumps([{"message": "The runner lost communication with the server."}])),
             ("api", "repos/o/r/check-runs/7041/annotations"):
