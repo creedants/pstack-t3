@@ -99,7 +99,7 @@ def _annotations(root, repo, jobs, pr):
 
     A job's check_run_url names its check run, whose annotations name a lost
     runner or an exceeded time limit. Run 41343828374 pins the lost form and
-    run 41371125499 pins the time-limit form with its test step still running.
+    run 41371125499 pins the time-limit form with a step still running.
     """
     messages = []
     seen = set()
@@ -176,8 +176,8 @@ def fetch_runs(root, known_prs, limit=10):
                     if job.get("conclusion") != "cancelled":
                         continue
                     steps = job.get("steps") or []
-                    if any(isinstance(step, dict) and "test" in str(step.get("name") or "").casefold()
-                           and step.get("status") != "completed" for step in steps):
+                    if any(isinstance(step, dict) and step.get("status") != "completed"
+                           for step in steps):
                         stops += 1
             fresh.append(CiRun(number, merged, _seconds(min(starts), max(ends), "job time"),
                                _seconds(created, merged, "merge time"),

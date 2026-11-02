@@ -69,7 +69,11 @@ def read_ledger(restaurant):
     if not path.is_file():
         return Ledger((), (), ())
     runs, kept, bad = [], [], []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    try:
+        raw = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raw = path.read_bytes().decode("utf-8", errors="replace")
+    for number, line in enumerate(raw.splitlines(), 1):
         if not line.strip():
             continue
         if number == 1 and line == "\t".join(HEADER):

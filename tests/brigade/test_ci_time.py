@@ -33,6 +33,15 @@ def stamp(days=0, hours=0, clock="21:42:03"):
     return f"{day}T{clock}+00:00"
 
 
+def ahead(minutes):
+    """An ISO stamp this many minutes after now, in UTC, for seeded ledger rows.
+
+    Breach counts only runs merged after the last finished trigger ticket, so a
+    seeded row must land after the run that files and finishes that ticket.
+    """
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+
+
 class CiTimeMixin:
     def stub_gh(self, mapping, prs):
         """A fake gh earlier on PATH answering these argv tuples with (code, stdout)."""
@@ -183,8 +192,10 @@ class CiTimeMixin:
         row = self.table_row(self.at, "rail.tsv", "T1")
         self.assertEqual((row["kind"], row["paths"], row["source"], row["ref"], row["priority"]),
                          ("upkeep", ".github/workflows", "ci-time", "ci-time", "normal"))
-        self.assertNotIn("Bridge Kit", row["summary"])
-        self.assertNotIn("bridge", row["summary"].casefold())
+        self.assertIn("PR 715", row["summary"])
+        self.assertIn("PR 714", row["summary"])
+        self.assertIn("5m target", row["summary"])
+        self.assertIn("T1", self.brigade("startable"))
 
     def test_a_live_trigger_ticket_blocks_a_second_filing(self):
         self.ready()
@@ -197,8 +208,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{stamp(0, -1, '10:00:00')}\t400\t3600\tyes\t0\t0",
-                       f"717\t{stamp(0, -2, '11:00:00')}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
         out = self.brigade("ci-time")
         self.assertIn("added Q1: CI time is still over the 5m target (410s at PR 717, 400s at PR 716).", out)
         self.assertEqual([fields[0] for fields in self.rows_of("rail.tsv")], ["T1"])
@@ -210,8 +221,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{stamp(0, -1, '10:00:00')}\t400\t3600\tyes\t0\t0",
-                       f"717\t{stamp(0, -2, '11:00:00')}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         out = self.brigade("ci-time")
         self.assertIn("ci-time decision Q1 is open; nothing filed", out)
@@ -224,8 +235,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{stamp(0, -1, '10:00:00')}\t400\t3600\tyes\t0\t0",
-                       f"717\t{stamp(0, -2, '11:00:00')}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "try again"), "Q1 answered")
         out = self.brigade("ci-time")
@@ -235,11 +246,11 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{stamp(0, -1, '10:00:00')}\t400\t3600\tyes\t0\t0",
-                       f"717\t{stamp(0, -2, '11:00:00')}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "leave it"), "Q1 answered")
-        self.seed_runs(f"718\t{stamp(0, -3, '12:00:00')}\t420\t3600\tyes\t0\t0")
+        self.seed_runs(f"718\t{ahead(180)}\t420\t3600\tyes\t0\t0")
         stopped = self.brigade("ci-time")
         self.assertIn("ci-time is stopped; run set --ci-target <minutes> to start it again", stopped)
         self.assertEqual([fields[0] for fields in self.rows_of("rail.tsv")], ["T1"])
@@ -251,8 +262,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{stamp(0, -1, '10:00:00')}\t400\t3600\tyes\t0\t0",
-                       f"717\t{stamp(0, -2, '11:00:00')}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         out = self.brigade("86", "answer", "Q1", "--answer", "bogus")
         self.assertEqual(out, "Q1 still open; answer with one of try again, leave it")
@@ -272,6 +283,17 @@ class CiTimeMixin:
         self.assertIn("no ticket was created in the last 14 days", out)
         self.brigade("set", "--ci-target", "0")
         self.assertNotIn("## CI time", self.brigade("close", "--dry-run"))
+
+    def test_a_non_utf8_byte_in_the_ledger_is_a_kept_bad_line_not_a_crash(self):
+        self.ready()
+        self.brigade("ci-time")
+        path = self.at / "ci-times.tsv"
+        path.write_bytes(path.read_bytes() + b"bad \xff line\n")
+        out = self.brigade("close", "--dry-run")
+        self.assertIn("## CI time", out)
+        self.assertIn("ci-times.tsv line 6 is not a row; kept as is", out)
+        again = self.brigade("ci-time")
+        self.assertIn("ci-time ticket T1 is live; nothing filed", again)
 
     def test_follow_up_share_skips_ci_time_tickets(self):
         self.ready()
