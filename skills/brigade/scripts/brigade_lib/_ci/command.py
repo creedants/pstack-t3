@@ -4,10 +4,12 @@ from brigade_lib._ci.ledger import append_runs, read_ledger
 from brigade_lib._ci.setting import ci_target_of
 from brigade_lib._ci.trigger import (ARMED, ASKING, CI_DECISION_KIND, CI_OPTIONS, CI_PATH, CI_REF,
                                       CI_SOURCE, COOLING, LEAVE_IT, RETRYING, STOPPED, TICKET_LIVE,
-                                      breach, phase_of)
+                                      _at, breach, phase_of)
 from brigade_lib._reviews.decisions import append_decision
 from brigade_lib.shared import plural
-from brigade_lib.tickets import append_ticket, is_live, refuse_live_ref, sibling_rails
+from brigade_lib.store import Restaurant
+from brigade_lib.tickets import (append_ticket, handoff_id, is_live, refuse_live_ref, sibling_rails,
+                                 taken_row)
 
 COMMANDS = ("ci-time",)
 
@@ -41,24 +43,63 @@ def handle(restaurant, args):
         return "ci-time is off; run set --ci-target <minutes> to turn it on"
     known = {run.pr for run in read_ledger(restaurant).runs}
     rails = sibling_rails(restaurant)
-    runs, error = fetch_runs(restaurant.meta["projectRoot"], known, LIMIT)
+    batch, error = fetch_runs(restaurant.meta["projectRoot"], known, LIMIT)
     if error is not None:
         return error
     args.ci_target = target
-    args.ci_runs = runs
+    args.ci_runs = batch.runs
+    args.ci_notices = batch.notices
     args.ci_rails = rails
+    args.ci_finished = _finished(restaurant, {row["id"] for row in restaurant.rows("rail.tsv")
+                                              if (row.get("source") or "") == CI_SOURCE}, rails)
     lock = restaurant.checked() if args.dry_run else restaurant.guarded()
     with lock:
         return seam.command(restaurant, args)
 
 
-def _finished(restaurant, idents):
-    """The done or dropped at of each of these tickets, from log.tsv."""
+def _terminal_finish(restaurant, directory, row, rails):
+    state = row.get("state") or ""
+    if state in ("done", "dropped"):
+        if directory == restaurant.dir.resolve():
+            log = restaurant.rows("log.tsv")
+        else:
+            log = Restaurant(directory).rows("log.tsv")
+        best = ""
+        for event in log:
+            if (event.get("kind") == "ticket" and event.get("id") == row["id"]
+                    and event.get("state") in ("done", "dropped")):
+                if not best or _at(event["at"]) > _at(best):
+                    best = event["at"]
+        return best or None
+    if state != "moved":
+        return None
+    dish = row.get("dish") or ""
+    if not dish.startswith("to:"):
+        return None
+    target = (directory.parent / dish[len("to:"):]).resolve()
+    if target in rails:
+        rows = rails[target]
+    elif not (target / "restaurant.json").is_file():
+        return None
+    else:
+        rows = Restaurant(target).rows("rail.tsv")
+    taken = taken_row(rows, handoff_id(directory, row["id"]))
+    if taken is None:
+        return None
+    return _terminal_finish(restaurant, target, taken, rails)
+
+
+def _finished(restaurant, idents, rails):
+    own = restaurant.dir.resolve()
+    rows = {row["id"]: row for row in restaurant.rows("rail.tsv")}
     found = {}
-    for row in restaurant.rows("log.tsv"):
-        if row["kind"] == "ticket" and row["id"] in idents and row["state"] in ("done", "dropped"):
-            if not found.get(row["id"]) or row["at"] > found[row["id"]]:
-                found[row["id"]] = row["at"]
+    for ident in idents:
+        row = rows.get(ident)
+        if row is None:
+            continue
+        at = _terminal_finish(restaurant, own, row, rails)
+        if at is not None and (ident not in found or _at(at) > _at(found[ident])):
+            found[ident] = at
     return found
 
 
@@ -92,16 +133,16 @@ def handle_locked(restaurant, args, view):
     rails.setdefault(own, tickets)
     live = {row["id"] for row in tickets
             if (row.get("source") or "") == CI_SOURCE and is_live(own, row, rails)}
-    finished = _finished(restaurant, {row["id"] for row in tickets if (row.get("source") or "") == CI_SOURCE})
+    finished = dict(getattr(args, "ci_finished", None) or {})
     target_at = restaurant.meta.get("ciTargetAt") or ""
     phase = phase_of(tickets, decided, finished, target_at, live)
     ordered = tuple(sorted((*ledger.runs, *fresh), key=lambda run: (run.merged_at, run.pr)))
     since = ""
     for at in finished.values():
-        if not since or at > since:
+        if not since or _at(at) > _at(since):
             since = at
     found = breach(ordered, target, since)
-    lines = [run_line(run) for run in args.ci_runs]
+    lines = [run_line(run) for run in args.ci_runs] + list(args.ci_notices)
     if found is None:
         return "\n".join([*lines, f"no breach of the {target}m target"])
     if phase == TICKET_LIVE:

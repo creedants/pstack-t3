@@ -14,9 +14,13 @@ def ci_target_of(meta):
     if KEY not in meta:
         return 0
     value = meta[KEY]
-    if value == "" or value == 0:
+    if value == "":
         return 0
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+    if isinstance(value, bool) or not isinstance(value, int):
+        refuse_setting(KEY, value, "it is not a whole number of 1 or more")
+    if value == 0:
+        return 0
+    if value < 1:
         refuse_setting(KEY, value, "it is not a whole number of 1 or more")
     return value
 

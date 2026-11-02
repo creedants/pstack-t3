@@ -1,17 +1,21 @@
 import json
 import subprocess
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from brigade_lib._ci.trigger import CiRun
 
 TIMEOUT = 60
+RUNS_PER_PAGE = 5
+PAGE_SIZE = 100
+
+
+class Batch(NamedTuple):
+    runs: tuple
+    notices: tuple
 
 
 def _run_gh(args, root):
-    """The parsed JSON gh prints for these args, run with the project root as cwd.
-
-    Raises ValueError with one line on a gh failure, a timeout, or output that is not JSON.
-    """
     try:
         done = subprocess.run(["gh", *args], cwd=str(root), capture_output=True, text=True, timeout=TIMEOUT)
     except OSError as error:
@@ -28,7 +32,6 @@ def _run_gh(args, root):
 
 
 def _reject_constant(name):
-    """NaN, Infinity, and -Infinity are not JSON, so a document holding one is not read."""
     raise ValueError(name)
 
 
@@ -68,7 +71,7 @@ def _merged_prs(root, limit):
     return found
 
 
-def _api(root, endpoint):
+def _object_page(root, endpoint, pr):
     try:
         found = _run_gh(["api", endpoint], root)
     except ValueError as error:
@@ -79,64 +82,172 @@ def _api(root, endpoint):
 
 
 def _workflow_runs(root, repo, head, pr):
-    found = _api(root, f"repos/{repo}/actions/runs?head_sha={head}&per_page=5")
-    runs = found.get("workflow_runs")
-    if not isinstance(runs, list) or not runs:
-        raise ValueError(f"gh api actions/runs for PR {pr} named no workflow runs")
-    return runs
+    runs = []
+    page = 1
+    while True:
+        found = _object_page(root, f"repos/{repo}/actions/runs?head_sha={head}&per_page={RUNS_PER_PAGE}&page={page}", pr)
+        batch = found.get("workflow_runs")
+        if not isinstance(batch, list):
+            raise ValueError(f"gh api actions/runs for PR {pr} named no workflow runs list")
+        for run in batch:
+            if not isinstance(run, dict):
+                raise ValueError(f"gh api actions/runs for PR {pr} named a run that is not an object")
+            attempt = run.get("run_attempt")
+            ident = run.get("id")
+            if isinstance(attempt, bool) or not isinstance(attempt, int):
+                raise ValueError(f"gh api actions/runs for PR {pr} named no run_attempt integer")
+            if isinstance(ident, bool) or not isinstance(ident, int):
+                raise ValueError(f"gh api actions/runs for PR {pr} named no run id integer")
+            runs.append(run)
+        if len(batch) < RUNS_PER_PAGE:
+            return runs
+        page += 1
 
 
 def _jobs(root, repo, run_id, pr):
-    found = _api(root, f"repos/{repo}/actions/runs/{run_id}/attempts/1/jobs")
-    jobs = found.get("jobs")
-    if not isinstance(jobs, list) or not jobs:
-        raise ValueError(f"gh api attempts/1/jobs for PR {pr} named no jobs")
-    return jobs
+    jobs = []
+    page = 1
+    while True:
+        found = _object_page(root, f"repos/{repo}/actions/runs/{run_id}/attempts/1/jobs?per_page={PAGE_SIZE}&page={page}", pr)
+        batch = found.get("jobs")
+        if not isinstance(batch, list):
+            raise ValueError(f"gh api attempts/1/jobs for PR {pr} named no jobs list")
+        for job in batch:
+            if not isinstance(job, dict):
+                raise ValueError(f"gh api attempts/1/jobs for PR {pr} named a job that is not an object")
+            jobs.append(job)
+        if len(batch) < PAGE_SIZE:
+            return jobs
+        page += 1
 
 
-def _annotations(root, repo, jobs, pr):
-    """Every annotation message on a failed or cancelled job of this pull request.
+def _check_runs(root, repo, head, pr):
+    checks = []
+    page = 1
+    while True:
+        found = _object_page(root, f"repos/{repo}/commits/{head}/check-runs?per_page={PAGE_SIZE}&page={page}", pr)
+        batch = found.get("check_runs")
+        if not isinstance(batch, list):
+            raise ValueError(f"gh api check-runs for PR {pr} named no check runs list")
+        for check in batch:
+            if not isinstance(check, dict):
+                raise ValueError(f"gh api check-runs for PR {pr} named a check that is not an object")
+            checks.append(check)
+        if len(batch) < PAGE_SIZE:
+            return checks
+        page += 1
 
-    A job's check_run_url names its check run, whose annotations name a lost
-    runner or an exceeded time limit. Run 41343828374 pins the lost form and
-    run 41371125499 pins the time-limit form with a step still running.
-    """
+
+def _annotations(root, repo, job, pr):
+    url = job.get("check_run_url")
+    if not isinstance(url, str) or not url:
+        raise ValueError(f"gh api attempts/1/jobs for PR {pr} named a job with no check run")
+    ident = url.rstrip("/").rpartition("/")[2]
+    if not ident.isdigit():
+        raise ValueError(f"gh api attempts/1/jobs for PR {pr} named a job with no check run")
     messages = []
-    seen = set()
-    for job in jobs:
-        if job.get("conclusion") not in ("failure", "cancelled"):
-            continue
-        ident = str(job.get("check_run_url") or "").rstrip("/").rpartition("/")[2]
-        if not ident.isdigit():
-            raise ValueError(f"gh api attempts/1/jobs for PR {pr} named a job with no check run")
-        if ident in seen:
-            continue
-        seen.add(ident)
+    page = 1
+    while True:
         try:
-            noted = _run_gh(["api", f"repos/{repo}/check-runs/{ident}/annotations"], root)
+            noted = _run_gh(["api", f"repos/{repo}/check-runs/{ident}/annotations?per_page={PAGE_SIZE}&page={page}"], root)
         except ValueError as error:
             raise ValueError(str(error)) from None
         if not isinstance(noted, list):
             raise ValueError(f"gh api annotations for PR {pr} printed no JSON list")
         for note in noted:
-            if isinstance(note, dict) and isinstance(note.get("message"), str):
+            if not isinstance(note, dict):
+                raise ValueError(f"gh api annotations for PR {pr} named an annotation that is not an object")
+            if isinstance(note.get("message"), str):
                 messages.append(note["message"])
-    return messages
+        if len(noted) < PAGE_SIZE:
+            return messages
+        page += 1
+
+
+def _label(check):
+    name = check.get("name")
+    if isinstance(name, str) and name:
+        return name
+    return str(check.get("id"))
+
+
+def _span(checks, pr):
+    for check in checks:
+        status = check.get("status")
+        if not isinstance(status, str):
+            raise ValueError(f"gh api check-runs for PR {pr} named a check with no status")
+        conclusion = check.get("conclusion")
+        if conclusion is not None and not isinstance(conclusion, str):
+            raise ValueError(f"gh api check-runs for PR {pr} named a check with no conclusion")
+        for field in ("started_at", "completed_at"):
+            raw = check.get(field)
+            if raw is not None and raw != "" and not isinstance(raw, str):
+                raise ValueError(f"gh api check-runs for PR {pr} named a check with no {field}")
+    for check in checks:
+        if check.get("status") != "completed":
+            return None, f"PR {pr}: check {_label(check)} is still running; deferred to the next run"
+        completed_raw = check.get("completed_at") or ""
+        if completed_raw and _at(completed_raw, "completed_at").year == 1:
+            return None, f"PR {pr}: check {_label(check)} is still running; deferred to the next run"
+    earliest, latest = None, None
+    for check in checks:
+        if check.get("conclusion") == "skipped" and not check.get("started_at") and not check.get("completed_at"):
+            continue
+        started_raw, completed_raw = check.get("started_at"), check.get("completed_at")
+        if not started_raw or not completed_raw:
+            return None, f"PR {pr}: no usable check time; no row written"
+        started, completed = _at(started_raw, "started_at"), _at(completed_raw, "completed_at")
+        if started.year == 1 or completed < started:
+            return None, f"PR {pr}: no usable check time; no row written"
+        if earliest is None or started < earliest:
+            earliest = started
+        if latest is None or completed > latest:
+            latest = completed
+    if earliest is None:
+        return None, f"PR {pr}: no usable check time; no row written"
+    return int((latest - earliest).total_seconds()), None
+
+
+def _signals(root, repo, runs, pr):
+    lost, stops = 0, 0
+    for run in runs:
+        for job in _jobs(root, repo, run["id"], pr):
+            conclusion = job.get("conclusion")
+            if conclusion not in ("failure", "cancelled"):
+                continue
+            lowered = [message.casefold() for message in _annotations(root, repo, job, pr)]
+            if conclusion == "failure":
+                if any("lost communication" in message for message in lowered):
+                    lost += 1
+            elif any("maximum execution time" in message for message in lowered):
+                steps = job.get("steps")
+                if steps is None:
+                    steps = []
+                if not isinstance(steps, list):
+                    raise ValueError(f"gh api attempts/1/jobs for PR {pr} named steps that are not a list")
+                for step in steps:
+                    if not isinstance(step, dict):
+                        raise ValueError(f"gh api attempts/1/jobs for PR {pr} named a step that is not an object")
+                if any(step.get("status") != "completed" for step in steps):
+                    stops += 1
+    return lost, stops
 
 
 def fetch_runs(root, known_prs, limit=10):
-    """The fresh CiRun records for the last merged pull requests, oldest merged first.
+    """The fresh CiRun records for the last merged pull requests, oldest merged first, plus one line per deferred or skipped PR.
 
     known_prs holds the PR numbers ci-times.tsv already records, so no gh call
-    goes out for one. Returns (runs, None), or (None, reason) with one line on a
+    goes out for one. Returns (Batch, None), or (None, reason) with one line on a
     gh failure, a timeout, or output that does not parse. Never raises.
     """
     known = set(known_prs)
     try:
         repo = _repo(root)
         listed = _merged_prs(root, limit)
-        fresh = []
+        runs, notices = [], []
         for entry in listed:
+            if not isinstance(entry, dict):
+                raise ValueError("gh pr list named a pull request that is not an object")
             try:
                 number = entry["number"]
                 head = entry["headRefOid"]
@@ -144,45 +255,19 @@ def fetch_runs(root, known_prs, limit=10):
                 created = _at(entry["createdAt"], "createdAt")
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError(f"gh pr list named a pull request that does not parse: {error}") from None
-            if not isinstance(number, int) or isinstance(number, bool) or not head:
+            if isinstance(number, bool) or not isinstance(number, int) or not isinstance(head, str) or not head:
                 raise ValueError("gh pr list named a pull request that does not parse: a number and a head sha are required")
             if number in known:
                 continue
-            runs = _workflow_runs(root, repo, head, number)
-            attempts = []
-            for run in runs:
-                attempt = run.get("run_attempt") if isinstance(run, dict) else None
-                if isinstance(attempt, bool) or not isinstance(attempt, int):
-                    raise ValueError(f"gh api actions/runs for PR {number} named no run_attempt integer")
-                attempts.append(attempt)
-            jobs = []
-            for run in runs:
-                jobs.extend(_jobs(root, repo, run.get("id"), number))
-            starts, ends = [], []
-            for job in jobs:
-                if not isinstance(job, dict):
-                    raise ValueError(f"gh api attempts/1/jobs for PR {number} named a job that is not an object")
-                if job.get("started_at") and job.get("completed_at"):
-                    starts.append(_at(job["started_at"], "started_at"))
-                    ends.append(_at(job["completed_at"], "completed_at"))
-            if not starts:
-                raise ValueError(f"gh api attempts/1/jobs for PR {number} named no completed job")
-            notes = _annotations(root, repo, jobs, number)
-            lowered = [message.casefold() for message in notes]
-            lost = sum(1 for message in lowered if "lost communication" in message)
-            stops = 0
-            if any("maximum execution time" in message for message in lowered):
-                for job in jobs:
-                    if job.get("conclusion") != "cancelled":
-                        continue
-                    steps = job.get("steps") or []
-                    if any(isinstance(step, dict) and step.get("status") != "completed"
-                           for step in steps):
-                        stops += 1
-            fresh.append(CiRun(number, merged, _seconds(min(starts), max(ends), "job time"),
-                               _seconds(created, merged, "merge time"),
-                               all(attempt == 1 for attempt in attempts), lost, stops))
-    except ValueError as error:
+            workflow = _workflow_runs(root, repo, head, number)
+            seconds, notice = _span(_check_runs(root, repo, head, number), number)
+            if notice is not None:
+                notices.append(notice)
+                continue
+            lost, stops = _signals(root, repo, workflow, number)
+            runs.append(CiRun(number, merged, seconds, _seconds(created, merged, "merge time"),
+                              all(run["run_attempt"] == 1 for run in workflow), lost, stops))
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError) as error:
         return None, f"ci-time: {error}"
-    fresh.sort(key=lambda run: (run.merged_at, run.pr))
-    return tuple(fresh), None
+    runs.sort(key=lambda run: (run.merged_at, run.pr))
+    return Batch(tuple(runs), tuple(notices)), None

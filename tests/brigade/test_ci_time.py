@@ -11,14 +11,12 @@ from tests import isolation
 isolation.install()
 
 import json
-import os
 import sys
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
-from unittest import mock
 
 from .support import BrigadeTest, setUpModule
+from .test_ci_time_rollup import CiTimeMixin
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "t3/added/brigade/scripts") not in sys.path:
@@ -27,119 +25,7 @@ from brigade_lib._ci.trigger import (ASKING, ARMED, COOLING, RETRYING, STOPPED, 
                                       CiRun, breach, phase_of)
 
 
-def stamp(days=0, hours=0, clock="21:42:03"):
-    """An ISO stamp this many days and hours ago at this wall clock time, in UTC."""
-    day = (datetime.now(timezone.utc) - timedelta(days=days, hours=hours)).date()
-    return f"{day}T{clock}+00:00"
-
-
-def ahead(minutes):
-    """An ISO stamp this many minutes after now, in UTC, for seeded ledger rows.
-
-    Breach counts only runs merged after the last finished trigger ticket, so a
-    seeded row must land after the run that files and finishes that ticket.
-    """
-    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
-
-
-class CiTimeMixin:
-    def stub_gh(self, mapping, prs):
-        """A fake gh earlier on PATH answering these argv tuples with (code, stdout)."""
-        bindir = Path(self.temporary.name) / f"fakebin-ci-{time.time_ns()}"
-        bindir.mkdir()
-        encoded = {json.dumps(list(key)): value for key, value in mapping.items()}
-        script = bindir / "gh"
-        script.write_text(
-            "#!/usr/bin/env python3\n"
-            "import json, sys\n"
-            f"payload = {json.dumps(encoded)}\n"
-            "key = json.dumps(sys.argv[1:])\n"
-            "if key in payload:\n"
-            "    code, out = payload[key]\n"
-            "    if out:\n"
-            "        print(out)\n"
-            "    sys.exit(code)\n"
-            "print('unexpected gh call: ' + ' '.join(sys.argv[1:]), file=sys.stderr)\n"
-            "sys.exit(1)\n"
-        )
-        script.chmod(0o755)
-        patcher = mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ["PATH"]})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        return bindir
-
-    def fixture(self):
-        """The canned gh answers for PRs 712 through 715, and the pr list they share."""
-        d2, d1 = 2, 1
-        prs = [
-            {"number": 712, "mergedAt": stamp(d2, 0, "10:00:00"), "createdAt": stamp(d2, 0, "09:00:00"),
-             "headRefOid": "sha712"},
-            {"number": 713, "mergedAt": stamp(d2, 0, "21:42:03"), "createdAt": stamp(d2, 0, "20:34:55"),
-             "headRefOid": "sha713"},
-            {"number": 714, "mergedAt": stamp(d1, 0, "10:00:00"), "createdAt": stamp(d1, 0, "09:00:00"),
-             "headRefOid": "sha714"},
-            {"number": 715, "mergedAt": stamp(d1, 0, "11:00:00"), "createdAt": stamp(d1, 0, "10:00:00"),
-             "headRefOid": "sha715"},
-        ]
-        mapping = {
-            ("repo", "view", "--json", "nameWithOwner"): (0, json.dumps({"nameWithOwner": "o/r"})),
-            ("pr", "list", "--state", "merged", "--limit", "10",
-             "--json", "number,mergedAt,createdAt,headRefOid"): (0, json.dumps(prs)),
-            ("api", "repos/o/r/actions/runs?head_sha=sha712&per_page=5"):
-                (0, json.dumps({"workflow_runs": [{"id": 701, "run_attempt": 1},
-                                                  {"id": 702, "run_attempt": 2}]})),
-            ("api", "repos/o/r/actions/runs?head_sha=sha713&per_page=5"):
-                (0, json.dumps({"workflow_runs": [{"id": 703, "run_attempt": 1}]})),
-            ("api", "repos/o/r/actions/runs?head_sha=sha714&per_page=5"):
-                (0, json.dumps({"workflow_runs": [{"id": 704, "run_attempt": 1}]})),
-            ("api", "repos/o/r/actions/runs?head_sha=sha715&per_page=5"):
-                (0, json.dumps({"workflow_runs": [{"id": 705, "run_attempt": 1}]})),
-            ("api", "repos/o/r/actions/runs/701/attempts/1/jobs"):
-                (0, json.dumps({"jobs": [{"id": 11, "status": "completed", "conclusion": "failure",
-                                          "started_at": stamp(d2, 0, "09:34:55"),
-                                          "completed_at": stamp(d2, 0, "09:42:03"), "steps": [],
-                                          "check_run_url": "https://api.github.com/repos/o/r/check-runs/7011"}]})),
-            ("api", "repos/o/r/actions/runs/702/attempts/1/jobs"):
-                (0, json.dumps({"jobs": [{"id": 12, "status": "completed", "conclusion": "success",
-                                          "started_at": stamp(d2, 0, "09:44:00"),
-                                          "completed_at": stamp(d2, 0, "09:50:00"), "steps": []}]})),
-            ("api", "repos/o/r/actions/runs/703/attempts/1/jobs"):
-                (0, json.dumps({"jobs": [{"id": 13, "status": "completed", "conclusion": "success",
-                                          "started_at": stamp(d2, 0, "21:34:55"),
-                                          "completed_at": stamp(d2, 0, "21:42:03"), "steps": []}]})),
-            ("api", "repos/o/r/actions/runs/704/attempts/1/jobs"):
-                (0, json.dumps({"jobs": [{"id": 14, "status": "completed", "conclusion": "cancelled",
-                                          "started_at": stamp(d1, 0, "09:30:00"),
-                                          "completed_at": stamp(d1, 0, "09:50:00"),
-                                          "check_run_url": "https://api.github.com/repos/o/r/check-runs/7041",
-                                          "steps": [{"name": "checks", "status": "cancelled"}]}]})),
-            ("api", "repos/o/r/actions/runs/705/attempts/1/jobs"):
-                (0, json.dumps({"jobs": [{"id": 15, "status": "completed", "conclusion": "success",
-                                          "started_at": stamp(d1, 0, "10:30:00"),
-                                          "completed_at": stamp(d1, 0, "10:36:30"), "steps": []}]})),
-
-            ("api", "repos/o/r/check-runs/7011/annotations"):
-                (0, json.dumps([{"message": "The runner lost communication with the server."}])),
-            ("api", "repos/o/r/check-runs/7041/annotations"):
-                (0, json.dumps([{"message": "The job has exceeded the maximum execution time of 10 minutes."}])),
-        }
-        return mapping
-
-    def ready(self, target="5"):
-        self.open()
-        self.stub_gh(self.fixture(), None)
-        self.brigade("set", "--ci-target", target)
-
-    def ledger_lines(self):
-        return (self.at / "ci-times.tsv").read_text().splitlines()
-
-    def seed_runs(self, *rows):
-        """Append these raw ci-times.tsv rows, writing the header when the file is missing."""
-        path = self.at / "ci-times.tsv"
-        header = "PR\tmerged_at\tci_seconds\topen_to_merge_seconds\tclean\tlost\ttime_limit"
-        existing = path.read_text().splitlines() if path.is_file() else [header]
-        path.write_text("\n".join(existing + list(rows)) + "\n")
-
+class CiTimeTest(BrigadeTest, CiTimeMixin):
     def test_off_makes_no_gh_call_writes_no_file_and_leaves_close_and_status_alone(self):
         self.open()
         before = self.store_files()
@@ -195,7 +81,7 @@ class CiTimeMixin:
         self.assertIn("PR 715", row["summary"])
         self.assertIn("PR 714", row["summary"])
         self.assertIn("5m target", row["summary"])
-        self.assertIn("T1", self.brigade("startable"))
+        self.assertRegex(self.brigade("startable"), r"\bT1\b")
 
     def test_a_live_trigger_ticket_blocks_a_second_filing(self):
         self.ready()
@@ -208,8 +94,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
-                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{self.after_done(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{self.after_done(120)}\t410\t3600\tyes\t0\t0")
         out = self.brigade("ci-time")
         self.assertIn("added Q1: CI time is still over the 5m target (410s at PR 717, 400s at PR 716).", out)
         self.assertEqual([fields[0] for fields in self.rows_of("rail.tsv")], ["T1"])
@@ -221,8 +107,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
-                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{self.after_done(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{self.after_done(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         out = self.brigade("ci-time")
         self.assertIn("ci-time decision Q1 is open; nothing filed", out)
@@ -235,8 +121,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
-                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{self.after_done(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{self.after_done(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "try again"), "Q1 answered")
         out = self.brigade("ci-time")
@@ -246,11 +132,11 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
-                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{self.after_done(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{self.after_done(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         self.assertEqual(self.brigade("86", "answer", "Q1", "--answer", "leave it"), "Q1 answered")
-        self.seed_runs(f"718\t{ahead(180)}\t420\t3600\tyes\t0\t0")
+        self.seed_runs(f"718\t{self.after_done(180)}\t420\t3600\tyes\t0\t0")
         stopped = self.brigade("ci-time")
         self.assertIn("ci-time is stopped; run set --ci-target <minutes> to start it again", stopped)
         self.assertEqual([fields[0] for fields in self.rows_of("rail.tsv")], ["T1"])
@@ -262,8 +148,8 @@ class CiTimeMixin:
         self.ready()
         self.brigade("ci-time")
         self.brigade("ticket", "set", "T1", "--state", "done")
-        self.seed_runs(f"716\t{ahead(60)}\t400\t3600\tyes\t0\t0",
-                       f"717\t{ahead(120)}\t410\t3600\tyes\t0\t0")
+        self.seed_runs(f"716\t{self.after_done(60)}\t400\t3600\tyes\t0\t0",
+                       f"717\t{self.after_done(120)}\t410\t3600\tyes\t0\t0")
         self.brigade("ci-time")
         out = self.brigade("86", "answer", "Q1", "--answer", "bogus")
         self.assertEqual(out, "Q1 still open; answer with one of try again, leave it")
@@ -361,7 +247,3 @@ class CiTimeMixin:
         self.assertEqual(phase_of([ticket], [left], finished, "", set()), STOPPED)
         self.assertEqual(phase_of([ticket], [left], finished, "2026-10-31T10:00:00+00:00", set()), ARMED)
         self.assertEqual(phase_of([other], [], {}, "", set()), ARMED)
-
-
-class CiTimeTest(BrigadeTest, CiTimeMixin):
-    pass

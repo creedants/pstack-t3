@@ -39,39 +39,36 @@ class Breach:
 
 
 def _aware(moment):
-    """The moment read as UTC when it is naive."""
     if moment.tzinfo is None:
         return moment.replace(tzinfo=timezone.utc)
     return moment
 
 
 def _at(text):
-    """The ISO stamp parsed, read as UTC when it is naive."""
     return _aware(datetime.fromisoformat(text.replace("Z", "+00:00")))
 
 
 def _key(text):
-    """The option text compared case and trailing-dot blind, like closing_options."""
     return text.strip().rstrip(".").casefold()
 
 
 def _ci_tickets(tickets):
-    """The rail rows this trigger filed, whatever state they reached."""
     return [row for row in tickets if (row.get("source") or "").split(" (", 1)[0] == CI_SOURCE]
 
 
 def _ci_decisions(decisions):
-    """The 86 rows this trigger added."""
     return [row for row in decisions if (row.get("kind") or "") == CI_DECISION_KIND]
 
 
 def _latest(texts):
-    """The latest ISO stamp of these, or empty when there is none."""
-    best = ""
+    best_text, best_moment = "", None
     for text in texts:
-        if text and (not best or _at(text) > _at(best)):
-            best = text
-    return best
+        if not text:
+            continue
+        moment = _at(text)
+        if best_moment is None or moment > best_moment:
+            best_text, best_moment = text, moment
+    return best_text
 
 
 def phase_of(tickets, decisions, finished_at, target_at, live):

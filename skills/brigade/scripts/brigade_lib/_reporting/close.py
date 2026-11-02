@@ -79,7 +79,6 @@ def report(restaurant, write=True):
     meta = restaurant.meta
     # a stored ticketAge that does not parse refuses the report, as it refuses the evening sheet
     ticket_age_of(meta)
-    # a stored ciTarget that does not parse refuses the report the same way
     ci_target_of(meta)
     since = meta.get("lastReportAt") or ""
     latest = events_since(restaurant, since)
