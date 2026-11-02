@@ -1,5 +1,6 @@
 import json
 from brigade_lib import seam
+from brigade_lib._ci.setting import ci_target_of
 from brigade_lib._store.opening import rename_restaurant
 from brigade_lib._store.settings import cooldown_minutes
 from brigade_lib.affected import layout
@@ -70,6 +71,9 @@ def register_set(sub):
     p.add_argument("--ticket-age", metavar="N",
                    help="the days a waiting low-priority polish or upkeep ticket may sit before ticket age moves it "
                         "to notes.tsv; 0 or an empty value turns aging off")
+    p.add_argument("--ci-target", metavar="N",
+                   help="the minutes of CI time that trips the ci-time trigger; a whole number of 1 or more; "
+                        "0 or an empty value turns it off")
     p.add_argument("--liveness-ms", metavar="N",
                    help="the interval a liveness schedule uses, a whole number of at least 60000; \"\" clears it")
     p.add_argument("--change-note-dir", metavar="DIR",
@@ -112,6 +116,7 @@ def validate_settings(meta):
     low_reserve_of(meta)
     round_budget_of(meta)
     ticket_age_of(meta)
+    ci_target_of(meta)
     liveness_of(meta)
     layout(meta)
     doc_policy(meta)
@@ -223,6 +228,8 @@ def handle_locked(restaurant, args, view):
                 logged = ("thread", ident, "recorded", note)
     settings, drop = setting_changes(restaurant, args)
     changes.update(settings)
+    if args.ci_target is not None:
+        changes["ciTargetAt"] = seam.now()
     prospective = prospective_settings(restaurant, args)
     validate_settings(prospective)
     if logged is not None:

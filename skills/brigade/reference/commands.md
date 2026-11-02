@@ -31,6 +31,8 @@ $B ticket notes --paths a.py,b.py | --all   # prints the notes that name those p
 $B ticket sweep --older-than <n> [--drop --confirm <digest> | --goal G<n> --confirm <digest>]   # lists waiting tickets filed more than <n> days ago that have no kind or no goal, with a count and a digest; with --drop drops them, and with --goal gives each ticket with no goal that goal
 $B ticket age [--older-than <n>] [--dry-run]   # moves waiting low-priority polish or upkeep tickets filed more than <n> days ago to notes.tsv, then drops them; without --older-than it uses set --ticket-age, default 14 days; 0 turns aging off
 $B set --ticket-age <N>                    # the days a waiting low-priority polish or upkeep ticket may sit before ticket age moves it to notes.tsv; 0 or "" turns aging off
+$B set --ci-target <N>                     # the minutes of CI time that trips the ci-time trigger; 0 or "" turns it off
+$B ci-time [--dry-run]                       # records the CI time of recent merged pull requests in ci-times.tsv and files one upkeep ticket when the two most recent clean runs stay over the target; --dry-run prints what it would record and file, and changes no table
 $B startable                                 # the workers line, then a count line and each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file
