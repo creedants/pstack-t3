@@ -62,8 +62,9 @@ class CiTimeSignalsTest(BrigadeTest, CiTimeMixin):
         before = self.store_files()
         self.stub_gh(self.ci_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": {901: [job]},
                                                "checks": [check("2026-10-30T10:00:00+00:00",
-                                                                  "2026-10-30T10:01:00+00:00")]},
-                                              ]), None)
+                                                                  "2026-10-30T10:01:00+00:00")],
+                                               "notes": {"8011": [{"message": "The job has exceeded the maximum "
+                                                                                "execution time of 3 minutes."}]}}]), None)
         self.brigade("set", "--ci-target", "10")
         before = self.store_files()
         out = self.brigade("ci-time")
