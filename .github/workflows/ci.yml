@@ -20,6 +20,7 @@ jobs:
   part_310_1:
     name: part (3.10, 1/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -32,6 +33,7 @@ jobs:
   part_310_2:
     name: part (3.10, 2/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -44,6 +46,7 @@ jobs:
   part_310_3:
     name: part (3.10, 3/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -56,6 +59,7 @@ jobs:
   part_310_4:
     name: part (3.10, 4/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -68,6 +72,7 @@ jobs:
   part_310_5:
     name: part (3.10, 5/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -80,6 +85,7 @@ jobs:
   part_310_6:
     name: part (3.10, 6/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -92,6 +98,7 @@ jobs:
   part_310_7:
     name: part (3.10, 7/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -104,6 +111,7 @@ jobs:
   part_310_8:
     name: part (3.10, 8/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -117,6 +125,7 @@ jobs:
   part_312_1:
     name: part (3.12, 1/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -129,6 +138,7 @@ jobs:
   part_312_2:
     name: part (3.12, 2/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -141,6 +151,7 @@ jobs:
   part_312_3:
     name: part (3.12, 3/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -153,6 +164,7 @@ jobs:
   part_312_4:
     name: part (3.12, 4/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -165,6 +177,7 @@ jobs:
   part_312_5:
     name: part (3.12, 5/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -177,6 +190,7 @@ jobs:
   part_312_6:
     name: part (3.12, 6/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -189,6 +203,7 @@ jobs:
   part_312_7:
     name: part (3.12, 7/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -201,6 +216,7 @@ jobs:
   part_312_8:
     name: part (3.12, 8/8)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -213,6 +229,7 @@ jobs:
   test_310:
     name: test (3.10)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [part_310_1, part_310_2, part_310_3, part_310_4, part_310_5, part_310_6, part_310_7, part_310_8, browser_linux, generated]
     if: always()
     steps:
@@ -236,6 +253,7 @@ jobs:
   test_312:
     name: test (3.12)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [part_312_1, part_312_2, part_312_3, part_312_4, part_312_5, part_312_6, part_312_7, part_312_8, browser_linux, generated, browser_macos, macos_312_1, macos_312_2, macos_312_3, macos_312_4]
     if: always()
     steps:
@@ -264,6 +282,7 @@ jobs:
   generated:
     name: generated files
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -280,6 +299,7 @@ jobs:
   browser_linux:
     name: browser (linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -313,6 +333,7 @@ jobs:
   browser_macos:
     name: browser (macOS)
     runs-on: macos-latest
+    timeout-minutes: 10
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
@@ -326,6 +347,7 @@ jobs:
   macos_312_1:
     name: macOS (3.12, 1/4)
     runs-on: macos-latest
+    timeout-minutes: 45
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
@@ -351,6 +373,7 @@ jobs:
   macos_312_2:
     name: macOS (3.12, 2/4)
     runs-on: macos-latest
+    timeout-minutes: 45
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
@@ -376,6 +399,7 @@ jobs:
   macos_312_3:
     name: macOS (3.12, 3/4)
     runs-on: macos-latest
+    timeout-minutes: 45
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
@@ -401,6 +425,7 @@ jobs:
   macos_312_4:
     name: macOS (3.12, 4/4)
     runs-on: macos-latest
+    timeout-minutes: 45
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
