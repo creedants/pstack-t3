@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._ci.setting import ci_target_of
 from brigade_lib.items import attempt_starts
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
@@ -103,6 +104,7 @@ class Snapshot:
     trunk: object
     round_budget: int
     ticket_age: int
+    ci_target: int = 0
     webhook_intake: bool = False
 
 
@@ -247,7 +249,7 @@ def load_snapshot(restaurant, moment):
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
         tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
         store_path(restaurant.dir), tuple(gaps), trunk, round_budget_of(meta), ticket_age_of(meta),
-        webhook_intake=WEBHOOK_SCHEDULE in (meta.get("schedules") or {}))
+        ci_target=ci_target_of(meta), webhook_intake=WEBHOOK_SCHEDULE in (meta.get("schedules") or {}))
 
 
 def inbox_ready(snapshot):
@@ -275,6 +277,10 @@ def accepted_argv(snapshot, argv):
         if debt and not open_for(snapshot, debt.dish) and debt.at > snapshot.last_report_at:
             return argv
         return None
+    if argv == ("ci-time",):
+        return argv if snapshot.ci_target else None
+    if argv == ("ci-time", "--dry-run"):
+        return argv
     if argv in (("close",), ("close", "--to-file")):
         return None if snapshot.close_refusal else argv
     if len(argv) == 4 and argv[0] == "dish" and argv[2:] == ("--state", "merged"):

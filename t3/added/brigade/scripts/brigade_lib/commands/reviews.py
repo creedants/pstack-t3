@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._ci.trigger import CI_DECISION_KIND
+from brigade_lib._reviews.decisions import append_decision
 from brigade_lib.credit import credit_text
 from brigade_lib.items import announce_archive
 from brigade_lib.reviews import apply_edits_command, latest_verdict, pass_check, pass_hits, pass_json, pass_stats, reason_refusal, record_pass, round_decision, verify_edits, write_threads
@@ -271,14 +273,18 @@ def handle_locked(restaurant, args, view):
                 if option_key(default) not in keys or len(keys) < 2:
                     raise BrigadeError("an item decision's default must be one of its options, "
                                        "with at least one other option that closes it")
-            ident = restaurant.next_id("86.tsv")
-            restaurant.append("86.tsv", {"id": ident, "at": seam.now(), "state": "open", "dish": args.dish,
-                                         "question": question, "options": options, "default": default,
-                                         "kind": ROUND_KIND if args.round_budget else ""})
-            restaurant.log("decision", ident, "open", question)
+            ident = append_decision(restaurant, dish=args.dish, question=question, options=options,
+                                    default=default, kind=ROUND_KIND if args.round_budget else "")
             return ident
         if args.action == "answer":
             _, row = restaurant.find("86.tsv", args.id)
+            if not row["dish"].strip() and (row.get("kind") or "") == CI_DECISION_KIND:
+                closes = [option.strip() for option in (row.get("options") or "").split(",") if option.strip()]
+                if option_key(args.answer) not in {option_key(option) for option in closes}:
+                    return f"{args.id} still open; answer with one of {row['options']}"
+                restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer,
+                                  answered=seam.now())
+                return f"{args.id} answered"
             if not row["dish"].strip():
                 restaurant.update("86.tsv", args.id, "decision", state="answered", answer=args.answer, answered=seam.now())
                 return f"{args.id} answered"
