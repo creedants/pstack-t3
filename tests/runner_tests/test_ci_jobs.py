@@ -258,6 +258,35 @@ class CiJobsMixin:
             self.assertEqual(steps[3]["run"], macos_part_run(index))
             self.assertNotIn("--real-process-share", steps[3]["run"])
 
+    def test_a_job_without_a_timeout_minutes_hangs_for_githubs_six_hour_default(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        part_ids = [f"part_310_{index}" for index in range(1, PARTS + 1)] + [f"part_312_{index}" for index in range(1, PARTS + 1)]
+        try:
+            import yaml
+        except ImportError:
+            lines = text.splitlines(keepends=True)
+            self.assertEqual(sorted(re.findall(r"^  ([a-z0-9_]+):$", text.split("\njobs:\n", 1)[1], re.MULTILINE)),
+                             sorted(JOB_ORDER), "the workflow holds the expected jobs.")
+            expected = {job_id: 20 for job_id in part_ids}
+            expected.update({job_id: 30 for job_id in MACOS_PARTS})
+            for job_id in JOB_ORDER:
+                with self.subTest(job=job_id):
+                    self.assertIn(f"    timeout-minutes: {expected.get(job_id, 10)}\n",
+                                  job_body(lines, job_id) or [], "every job sets its timeout-minutes.")
+            return
+        jobs = yaml.safe_load(text)["jobs"]
+        for job_id, job in jobs.items():
+            timeout = job.get("timeout-minutes")
+            with self.subTest(job=job_id):
+                self.assertIs(type(timeout), int, "every job sets an integer timeout-minutes.")
+                self.assertGreater(timeout, 0, "every job sets a positive timeout-minutes.")
+                if job_id in part_ids:
+                    self.assertEqual(timeout, 20, "a part job fails a hang at 20 minutes.")
+                elif job_id in MACOS_PARTS:
+                    self.assertEqual(timeout, 30, "a macOS part job fails a hang at 30 minutes.")
+                else:
+                    self.assertGreaterEqual(timeout, 10, "every other job keeps at least 10 minutes.")
+
     def test_the_browser_probe_step_is_shared_by_anchor_and_alias(self):
         try:
             import yaml
