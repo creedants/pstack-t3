@@ -1,5 +1,6 @@
 import re
 from datetime import datetime, timedelta, timezone
+from brigade_lib._ci.trigger import CI_SOURCE
 from brigade_lib._reviews.rounds import earliest_record, window_phrases
 from brigade_lib._tickets.paths import quoted_paths
 from brigade_lib.shared import BrigadeError, clean, same_text
@@ -116,6 +117,8 @@ def share_lines(restaurant):
     cutoff = now - timedelta(days=SHARE_DAYS)
     total, reports = 0, 0
     for row in restaurant.rows("rail.tsv"):
+        if (row.get("source") or "").split(" (", 1)[0] == CI_SOURCE:
+            continue
         try:
             at = datetime.fromisoformat((row.get("at") or "").replace("Z", "+00:00"))
         except ValueError:

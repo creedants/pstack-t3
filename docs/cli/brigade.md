@@ -18,7 +18,7 @@ Bookkeeping for brigade restaurants.
 | `--at AT` |  |  |  | restaurant directory (default $BRIGADE_DIR) |
 | `--owner OWNER` |  |  |  | \<thread>@\<generation> from status; every write in a store with a generation needs it |
 
-`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `onboard`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `credit`, `edits`, `86`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
+`<command>` is one of `open`, `set`, `ticket`, `goal`, `fire`, `brief`, `affected`, `onboard`, `contract`, `watch`, `startable`, `hang`, `model`, `thread`, `dish`, `pass`, `credit`, `edits`, `86`, `ci-time`, `inbox`, `request`, `rule`, `sync`, `status`, `close`, `walk`, `next`, `launch`, `spend`.
 
 ## brigade.py open
 
@@ -45,7 +45,7 @@ create a restaurant, or print an existing one
 ## brigade.py set
 
 ```text
-brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--ticket-age N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off] [--notify COMMAND]
+brigade.py [flags] set [--thread THREAD] [--replace] [--expect EXPECT] [--stopped STOPPED] [--reports-to REPORTS_TO] [--schedule NAME=ID] [--reporting REPORTING] [--intake INTAKE] [--workers WORKERS] [--mode MODE] [--build-command BUILD_COMMAND] [--check-command CHECK_COMMAND] [--autofire AUTOFIRE] [--cap KIND=N] [--review KIND=MODE] [--scratch-dir DIR] [--low-reserve N] [--round-budget N] [--ticket-age N] [--ci-target N] [--liveness-ms N] [--change-note-dir DIR] [--cooldown-minutes N] [--affected-tests JSON] [--shared-docs JSON] [--doc-timebox N] [--context-cap CONTEXT_CAP] [--coordinator-provider COORDINATOR_PROVIDER] [--pr-credit on|off] [--notify COMMAND]
 ```
 
 record a setting
@@ -71,6 +71,7 @@ record a setting
 | `--low-reserve N` |  |  |  | the workers still idle while a low ticket waits behind an urgent or normal one; "" clears it to 1 |
 | `--round-budget N` |  |  |  | the send-backs that owe a round decision; "" clears it to 3 |
 | `--ticket-age N` |  |  |  | the days a waiting low-priority polish or upkeep ticket may sit before ticket age moves it to notes.tsv; 0 or an empty value turns aging off |
+| `--ci-target N` |  |  |  | the minutes of CI time that trips the ci-time trigger; a whole number of 1 or more; 0 or an empty value turns it off |
 | `--liveness-ms N` |  |  |  | the interval a liveness schedule uses, a whole number of at least 60000; "" clears it |
 | `--change-note-dir DIR` |  |  |  | the repository-relative directory holding one change-note fragment per branch; "" clears it, and an unset key leases no fragment |
 | `--cooldown-minutes N` |  |  |  | the minutes a cooled seat stays out of a launch; "" clears it to 60 |
@@ -662,6 +663,18 @@ brigade.py [flags] 86 answer --answer ANSWER id
 ```text
 brigade.py [flags] 86 list
 ```
+
+## brigade.py ci-time
+
+```text
+brigade.py [flags] ci-time [--dry-run]
+```
+
+record the CI time of recent merged pull requests, and file one upkeep ticket when it stays over set --ci-target
+
+| Argument | Required | Choices | Default | Help |
+| --- | --- | --- | --- | --- |
+| `--dry-run` |  |  |  | print what it would record and file; it changes no table |
 
 ## brigade.py inbox
 

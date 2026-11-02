@@ -1,4 +1,5 @@
 """Re-exports names from _reviews. Patching a name here need not reroute bare-name calls inside _reviews."""
+from brigade_lib._reviews.decisions import append_decision
 from brigade_lib._reviews.hits import SeatHits, hit_section, pass_hits
 from brigade_lib._reviews.passes import CLAIMS_LINE, CLAIMS_STATES, apply_edits_command, edits_gate, reason_refusal, record_pass, review_report, unrecorded_reviews, verify_edits, worker_report
 from brigade_lib._reviews.rounds import cross_family, fix_round_refusal, item_verdicts, latest_verdict, pass_check, pass_json, pass_rate, pass_stats, reason_counts, reason_summary, reviewed_items, roles_family, round_count, round_debt, round_decision, send_back_section, send_back_window, send_backs

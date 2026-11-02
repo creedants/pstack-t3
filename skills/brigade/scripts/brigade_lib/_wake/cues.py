@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
+from brigade_lib._ci.trigger import CI_DECISION_KIND
 from brigade_lib.items import attempt_starts
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
@@ -157,6 +158,8 @@ def prefix_cues(snapshot, trigger, failure):
         dish = dish_by_id(snapshot, dish_id)
         run = maybe_run(snapshot, ("dish", dish_id, "--state", "merged"))
         cues = [run] if run else [See(merge_why(snapshot, dish))]
+        if snapshot.ci_target:
+            cues.append(Run(("ci-time",)))
         cues.extend(_trunk_cues(snapshot))
         cues.append(See(housekeeping(dish)))
         return cues
@@ -184,6 +187,8 @@ def prefix_cues(snapshot, trigger, failure):
         cues = []
         if _ticket_age_on(snapshot):
             cues.append(Run(("ticket", "age")))
+        if snapshot.ci_target:
+            cues.append(Run(("ci-time",)))
         cues.append(See("Write the evening report for this reporting level. At digest, plain sentences and the closeout path. "
                         "Otherwise at most three sentences and then the close output."))
         return cues
@@ -275,6 +280,10 @@ def tail_cues(snapshot, trigger, failure, reply):
     cues = []
     for row in snapshot.decisions:
         if not row["dish"]:
+            if (row.get("kind") or "") == CI_DECISION_KIND:
+                cues.append(See(f"{row['id']}: {row['question']} Options: {row['options']}. "
+                                f"Default: {row['default']}. Other work continues while it is open."))
+                continue
             cues.append(See(f"{row['id']}: {row['question']}. Launch nothing until 86 answer {row['id']}."))
             continue
         cues.append(See(f"{row['dish']}: open decision {row['id']}: {row['question']}; "
