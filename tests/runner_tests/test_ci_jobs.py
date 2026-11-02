@@ -268,7 +268,7 @@ class CiJobsMixin:
             self.assertEqual(sorted(re.findall(r"^  ([a-z0-9_]+):$", text.split("\njobs:\n", 1)[1], re.MULTILINE)),
                              sorted(JOB_ORDER), "the workflow holds the expected jobs.")
             expected = {job_id: 20 for job_id in part_ids}
-            expected.update({job_id: 30 for job_id in MACOS_PARTS})
+            expected.update({job_id: 45 for job_id in MACOS_PARTS})
             for job_id in JOB_ORDER:
                 with self.subTest(job=job_id):
                     self.assertIn(f"    timeout-minutes: {expected.get(job_id, 10)}\n",
@@ -283,7 +283,7 @@ class CiJobsMixin:
                 if job_id in part_ids:
                     self.assertEqual(timeout, 20, "a part job fails a hang at 20 minutes.")
                 elif job_id in MACOS_PARTS:
-                    self.assertEqual(timeout, 30, "a macOS part job fails a hang at 30 minutes.")
+                    self.assertEqual(timeout, 45, "a macOS part job fails a hang at 45 minutes.")
                 else:
                     self.assertGreaterEqual(timeout, 10, "every other job keeps at least 10 minutes.")
 
