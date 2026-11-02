@@ -112,7 +112,7 @@ class CiTimeMixin:
                                           "started_at": stamp(d1, 0, "09:30:00"),
                                           "completed_at": stamp(d1, 0, "09:50:00"),
                                           "check_run_url": "https://api.github.com/repos/o/r/check-runs/7041",
-                                          "steps": [{"name": "test", "status": "cancelled"}]}]})),
+                                          "steps": [{"name": "checks", "status": "cancelled"}]}]})),
             ("api", "repos/o/r/actions/runs/705/attempts/1/jobs"):
                 (0, json.dumps({"jobs": [{"id": 15, "status": "completed", "conclusion": "success",
                                           "started_at": stamp(d1, 0, "10:30:00"),
