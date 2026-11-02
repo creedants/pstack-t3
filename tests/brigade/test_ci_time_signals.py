@@ -109,7 +109,7 @@ class CiTimeSignalsTest(BrigadeTest, CiTimeMixin):
         log = [{"at": "2026-10-30T17:00:00Z", "kind": "ticket", "id": "T1", "state": "done"},
                {"at": "2026-10-30T12:00:00-06:00", "kind": "ticket", "id": "T1", "state": "done"}]
         restaurant = types.SimpleNamespace(dir=Path("here"), rows={"rail.tsv": rail, "log.tsv": log}.get)
-        self.assertEqual(_finished(restaurant, {"T1"}, {}), {"T1": "2026-10-30T12:00:00-06:00"})
+        self.assertEqual(_finished(restaurant, {"T1"}, {}).finished, {"T1": "2026-10-30T12:00:00-06:00"})
 
     def test_ci_target_refuses_bool_float_and_text_but_keeps_zero_off(self):
         from brigade_lib._ci.setting import ci_target_of
@@ -156,3 +156,57 @@ class CiTimeMovedTest(StoresTest, CiTimeMixin):
         row = {cells[0]: cells for cells in [line.split("\t") for line in (self.dir("core") / "86.tsv").read_text().splitlines()] if cells}["Q1"]
         keys = (self.dir("core") / "86.tsv").read_text().splitlines()[0].split("\t")
         self.assertEqual(dict(zip(keys, row))["kind"], "ci-time")
+
+    def test_unreadable_finished_log_files_no_second_ticket_and_no_decision(self):
+        self.move_setup()
+        engine = self.dir("engine")
+        path = self.dir("core") / "ci-times.tsv"
+        header = "PR\tmerged_at\tci_seconds\topen_to_merge_seconds\tclean\tlost\ttime_limit"
+        rows = [f"716\t{self.after_done(60, directory=engine)}\t400\t3600\tyes\t0\t0",
+                f"717\t{self.after_done(120, directory=engine)}\t410\t3600\tyes\t0\t0"]
+        existing = path.read_text().splitlines() if path.is_file() else [header]
+        path.write_text("\n".join(existing + rows) + "\n")
+        self.stub_gh(self.ci_mapping([{"pr": pr(718, "sha718", self.after_done(180, directory=engine)),
+                                       "runs": [],
+                                       "checks": [check("2026-10-30T10:00:00+00:00",
+                                                        "2026-10-30T10:05:00+00:00")],
+                                       "jobs": {}}]), None)
+        target = self.dir("engine") / "log.tsv"
+        target.unlink()
+        target.mkdir()
+        out = self.brigade("core", "ci-time")
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("PR 718", lines[0])
+        self.assertEqual(lines[1], "ci-time ticket T1 is live; engine/log.tsv cannot be read; nothing filed")
+        self.assertEqual([row[0] for row in self.rows("core", "rail.tsv")], ["T1"])
+        self.assertEqual(self.rows("core", "86.tsv"), [])
+        self.assertTrue(any(line.startswith("718\t")
+                            for line in (self.dir("core") / "ci-times.tsv").read_text().splitlines()))
+
+    def test_unreadable_finished_rail_files_no_second_ticket_and_no_decision(self):
+        self.move_setup()
+        engine = self.dir("engine")
+        path = self.dir("core") / "ci-times.tsv"
+        header = "PR\tmerged_at\tci_seconds\topen_to_merge_seconds\tclean\tlost\ttime_limit"
+        rows = [f"716\t{self.after_done(60, directory=engine)}\t400\t3600\tyes\t0\t0",
+                f"717\t{self.after_done(120, directory=engine)}\t410\t3600\tyes\t0\t0"]
+        existing = path.read_text().splitlines() if path.is_file() else [header]
+        path.write_text("\n".join(existing + rows) + "\n")
+        self.stub_gh(self.ci_mapping([{"pr": pr(718, "sha718", self.after_done(180, directory=engine)),
+                                       "runs": [],
+                                       "checks": [check("2026-10-30T10:00:00+00:00",
+                                                        "2026-10-30T10:05:00+00:00")],
+                                       "jobs": {}}]), None)
+        target = self.dir("engine") / "rail.tsv"
+        target.unlink()
+        target.mkdir()
+        out = self.brigade("core", "ci-time")
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("PR 718", lines[0])
+        self.assertEqual(lines[1], "ci-time ticket T1 is live; engine/rail.tsv cannot be read; nothing filed")
+        self.assertEqual([row[0] for row in self.rows("core", "rail.tsv")], ["T1"])
+        self.assertEqual(self.rows("core", "86.tsv"), [])
+        self.assertTrue(any(line.startswith("718\t")
+                            for line in (self.dir("core") / "ci-times.tsv").read_text().splitlines()))

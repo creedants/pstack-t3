@@ -1,3 +1,5 @@
+from typing import NamedTuple
+
 from brigade_lib import seam
 from brigade_lib._ci.github import fetch_runs
 from brigade_lib._ci.ledger import append_runs, read_ledger
@@ -6,14 +8,53 @@ from brigade_lib._ci.trigger import (ARMED, ASKING, CI_DECISION_KIND, CI_OPTIONS
                                       CI_SOURCE, COOLING, LEAVE_IT, RETRYING, STOPPED, TICKET_LIVE,
                                       _at, breach, phase_of)
 from brigade_lib._reviews.decisions import append_decision
-from brigade_lib.shared import plural
-from brigade_lib.store import Restaurant
-from brigade_lib.tickets import (append_ticket, handoff_id, is_live, refuse_live_ref, sibling_rails,
-                                 taken_row)
+from brigade_lib.shared import MalformedTable, plural
+from brigade_lib.store import Restaurant, siblings
+from brigade_lib.tickets import (append_ticket, handoff_id, is_live, refuse_live_ref, taken_row)
 
 COMMANDS = ("ci-time",)
 
 LIMIT = 10
+
+READ_FAILURES = (OSError, MalformedTable)
+
+
+class Handoffs(NamedTuple):
+    finished: dict
+    unreadable: dict
+
+
+class _Unreadable(Exception):
+    """A store on the handoff chain could not be read."""
+
+
+def _readable_rails(restaurant):
+    rails, failures = {}, []
+    for name in siblings(restaurant.dir, restaurant.meta.get("projectRoot")):
+        directory = (restaurant.dir.parent / name).resolve()
+        try:
+            rails[directory] = Restaurant(directory).rows("rail.tsv")
+        except READ_FAILURES as error:
+            failures.append(error)
+    return rails, failures
+
+
+def _rail(target, rails):
+    if target in rails:
+        return rails[target]
+    if not (target / "restaurant.json").is_file():
+        return None
+    try:
+        return Restaurant(target).rows("rail.tsv")
+    except READ_FAILURES as error:
+        raise _Unreadable(f"{target.name}/rail.tsv") from error
+
+
+def _log(directory):
+    try:
+        return Restaurant(directory).rows("log.tsv")
+    except READ_FAILURES as error:
+        raise _Unreadable(f"{directory.name}/log.tsv") from error
 
 
 def _minutes(seconds):
@@ -42,7 +83,7 @@ def handle(restaurant, args):
     if not target:
         return "ci-time is off; run set --ci-target <minutes> to turn it on"
     known = {run.pr for run in read_ledger(restaurant).runs}
-    rails = sibling_rails(restaurant)
+    rails, failures = _readable_rails(restaurant)
     batch, error = fetch_runs(restaurant.meta["projectRoot"], known, LIMIT)
     if error is not None:
         return error
@@ -50,8 +91,12 @@ def handle(restaurant, args):
     args.ci_runs = batch.runs
     args.ci_notices = batch.notices
     args.ci_rails = rails
-    args.ci_finished = _finished(restaurant, {row["id"] for row in restaurant.rows("rail.tsv")
-                                              if (row.get("source") or "") == CI_SOURCE}, rails)
+    handoffs = _finished(restaurant, {row["id"] for row in restaurant.rows("rail.tsv")
+                                      if (row.get("source") or "") == CI_SOURCE}, rails)
+    if failures and not handoffs.unreadable:
+        raise failures[0]
+    args.ci_finished = handoffs.finished
+    args.ci_unreadable = handoffs.unreadable
     lock = restaurant.checked() if args.dry_run else restaurant.guarded()
     with lock:
         return seam.command(restaurant, args)
@@ -63,7 +108,7 @@ def _terminal_finish(restaurant, directory, row, rails):
         if directory == restaurant.dir.resolve():
             log = restaurant.rows("log.tsv")
         else:
-            log = Restaurant(directory).rows("log.tsv")
+            log = _log(directory)
         best = ""
         for event in log:
             if (event.get("kind") == "ticket" and event.get("id") == row["id"]
@@ -77,30 +122,31 @@ def _terminal_finish(restaurant, directory, row, rails):
     if not dish.startswith("to:"):
         return None
     target = (directory.parent / dish[len("to:"):]).resolve()
-    if target in rails:
-        rows = rails[target]
-    elif not (target / "restaurant.json").is_file():
+    rows = _rail(target, rails)
+    if rows is None:
         return None
-    else:
-        rows = Restaurant(target).rows("rail.tsv")
     taken = taken_row(rows, handoff_id(directory, row["id"]))
     if taken is None:
         return None
     return _terminal_finish(restaurant, target, taken, rails)
 
 
-def _finished(restaurant, idents, rails):
+def _finished(restaurant, idents, rails) -> Handoffs:
     own = restaurant.dir.resolve()
     rows = {row["id"]: row for row in restaurant.rows("rail.tsv")}
-    found = {}
+    finished, unreadable = {}, {}
     for ident in idents:
         row = rows.get(ident)
         if row is None:
             continue
-        at = _terminal_finish(restaurant, own, row, rails)
-        if at is not None and (ident not in found or _at(at) > _at(found[ident])):
-            found[ident] = at
-    return found
+        try:
+            at = _terminal_finish(restaurant, own, row, rails)
+        except _Unreadable as error:
+            unreadable[ident] = str(error)
+            continue
+        if at is not None and (ident not in finished or _at(at) > _at(finished[ident])):
+            finished[ident] = at
+    return Handoffs(finished, unreadable)
 
 
 def ticket_summary(found, target):
@@ -126,6 +172,11 @@ def handle_locked(restaurant, args, view):
     fresh = [run for run in args.ci_runs if run.pr not in have]
     if fresh and not args.dry_run:
         append_runs(restaurant, fresh)
+    unreadable = dict(getattr(args, "ci_unreadable", None) or {})
+    lines = [run_line(run) for run in args.ci_runs] + list(args.ci_notices)
+    if unreadable:
+        ident = sorted(unreadable)[0]
+        return "\n".join([*lines, f"ci-time ticket {ident} is live; {unreadable[ident]} cannot be read; nothing filed"])
     tickets = restaurant.rows("rail.tsv")
     decided = restaurant.rows("86.tsv")
     own = restaurant.dir.resolve()
@@ -142,7 +193,6 @@ def handle_locked(restaurant, args, view):
         if not since or _at(at) > _at(since):
             since = at
     found = breach(ordered, target, since)
-    lines = [run_line(run) for run in args.ci_runs] + list(args.ci_notices)
     if found is None:
         return "\n".join([*lines, f"no breach of the {target}m target"])
     if phase == TICKET_LIVE:
