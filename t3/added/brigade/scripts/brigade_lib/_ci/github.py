@@ -195,8 +195,13 @@ def _span(checks, pr):
         if not started_raw or not completed_raw:
             continue
         started, completed = _at(started_raw, "started_at"), _at(completed_raw, "completed_at")
-        if started.year == 1 or completed < started:
+        if started.year == 1:
             return None, f"PR {pr}: no usable check time; no row written"
+        if completed < started:
+            if check.get("conclusion") == "skipped":
+                completed = started
+            else:
+                return None, f"PR {pr}: no usable check time; no row written"
         if earliest is None or started < earliest:
             earliest = started
         if latest is None or completed > latest:

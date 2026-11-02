@@ -268,6 +268,13 @@ class CiTimeRollupTest(BrigadeTest, CiTimeMixin):
                                                       check(None, None, conclusion="skipped")]}])
         self.assertIn("PR 801: 300s (about 5.0 minutes), clean", out)
 
+    def test_skipped_check_ending_before_its_start_clamps_to_zero_length(self):
+        out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success",
+                                           "checks": [check("2026-10-30T10:00:00+00:00", "2026-10-30T10:05:00+00:00"),
+                                                      check("2026-10-30T10:05:00+00:00", "2026-10-30T10:04:00+00:00",
+                                                            conclusion="skipped")]}])
+        self.assertIn("PR 801: 300s (about 5.0 minutes), clean", out)
+
     def test_pr_with_no_checks_files_no_ticket_and_no_decision(self):
         out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success", "checks": []}])
         self.assertIn("PR 801: no usable check time; no row written", out)
