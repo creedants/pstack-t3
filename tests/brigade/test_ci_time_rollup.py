@@ -202,7 +202,10 @@ class CiTimeRollupTest(BrigadeTest, CiTimeMixin):
     def test_rollup_span_beats_attempt1_job_sum(self):
         out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)],
                                            "checks": [check("2026-10-30T10:00:00+00:00", "2026-10-30T10:10:00+00:00")],
-                                           "jobs": {901: [attempt_job(1, "success")]}}])
+                                           "jobs": {901: [{"id": 1, "status": "completed", "conclusion": "success",
+                                                           "steps": [],
+                                                           "started_at": "2026-10-30T10:09:00+00:00",
+                                                           "completed_at": "2026-10-30T10:10:00+00:00"}]}}])
         self.assertIn("PR 801: 600s (about 10.0 minutes), clean", out)
 
     def test_second_page_run_attempt_two_marks_pr_not_clean(self):
@@ -254,26 +257,41 @@ class CiTimeRollupTest(BrigadeTest, CiTimeMixin):
         self.assertIn("PR 801: no usable check time; no row written", out)
         self.assertFalse((self.at / "ci-times.tsv").is_file())
 
-    def test_skipped_check_with_equal_times_counts_zero_length(self):
+    def test_skipped_check_ending_before_a_late_start_does_not_stretch_the_span(self):
         out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success",
                                            "checks": [check("2026-10-30T10:00:00+00:00", "2026-10-30T10:05:00+00:00"),
-                                                      check("2026-10-30T10:05:00+00:00", "2026-10-30T10:05:00+00:00",
+                                                      check("2026-10-30T11:00:00+00:00", "2026-10-30T10:59:59+00:00",
                                                             conclusion="skipped")]}])
         self.assertIn("PR 801: 300s (about 5.0 minutes), clean", out)
 
-    def test_timeless_checks_do_not_move_the_span(self):
+    def test_skipped_check_with_equal_times_after_the_real_check_does_not_stretch_the_span(self):
         out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success",
                                            "checks": [check("2026-10-30T10:00:00+00:00", "2026-10-30T10:05:00+00:00"),
-                                                      check(None, "2026-10-30T10:05:00+00:00"),
-                                                      check(None, None, conclusion="skipped")]}])
-        self.assertIn("PR 801: 300s (about 5.0 minutes), clean", out)
-
-    def test_skipped_check_ending_before_its_start_clamps_to_zero_length(self):
-        out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success",
-                                           "checks": [check("2026-10-30T10:00:00+00:00", "2026-10-30T10:05:00+00:00"),
-                                                      check("2026-10-30T10:05:00+00:00", "2026-10-30T10:04:00+00:00",
+                                                      check("2026-10-30T11:00:00+00:00", "2026-10-30T11:00:00+00:00",
                                                             conclusion="skipped")]}])
         self.assertIn("PR 801: 300s (about 5.0 minutes), clean", out)
+
+    def test_skipped_check_before_the_real_check_does_not_shrink_the_span(self):
+        out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success",
+                                           "checks": [check("2026-10-30T09:00:00+00:00", "2026-10-30T09:00:00+00:00",
+                                                            conclusion="skipped"),
+                                                      check("2026-10-30T10:00:00+00:00",
+                                                            "2026-10-30T10:05:00+00:00")]}])
+        self.assertIn("PR 801: 300s (about 5.0 minutes), clean", out)
+
+    def test_completed_check_without_a_start_leaves_the_pr_unrecorded(self):
+        out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success",
+                                           "checks": [check("2026-10-30T10:00:00+00:00", "2026-10-30T10:05:00+00:00"),
+                                                      check(None, "2026-10-30T10:20:00+00:00")]}])
+        self.assertIn("PR 801: no usable check time; no row written", out)
+        self.assertFalse((self.at / "ci-times.tsv").is_file())
+
+    def test_completed_check_without_a_completion_leaves_the_pr_unrecorded(self):
+        out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success",
+                                           "checks": [check("2026-10-30T10:00:00+00:00", "2026-10-30T10:05:00+00:00"),
+                                                      check("2026-10-30T10:00:00+00:00", None)]}])
+        self.assertIn("PR 801: no usable check time; no row written", out)
+        self.assertFalse((self.at / "ci-times.tsv").is_file())
 
     def test_pr_with_no_checks_files_no_ticket_and_no_decision(self):
         out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)], "jobs": "success", "checks": []}])
@@ -320,5 +338,3 @@ class CiTimeRollupTest(BrigadeTest, CiTimeMixin):
         out = self.ready_mapping([{"pr": pr(801, "sha801"), "runs": [(901, 1)],
                                            "check_pages": pages, "jobs": "success"}])
         self.assertIn("PR 801: 15000s (about 250.0 minutes), clean", out)
-
-

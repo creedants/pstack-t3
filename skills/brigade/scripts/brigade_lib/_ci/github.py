@@ -183,25 +183,23 @@ def _span(checks, pr):
             raw = check.get(field)
             if raw is not None and raw != "" and not isinstance(raw, str):
                 raise ValueError(f"gh api check-runs for PR {pr} named a check with no {field}")
-    for check in checks:
+    counted = [check for check in checks if check.get("conclusion") != "skipped"]
+    for check in counted:
         if check.get("status") != "completed":
             return None, f"PR {pr}: check {_label(check)} is still running; deferred to the next run"
         completed_raw = check.get("completed_at") or ""
         if completed_raw and _at(completed_raw, "completed_at").year == 1:
             return None, f"PR {pr}: check {_label(check)} is still running; deferred to the next run"
     earliest, latest = None, None
-    for check in checks:
+    for check in counted:
         started_raw, completed_raw = check.get("started_at"), check.get("completed_at")
         if not started_raw or not completed_raw:
-            continue
+            return None, f"PR {pr}: no usable check time; no row written"
         started, completed = _at(started_raw, "started_at"), _at(completed_raw, "completed_at")
         if started.year == 1:
             return None, f"PR {pr}: no usable check time; no row written"
         if completed < started:
-            if check.get("conclusion") == "skipped":
-                completed = started
-            else:
-                return None, f"PR {pr}: no usable check time; no row written"
+            return None, f"PR {pr}: no usable check time; no row written"
         if earliest is None or started < earliest:
             earliest = started
         if latest is None or completed > latest:
