@@ -2,6 +2,7 @@ import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from brigade_lib._ci.setting import ci_target_of
 from brigade_lib._ci.trigger import CiRun
 from brigade_lib.shared import plural
 
@@ -124,7 +125,6 @@ def ci_section(restaurant, stamp):
     time-limit stops count the runs merged in the last seven days. Reads the
     ledger only, so close stays offline.
     """
-    from brigade_lib._ci.setting import ci_target_of
     target = ci_target_of(restaurant.meta)
     if not target:
         return []
