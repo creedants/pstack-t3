@@ -63,7 +63,7 @@ def _parse(number, line):
 
 
 def read_ledger(restaurant):
-    """The ledger read leniently. A line that is not a row is kept verbatim and
+    """The ledger read leniently. A line that is not a row is kept with undecodable bytes replaced and
     reported, never dropped and never fatal."""
     path = restaurant.dir / NAME
     if not path.is_file():
@@ -155,5 +155,5 @@ def ci_section(restaurant, stamp):
     losses = "loss" if lost == 1 else "losses"
     lines.append(f"- {lost} runner {losses} and {plural(stopped, 'time-limit stop')} in the last 7 days")
     for number, _ in ledger.bad:
-        lines.append(f"- ci-times.tsv line {number} is not a row; kept as is")
+        lines.append(f"- ci-times.tsv line {number} is not a row; kept with undecodable bytes replaced")
     return lines + [""]

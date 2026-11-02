@@ -279,7 +279,7 @@ class CiTimeMixin:
         self.assertIn("- PR 713: 428s (7.1 min), clean", out)
         self.assertIn("median 428s, longest 1200s, 3 over the 5m target in the last 3 clean runs", out)
         self.assertIn("1 runner loss and 1 time-limit stop in the last 7 days", out)
-        self.assertIn("ci-times.tsv line 6 is not a row; kept as is", out)
+        self.assertIn("ci-times.tsv line 6 is not a row; kept with undecodable bytes replaced", out)
         self.assertIn("no ticket was created in the last 14 days", out)
         self.brigade("set", "--ci-target", "0")
         self.assertNotIn("## CI time", self.brigade("close", "--dry-run"))
@@ -291,7 +291,7 @@ class CiTimeMixin:
         path.write_bytes(path.read_bytes() + b"bad \xff line\n")
         out = self.brigade("close", "--dry-run")
         self.assertIn("## CI time", out)
-        self.assertIn("ci-times.tsv line 6 is not a row; kept as is", out)
+        self.assertIn("ci-times.tsv line 6 is not a row; kept with undecodable bytes replaced", out)
         again = self.brigade("ci-time")
         self.assertIn("ci-time ticket T1 is live; nothing filed", again)
 

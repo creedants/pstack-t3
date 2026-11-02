@@ -1,7 +1,7 @@
 - kind feature
 - With `set --ci-target <N>`, the coordinator records the CI time of each recent merged pull request in `ci-times.tsv` and reports it in the evening `close`
 - `ci-time` reads the last merged pull requests through `gh`, times each from its earliest check start to its latest completion, and marks a run clean only when every run attempt is 1
-- A run with a failed job and a lost-communication annotation counts one runner loss, and a cancelled run past the maximum execution time with a step that never completed counts one time-limit stop
+- A run with a failed job and a lost-communication annotation counts one runner loss per matching annotation, and a cancelled run past the maximum execution time with a step that never completed counts one time-limit stop per cancelled job with an unfinished step
 - When the two most recent clean runs stay over the target, `ci-time` files one `upkeep` ticket on `.github/workflows` naming both runs and the target, and a second breach after that ticket finishes adds a try-again-or-leave-it decision instead of another ticket
-- `close` gains a `## CI time` section after the waiting list with the recent clean runs, the median, the longest, the count over target, the losses and stops of the last seven days, and any kept-as-is lines
+- `close` gains a `## CI time` section after the waiting list with the recent clean runs, the median, the longest, the count over target, the losses and stops of the last seven days, and any kept lines with undecodable bytes replaced
 - The evening and merge sheets run `ci-time` while a target is set, and an open ci-time decision names its options while other work continues
