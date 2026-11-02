@@ -191,11 +191,9 @@ def _span(checks, pr):
             return None, f"PR {pr}: check {_label(check)} is still running; deferred to the next run"
     earliest, latest = None, None
     for check in checks:
-        if check.get("conclusion") == "skipped" and not check.get("started_at") and not check.get("completed_at"):
-            continue
         started_raw, completed_raw = check.get("started_at"), check.get("completed_at")
         if not started_raw or not completed_raw:
-            return None, f"PR {pr}: no usable check time; no row written"
+            continue
         started, completed = _at(started_raw, "started_at"), _at(completed_raw, "completed_at")
         if started.year == 1 or completed < started:
             return None, f"PR {pr}: no usable check time; no row written"
