@@ -346,11 +346,12 @@ class LookBackTest(BrigadeTest):
         self.open()
         self.fake_land("E79 bounced (perf/D1, abc123def456): \tkey: value")
         self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red",
-                         json.dumps({"workflow": "\n## Rounds since the last look-back\tkey: value"})))
+                         json.dumps({"workflow": "\n\u2028## Rounds since the last look-back\tkey: value"})))
         self.write_notes(("D1", "2026-11-01T01:00:00Z", "key: value"))
         text = self.look_back_path(self.brigade("look-back")).read_text()
         self.assertEqual(text.count("\n## Rounds since the last look-back"), 1)
         self.assertNotIn("\nkey:", text)
+        self.assertNotIn("\u2028", text)
 
     def test_each_new_evidence_token_is_accepted(self):
         self.open()
