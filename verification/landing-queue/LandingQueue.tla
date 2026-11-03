@@ -38,8 +38,12 @@
 \*                     _queue/prs.py:build_line, build       Folded. They move only the tracking ref and the
 \*                                                           integration worktree, and every run repeats them.
 \*   ApplyRun          _queue/integration.py:apply       EXT cherry-pick, fingerprint compare. Moves the worktree only.
-\*   SettleAlready     entries.py:attempt, prs.py:build  TX  settle_landed at the base
-\*   BounceApply       entries.py:attempt, prs.py:build  TX  settle_bounced. The clean_bounced call before it stays
+\*   SettleAlready     entries.py:attempt, prs.py:build  TX  settle_landed at the run's base in
+\*                                                           `attempt`, at trunk in `build`. The model
+\*                                                           has the attempt's base and calls it `base`.
+\*   BounceApply       entries.py:attempt, prs.py:build  TX  settle_bounced with a fresh expiry. The model's
+\*                                                           clock unit is a tick, not an hour, so the code's
+\*                                                           fixed six hours is Max(Ttls). The clean_bounced call before it stays
 \*                                                           folded: a death leaves the entry queued, and no model
 \*                                                           step reads the landing branch it deletes.
 \*   CheckRun          _queue/integration.py:check       EXT setup and every check, pass or fail. A check that dirties

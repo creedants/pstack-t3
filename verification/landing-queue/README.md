@@ -59,7 +59,7 @@ Paths are under `t3/added/landing/scripts/landing_lib/`.
 | `ReconcileLanding` | `_queue/entries.py:reconcile` | transaction: requeues every `landing` entry |
 | `IntegrationReset` | `_queue/entries.py:attempt`, `_queue/prs.py:build_line`, `build` | external: fetch, base read, worktree reset |
 | `ApplyRun` | `_queue/integration.py:apply` | external: cherry-pick and fingerprint compare, worktree only |
-| `SettleAlready` | `_queue/entries.py:attempt`, `_queue/prs.py:build` | transaction: `settle_landed` at the base |
+| `SettleAlready` | `_queue/entries.py:attempt`, `_queue/prs.py:build` | transaction: `settle_landed` at the run's base in `attempt`, at trunk in `build` |
 | `BounceApply` | `_queue/entries.py:attempt`, `_queue/prs.py:build` | transaction: `settle_bounced` |
 | `CheckRun` | `_queue/integration.py:check` | external: setup and checks, pass or fail |
 | `BounceCheck` | `_queue/entries.py:attempt`, `_queue/prs.py:build` | transaction: `settle_bounced`, nothing lands |
@@ -82,7 +82,7 @@ Paths are under `t3/added/landing/scripts/landing_lib/`.
 | `ChecksFinish` | the forge | external: required checks pass or fail |
 | `HeadMoves` | the forge | external: a push to the pull request's branch |
 | `ForgeCompletes` | the forge | external: the merge, by merge, squash, or rebase |
-| `SettleMerged` | `_merge/settle.py:take_pr` | transaction: `settle_landed` at the merged commit, pauses when the tree differs |
+| `SettleMerged` | `_merge/settle.py:take_pr` | transaction: `settle_landed` at the merged commit, pauses when the tree differs. `take_pr` bounces instead when the merged head is not the candidate; the model reaches that only under `no-match-head-commit` |
 | `BounceOpenPr` | `_merge/settle.py:bounce_open_pr` | transaction: `settle_bounced` on failed checks |
 | `OutsiderPush` | another writer on trunk | external: a forward push only |
 
