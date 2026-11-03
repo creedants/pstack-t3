@@ -42,6 +42,7 @@ $L land                      # drain the queue; prints what landed, bounced, or 
 $L status [E3] ; $L resume
 $L status --holder <restaurant>/<dish>   # that holder's entries with their SHAs; a value ending in / matches every holder under it
 $L status --holder <restaurant>/<dish> --sha <sha>   # only its entries at exactly that commit
+$L status --holder <restaurant>/<dish> --json   # the same entries as JSON objects, one per entry
 $L slot -- npm test          # run a heavy command under a governor slot
 $L slot --exclusive -- npm run bench   # hold every slot: nothing else heavy runs while it measures
 $L slot --slots 2 -- npm test   # take 2 worker slots in one admission
