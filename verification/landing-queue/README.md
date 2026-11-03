@@ -1,7 +1,8 @@
 # The landing queue model
 
-`LandingQueue.tla` models the landing queue and its path leases. `check.py` runs
-TLC over it and over the broken variants. Run it from the repository root:
+`LandingQueue.tla` and the sibling modules beside it model the landing queue and
+its path leases. `check.py` runs TLC over the model and over the broken variants.
+Run it from the repository root:
 
 ```sh
 python3 skills/landing/scripts/land.py slot -- python3 verification/landing-queue/check.py --scratch-parent <parent>

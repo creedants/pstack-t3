@@ -5,8 +5,9 @@ description: "Check the landing queue and its path leases against the TLA+ model
 
 # Verify the landing queue
 
-`verification/landing-queue/LandingQueue.tla` is a hand-written TLA+ model of the
-landing queue and its path leases. TLC checks the model inside a stated bound.
+`verification/landing-queue/LandingQueue.tla` and the sibling modules beside it are
+a hand-written TLA+ model of the landing queue and its path leases. TLC checks the
+model inside a stated bound.
 
 TLA+ checks the model. It does not read the Python. A rerun of an unchanged model
 passes after a real code regression, with the same state counts. A passing rerun
@@ -144,8 +145,8 @@ by steps 1 and 2.
 
 ## Coverage record
 
-- Model: `verification/landing-queue/LandingQueue.tla`, configs beside it and in
-  `variants/`.
+- Model: `verification/landing-queue/LandingQueue.tla` and its sibling modules,
+  configs beside it and in `variants/`.
 - Runner: `verification/landing-queue/check.py`.
 - Verified at: `91251ca92`. Each action was compared with the code at that commit.
 - Last full run: 21 runs, every base config held and every variant broke its named
