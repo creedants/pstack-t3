@@ -16,9 +16,12 @@ NOTE_CAP = 50
 REFUSAL = re.compile(r"^E(\d+) bounced \((?P<holder>[^,()]+), (?P<sha>[0-9a-f]+)\)(?:: (?P<reason>.*))?$")
 
 
+CONTROLS = {code: " " for code in (*range(32), *range(127, 160), 0x2028, 0x2029)}
+
+
 def flatten(text, limit=MAX_TEXT):
-    """The text on one line: control characters become spaces, then it is cut to limit characters."""
-    return "".join(" " if ord(char) < 32 or ord(char) == 127 else char for char in str(text))[:limit]
+    """The text on one line: control characters and line separators become spaces, then it is cut to limit characters."""
+    return str(text).translate(CONTROLS)[:limit]
 
 
 def inside(at, bound):
