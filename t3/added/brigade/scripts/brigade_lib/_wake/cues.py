@@ -189,6 +189,9 @@ def prefix_cues(snapshot, trigger, failure):
             cues.append(Run(("ticket", "age")))
         if snapshot.ci_target:
             cues.append(Run(("ci-time",)))
+        run = maybe_run(snapshot, ("look-back",))
+        if run is not None:
+            cues.append(run)
         cues.append(See("Write the evening report for this reporting level. At digest, plain sentences and the closeout path. "
                         "Otherwise at most three sentences and then the close output."))
         return cues

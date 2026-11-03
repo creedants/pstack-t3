@@ -23,6 +23,8 @@ from pathlib import Path, PurePosixPath
 from brigade_lib import seam, spend
 from brigade_lib._ci.ledger import ci_section
 from brigade_lib._ci.setting import ci_target_of
+from brigade_lib._lookback.section import look_back_section
+from brigade_lib._lookback.setting import look_back_of
 from brigade_lib._notes import share_lines
 from brigade_lib.leases import holding_blocks
 from brigade_lib.reviews import CLAIMS_LINE, CLAIMS_STATES, hit_section, send_back_section
@@ -80,6 +82,7 @@ def report(restaurant, write=True):
     # a stored ticketAge that does not parse refuses the report, as it refuses the evening sheet
     ticket_age_of(meta)
     ci_target_of(meta)
+    look_back_of(meta)
     since = meta.get("lastReportAt") or ""
     latest = events_since(restaurant, since)
     sections = {title: [] for title in SECTIONS.values()}
@@ -105,6 +108,7 @@ def report(restaurant, write=True):
         lines += ["Nothing new.", ""]
     lines += waiting_section(restaurant, since)
     lines += ci_section(restaurant, stamp)
+    lines += look_back_section(restaurant, since)
     lines += send_back_section(restaurant.rows("pass.tsv"), stamp, restaurant)
     lines += hit_section(restaurant.rows("pass.tsv"), restaurant.rows("edits.tsv"), restaurant.rows("86.tsv"), stamp)
     lines += spend_section(restaurant, since)

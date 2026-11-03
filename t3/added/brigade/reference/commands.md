@@ -33,6 +33,8 @@ $B ticket age [--older-than <n>] [--dry-run]   # moves waiting low-priority poli
 $B set --ticket-age <N>                    # the days a waiting low-priority polish or upkeep ticket may sit before ticket age moves it to notes.tsv; 0 or "" turns aging off
 $B set --ci-target <N>                     # the minutes of CI time that trips the ci-time trigger; 0 or "" turns it off
 $B ci-time [--dry-run]                       # records the CI time of recent merged pull requests in ci-times.tsv and files one upkeep ticket when the two most recent clean runs stay over the target; --dry-run prints what it would record and file, and changes no table
+$B set --look-back <N>                      # the days between look-backs; 0 or "" turns it off
+$B look-back [--record [<file>] [--none --reason "<one line>"]]   # writes a read-only brief over the review rounds since the last look-back into look-backs/ and prints its path; --record stamps the reader's proposals, or with --none a pass that found nothing usable
 $B startable                                 # the workers line, then a count line and each waiting ticket in start order with why it can or cannot start now, or no waiting tickets. It starts nothing
 $B inbox take                                # ticket take, then prints each request from the executive admin as A<n>: <line>
 $B inbox done A<n>                           # records the request as acted on and deletes its file
@@ -90,6 +92,17 @@ Run affected to print the verify paragraph for a path change. It scans the tree 
 
 
 Pass brief fields as a JSON file with `--fields <path>`, or from stdin with `--fields -`. Put every flag value in single quotes so the shell does not expand it. Before you write brief fields, read [Brief fields](../script.md#brief-fields).
+
+
+## Look-back detail
+
+Read this before `look-back`, before `look-back --record`, and when either refuses.
+
+`$B look-back` writes `look-backs/L<n>.md` with `look-backs/L<n>.json` beside it, prints `L<n>: <count> rounds since the last look-back`, with `round` in place of `rounds` at one, and then prints the brief file's path. It changes nothing else, reads no network, and works in a store with no remote. The brief lists the rounds since the last recorded look-back, newest 50 at most, and it names the cap when it lists fewer than it found. Each line holds the round's time, item, verdict, send-back reason, report file, and that item's worker and reviewer threads from `threads.tsv`. The brief names the six categories, the proposal file format, the rules, and every thread id it lists, and it holds no report body. A second run while a brief has no stamp rewrites that brief at the newer moment instead of writing another, so one store has at most one brief waiting for a record. An off setting prints only `look-back is off; run set --look-back <days> to turn it on` and writes nothing.
+
+`$B look-back --record <file>` reads one proposal file, checks every block against the brief that has no stamp, and writes the stamp only when every block passes. A block must hold `category`, `fix`, `evidence`, and `change`, and may hold one `quote` of at most 120 characters. The categories are `navigation`, `check-gap`, `reviewer-rule`, `expensive-call`, `no-op-instruction`, and `unreachable`. The fix types are `check`, `reviewer-rule`, `pointer`, `tool`, `deletion`, and `access`. Evidence is one `reports/<name>` this store holds, as a regular file inside `reports/`, or one thread id that brief lists. A refusal names the proposal's number and the value it refused, and nothing is stamped, so the evening cue stays until the file is fixed.
+
+`$B look-back --record --none --reason "<one line>"` stamps a look-back that held nothing usable. Recording one brief twice prints `L<n> was recorded at <time>; nothing stamped` and writes nothing, so no proposal is stored twice. A stored proposal is not a ticket and not a decision. Only the owner's yes turns one into `$B ticket add`, by hand. `look-backs/` sits in the store beside `reports/`, so it is never committed.
 
 
 ## Intake detail
