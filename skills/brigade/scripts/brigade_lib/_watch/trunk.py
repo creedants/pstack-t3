@@ -193,12 +193,10 @@ def _is_valid_run(run):
 
 
 def _is_dynamic(run):
-    """True when one gh run row is GitHub's dynamic event run."""
     return isinstance(run, dict) and run.get("event") == "dynamic"
 
 
 def _judged_runs(runs):
-    """The judged completed run for each workflow name."""
     judged = {}
     seen = set()
     for run in runs:
@@ -220,7 +218,6 @@ def _judged_runs(runs):
 
 
 def _failure_since(runs, workflow):
-    """The failure streak start for one workflow name."""
     since = ""
     for run in runs:
         if not _is_valid_run(run):
