@@ -9,13 +9,15 @@ description: "Check the landing queue and its path leases against the TLA+ model
 landing queue and its path leases. TLC checks the model inside a stated bound.
 
 TLA+ checks the model. It does not read the Python. A rerun of an unchanged model
-passes after a real code regression. In one review, `if code != 0:` in
-`Integration.check` became `if False:` and every config still passed with the same
-counts. A passing rerun alone does not show the model matches the current code.
+passes after a real code regression, with the same state counts. A passing rerun
+alone does not show the model matches the current code.
 
 Before a passing run counts, and before `Verified at` moves, compare each affected
 action and its helper assumptions with the changed code and update the model to
-match.
+match. Start from the diff, not from the table. Run `git diff --stat <Verified at>
+..HEAD -- t3/added/landing/scripts/landing_lib/` and read every changed function
+against its action before you run anything. A function can change behaviour without
+moving a transaction boundary and without appearing in the table's right column.
 
 Read every result with the pstack `/statechart` skill. It turns an invariant
 violation into the shortest path to it in plain words, and draws the state graph
@@ -89,7 +91,10 @@ and 18 in `merge.cfg`. Each variant sets its own depth. The bound is enforced in
 `verification/landing-queue/README.md` under "What the check does not cover".
 
 A base config must report `holds`. A variant must report `breaks <invariant>` with
-the invariant its `EXPECT:` line names.
+the invariant its `EXPECT:` line names. A variant's result counts only while every
+base config holds. When a base config breaks, the variants that name the same
+invariant may be breaking through that bug rather than through the rule they remove,
+and `check.py` cannot tell the difference.
 
 ## Tell a real bug from a modelling error
 
@@ -117,6 +122,9 @@ by steps 1 and 2.
    assumptions above.
 2. Update the action so it still stands for one transaction or one external call,
    or say in the map why a fold cannot change a promise. If a guard moved, move it.
+   Keep a check's pass or fail outcome in the model even when the code stops acting
+   on it. The failure comes from outside the program, and dropping it deletes the
+   case that proves the promise.
 3. If a promise changed, update `verification/landing-queue/README.md` and the
    model's promises section together, and add or change a variant in
    `verification/landing-queue/variants/` that shows the new promise failing when
