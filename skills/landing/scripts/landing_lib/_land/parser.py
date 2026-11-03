@@ -168,7 +168,7 @@ def build_parser(description, exclusive_cap=_DEFAULT_EXCLUSIVE_CAP, modes=_DEFAU
     p.add_argument("--holder", help="list this holder's entries; a value ending in / matches every holder under it")
     p.add_argument("--sha", help="with --holder, only entries at exactly this commit")
     p.add_argument("--json", action="store_true",
-                   help="print one JSON object. It holds mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit")
+                   help="print JSON instead of the lines. With --holder it is a list of that holder's entries, one object each holding id, state, holder, sha, and note. Alone it is one object holding mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit")
 
     size_help = ("check changed worktree file sizes; --staged reads changed index files; "
                  "--all reads tracked and unignored untracked files. Seed a missing baseline, except with --shrink, which refuses.\n\n"

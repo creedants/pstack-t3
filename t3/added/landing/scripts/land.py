@@ -170,7 +170,7 @@ def run(argv):
             if args.id:
                 raise LandError("status takes an entry id or --holder, not both")
             if args.json:
-                raise LandError("status --json takes no --holder")
+                return holder_json(store, args.holder, args.sha), 0
             return holder_status(store, args.holder, args.sha), 0
         if args.sha:
             raise LandError("status --sha needs --holder")
