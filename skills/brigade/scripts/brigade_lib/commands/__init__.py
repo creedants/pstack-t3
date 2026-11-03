@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib.commands.once import OncePaths
 from brigade_lib._ci import command as _ci_time
+from brigade_lib._lookback import command as _lookback
 from brigade_lib.commands import admin as _admin
 from brigade_lib.commands import items as _items
 from brigade_lib.commands import liveness as _liveness
@@ -70,6 +71,7 @@ COMMANDS = (
     Command("edits", _reviews.register_edits, _reviews.handle, None),
     Command("86", _reviews.register_86, _reviews.handle, _reviews.handle_locked),
     Command("ci-time", _ci_time.register, _ci_time.handle, _ci_time.handle_locked),
+    Command("look-back", _lookback.register, _lookback.handle, _lookback.handle_locked),
     Command("inbox", _rail.register_inbox, _rail.handle, _rail.handle_locked),
     Command("request", _admin.register_request, _admin.handle, _admin.handle_locked),
     Command("rule", _admin.register_rule, _admin.handle, _admin.handle_locked),

@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from brigade_lib._store.settings import COOLDOWN_KEY, parse_cooldown_minutes
 from brigade_lib._ci.setting import KEY as CI_TARGET_KEY, parse_ci_target
+from brigade_lib._lookback.setting import KEY as LOOK_BACK_KEY, parse_look_back
 from brigade_lib.affected import layout
 from brigade_lib.compact import parse_context_cap, parse_coordinator_provider
 from brigade_lib.credit import KEY as CREDIT_KEY, parse_credit
@@ -141,6 +142,8 @@ def setting_changes(restaurant, args):
         changes[TICKET_AGE_KEY] = parse_ticket_age(args.ticket_age)
     if args.ci_target is not None:
         changes[CI_TARGET_KEY] = parse_ci_target(args.ci_target)
+    if args.look_back is not None:
+        changes[LOOK_BACK_KEY] = parse_look_back(args.look_back)
     _clear_or_parse(args.low_reserve, LOW_RESERVE_KEY, parse_low_reserve, changes, drop)
     _clear_or_parse(args.round_budget, ROUND_BUDGET_KEY, parse_round_budget, changes, drop)
     _clear_or_parse(args.liveness_ms, LIVENESS_KEY, parse_liveness_ms, changes, drop)

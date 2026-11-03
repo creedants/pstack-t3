@@ -22,10 +22,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from brigade_lib import seam
 from brigade_lib._ci.setting import ci_target_of
+from brigade_lib._lookback.due import look_back_due
+from brigade_lib._lookback.rounds import rounds_after
+from brigade_lib._lookback.setting import look_back_of
+from brigade_lib._lookback.state import last_recorded
 from brigade_lib.items import attempt_starts
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
-from brigade_lib.store import MESSAGE_ONLY, ROUND_KIND, TABLES, reporting_of, round_budget_of, store_path
+from brigade_lib.store import MESSAGE_ONLY, MODES, ROUND_KIND, TABLES, reporting_of, round_budget_of, store_path
 from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels, request_files, ticket_age_of
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
 from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
@@ -106,6 +110,10 @@ class Snapshot:
     ticket_age: int
     ci_target: int = 0
     webhook_intake: bool = False
+    look_back: int = 0
+    look_back_at: str = ""
+    rounds_since_look_back: int = 0
+    mode: str = "light"
 
 
 def dish_by_id(snapshot, ident):
@@ -242,6 +250,11 @@ def load_snapshot(restaurant, moment):
     pending = tuple((path.stem, path.read_text().strip()) for path in request_files(restaurant)[0])
     block = restaurant.owner_block() or ""
     trunk = _latest_trunk(restaurant.rows("log.tsv"))
+    mode = meta.get("mode") if meta.get("mode") in MODES else "light"
+    recorded = last_recorded(restaurant)
+    look_back_at = ((recorded or {}).get("recorded") or {}).get("at") or ""
+    through = (recorded or {}).get("through") or ""
+    rounds_since = len(rounds_after(restaurant, through))
     return Snapshot(
         reporting_of(meta), meta.get("reportsTo") or "", since, block, slug(meta["restaurant"]),
         tuple(meta.get("intake") or ()), dishes, tickets, decisions, tuple(debts), round_counts,
@@ -249,7 +262,9 @@ def load_snapshot(restaurant, moment):
         tuple(unrecorded_reviews(restaurant)), load_inbox(restaurant), pending, passes,
         tuple(blocked_since.items()), moment, malformed_close(restaurant), restaurant.warn,
         store_path(restaurant.dir), tuple(gaps), trunk, round_budget_of(meta), ticket_age_of(meta),
-        ci_target=ci_target_of(meta), webhook_intake=WEBHOOK_SCHEDULE in (meta.get("schedules") or {}))
+        ci_target=ci_target_of(meta), webhook_intake=WEBHOOK_SCHEDULE in (meta.get("schedules") or {}),
+        look_back=look_back_of(meta), look_back_at=look_back_at,
+        rounds_since_look_back=rounds_since, mode=mode)
 
 
 def inbox_ready(snapshot):
@@ -281,6 +296,8 @@ def accepted_argv(snapshot, argv):
         return argv if snapshot.ci_target else None
     if argv == ("ci-time", "--dry-run"):
         return argv
+    if argv == ("look-back",):
+        return argv if look_back_due(snapshot) else None
     if argv in (("close",), ("close", "--to-file")):
         return None if snapshot.close_refusal else argv
     if len(argv) == 4 and argv[0] == "dish" and argv[2:] == ("--state", "merged"):

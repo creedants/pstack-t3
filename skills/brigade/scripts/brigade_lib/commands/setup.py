@@ -1,6 +1,7 @@
 import json
 from brigade_lib import seam
 from brigade_lib._ci.setting import ci_target_of
+from brigade_lib._lookback.setting import look_back_of
 from brigade_lib._store.opening import rename_restaurant
 from brigade_lib._store.settings import cooldown_minutes
 from brigade_lib.affected import layout
@@ -74,6 +75,8 @@ def register_set(sub):
     p.add_argument("--ci-target", metavar="N",
                    help="the minutes of CI time that trips the ci-time trigger; a whole number of 1 or more; "
                         "0 or an empty value turns it off")
+    p.add_argument("--look-back", metavar="N",
+                   help="the days between look-backs; 0 or an empty value turns it off")
     p.add_argument("--liveness-ms", metavar="N",
                    help="the interval a liveness schedule uses, a whole number of at least 60000; \"\" clears it")
     p.add_argument("--change-note-dir", metavar="DIR",
@@ -117,6 +120,7 @@ def validate_settings(meta):
     round_budget_of(meta)
     ticket_age_of(meta)
     ci_target_of(meta)
+    look_back_of(meta)
     liveness_of(meta)
     layout(meta)
     doc_policy(meta)
