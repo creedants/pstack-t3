@@ -64,8 +64,17 @@ def parse(text):
     return found
 
 
-def _evidence_problem(restaurant, value, threads):
-    if value in threads:
+def _tokens(brief):
+    """Every evidence token this brief printed: its threads, queue entries, failed runs, and notes."""
+    tokens = set(brief.get("threads") or [])
+    tokens.update(f"queue:{ident}" for ident in brief.get("queue") or [])
+    tokens.update(brief.get("runs") or [])
+    tokens.update(brief.get("notes") or [])
+    return tokens
+
+
+def _evidence_problem(restaurant, value, tokens):
+    if value in tokens:
         return None
     name = value[len("reports/"):] if value.startswith("reports/") else ""
     if not name or "/" in name or name in (".", ".."):
@@ -77,6 +86,7 @@ def _evidence_problem(restaurant, value, threads):
 
 def problems(restaurant, brief, proposals):
     found = []
+    tokens = _tokens(brief)
     for number, proposal in enumerate(proposals, 1):
         category = proposal.get("category") or ""
         if category not in CATEGORIES:
@@ -89,7 +99,7 @@ def problems(restaurant, brief, proposals):
         if len(proposal.get("quote") or "") > 120:
             found.append(f"proposal {number}: quote holds more than one short line")
         evidence = proposal.get("evidence") or ""
-        problem = _evidence_problem(restaurant, evidence, brief.get("threads") or [])
+        problem = _evidence_problem(restaurant, evidence, tokens)
         if problem:
             found.append(f"proposal {number}: evidence {evidence} {problem}")
     return found

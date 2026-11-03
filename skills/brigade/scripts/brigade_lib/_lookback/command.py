@@ -1,11 +1,13 @@
 from pathlib import Path
 
 from brigade_lib import seam
+from brigade_lib._lookback import sources
 from brigade_lib._lookback.brief import build
 from brigade_lib._lookback.proposals import parse, problems, refused
 from brigade_lib._lookback.setting import look_back_of
 from brigade_lib._lookback.state import target, write
 from brigade_lib.shared import BrigadeError, plural
+from brigade_lib.store import holder_prefix
 
 
 def register(sub):
@@ -18,6 +20,10 @@ def register(sub):
 
 
 def handle(restaurant, args):
+    if args.command == "look-back" and args.record is None and not args.none and args.reason is None:
+        meta = restaurant.meta
+        if look_back_of(meta):
+            args.lookback_queue = sources.read_queue(meta.get("projectRoot", ""), holder_prefix(meta))
     with restaurant.guarded():
         return seam.command(restaurant, args)
 
@@ -31,7 +37,7 @@ def handle_locked(restaurant, args, view):
         raise BrigadeError("--none and --reason go with --record")
     if not look_back_of(restaurant.meta):
         return "look-back is off; run set --look-back <days> to turn it on"
-    data, text = build(restaurant, seam.now())
+    data, text = build(restaurant, seam.now(), getattr(args, "lookback_queue", sources.UNREAD))
     brief = restaurant.dir / "look-backs" / f"{data['id']}.md"
     restaurant.write(f"look-backs/{data['id']}.md", text)
     write(restaurant, data)
