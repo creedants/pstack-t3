@@ -5,8 +5,8 @@ Runs every config beside this file, then every config under variants/. A base
 config must hold every invariant. A variant must report the invariant its
 EXPECT line names. Exits 0 when every run answered as expected, 1 otherwise.
 
-Run it through the slot so a model check never crowds out a build, as the
-landing skill's Local command capacity says.
+Run it through the slot so a model check never crowds out a build, as the landing
+skill's Capacity section says.
 
 --scratch-parent is required and has no default. Each run keeps TLC's state in
 a new directory under that parent and deletes that directory when TLC exits.
