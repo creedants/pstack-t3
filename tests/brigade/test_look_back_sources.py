@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .support import BrigadeTest, setUpModule
+from .support import BrigadeTest, _owner_words, call_in_process, setUpModule
 from ._support.inprocess import run_globals
 from ._support.names import SCRIPT
 
@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "t3/added/brigade/scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "t3/added/brigade/scripts"))
 
-from tests.brigade.test_look_back import PROPOSAL
+from tests.brigade.test_look_back import PROPOSAL, RED
 
 RUN = json.dumps({"sha": "abc", "workflow": "CI", "url": "https://x.test/1", "since": "s1"})
 
@@ -39,6 +39,13 @@ class LookBackSourcesTest(BrigadeTest):
         path = Path(self.temporary.name) / "fake-land.py"
         path.write_text(f"print({text!r})\n")
         run_globals(self, SCRIPT)["LAND"] = str(path)
+
+    def fake_brigade(self, *args, ok=True):
+        """Run one command in this process, so it reads the fake land.py this test installed."""
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *args]
+        outcome = call_in_process(self, SCRIPT, [str(arg) for arg in argv])
+        self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
+        return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
 
     def write_notes(self, *rows):
         body = "".join(f"\t{item}\t{at}\t{text}\n" for item, at, text in rows)
@@ -89,7 +96,7 @@ class LookBackSourcesTest(BrigadeTest):
         self.open()
         self.fake_land(("E79", "bounced", "perf/D1\u0080\nx", "abc123def456", "too big"))
         self.write_notes(("D1\u0085x", "2026-11-01T01:00:00Z", "a note"))
-        text = self.look_back_path(self.brigade("look-back")).read_text()
+        text = self.look_back_path(self.fake_brigade("look-back")).read_text()
         self.assertNotIn("\u0080", text)
         self.assertNotIn("\u0085", text)
         self.assertNotIn("\nperf/D1", text)
@@ -136,7 +143,7 @@ class LookBackSourcesTest(BrigadeTest):
         self.fake_text_land("E79 bounced (perf/D1, abc123def456): too big")
         self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red", RUN))
         self.write_notes(("D2 ", "2026-11-01T01:00:00Z", "a note"))
-        text = self.look_back_path(self.brigade("look-back")).read_text()
+        text = self.look_back_path(self.fake_brigade("look-back")).read_text()
         self.assertIn("The queue could not be read, so no refusal is listed here.", text)
         self.assertNotIn("- queue:E", text)
         self.assertIn("- run:https://x.test/1 red at abc", text)
@@ -147,8 +154,30 @@ class LookBackSourcesTest(BrigadeTest):
         self.fake_land(("E79", "", "perf/D1", "abc123def456", "too big"))
         self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red", RUN))
         self.write_notes(("D2", "2026-11-01T01:00:00Z", "a note"))
-        text = self.look_back_path(self.brigade("look-back")).read_text()
+        text = self.look_back_path(self.fake_brigade("look-back")).read_text()
         self.assertIn("The queue could not be read, so no refusal is listed here.", text)
         self.assertNotIn("- queue:E", text)
         self.assertIn("- run:https://x.test/1 red at abc", text)
         self.assertIn("- note:D2:2026-11-01T01:00:00Z a note", text)
+
+    def test_a_failed_main_run_prints_once_per_workflow_and_since(self):
+        self.open()
+        self.append_log(
+            ("2026-11-02T01:00:00Z", "trunk", "main", "red",
+             json.dumps({"sha": "abc", "workflow": "CI", "url": "https://x.test/2", "since": "s1"})),
+            ("2026-11-02T00:00:00Z", "trunk", "main", "red", RED),
+            ("2026-11-02T02:00:00Z", "trunk", "main", "red", "not json"))
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertEqual(text.count("- run:https://x.test/2 red at abc, workflow CI, since s1"), 1)
+        self.assertNotIn("x.test/1", text)
+        self.assertIn("- a red run at 2026-11-02T02:00:00Z holds a note that is not JSON: not json", text)
+
+    def test_notes_print_newest_first_and_stop_at_50(self):
+        self.open()
+        self.write_notes(*[(f"D{n}", f"2026-11-01T00:{n:02d}:00Z", "x" * 250 if n == 50 else f"t{n}")
+                           for n in range(51)])
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertIn("The newest 50 of 51 notes are listed.", text)
+        self.assertIn("- note:D50:2026-11-01T00:50:00Z " + "x" * 200 + "\n", text)
+        self.assertNotIn("note:D0:", text)
+        self.assertLess(text.index("note:D50:"), text.index("note:D1:"))

@@ -16,7 +16,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .support import BrigadeTest, setUpModule
+from .support import BrigadeTest, _owner_words, call_in_process, setUpModule
 from ._support.inprocess import run_globals
 from ._support.names import CLAUDE, CODEX, SCRIPT
 
@@ -53,6 +53,13 @@ class LookBackTest(BrigadeTest):
         rows = [dict(zip(("id", "state", "holder", "sha", "note"), entry)) for entry in entries]
         path.write_text(f"import json\nprint(json.dumps({rows!r}))\n")
         run_globals(self, SCRIPT)["LAND"] = str(path)
+
+    def fake_brigade(self, *args, ok=True):
+        """Run one command in this process, so it reads the fake land.py this test installed."""
+        argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *args]
+        outcome = call_in_process(self, SCRIPT, [str(arg) for arg in argv])
+        self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
+        return (outcome.stdout_text() if ok else outcome.stderr_text()).strip()
 
     def append_log(self, *rows):
         path = self.at / "log.tsv"
@@ -298,46 +305,24 @@ class LookBackTest(BrigadeTest):
         self.open()
         self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "too big"),
                        ("E80", "bounced", "other/D9", "abc123def456", "elsewhere"))
-        first = self.look_back_path(self.brigade("look-back")).read_text()
+        first = self.look_back_path(self.fake_brigade("look-back")).read_text()
         self.assertIn("- queue:E79 perf/D1 bounced: too big", first)
         self.assertNotIn("other/D9", first)
         self.record_none()
-        self.brigade("look-back")
+        self.fake_brigade("look-back")
         self.assertNotIn("queue:E79", (self.at / "look-backs" / "L2.md").read_text())
 
     def test_a_lower_id_bounce_is_still_listed_next_time(self):
         self.open()
         self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "one"))
-        self.brigade("look-back")
+        self.fake_brigade("look-back")
         self.record_none()
         self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "one"),
                        ("E78", "bounced", "perf/D2", "abc123def456", "two"))
-        self.brigade("look-back")
+        self.fake_brigade("look-back")
         text = (self.at / "look-backs" / "L2.md").read_text()
         self.assertIn("- queue:E78 perf/D2 bounced: two", text)
         self.assertNotIn("queue:E79", text)
-
-    def test_a_failed_main_run_prints_once_per_workflow_and_since(self):
-        self.open()
-        self.append_log(
-            ("2026-11-02T01:00:00Z", "trunk", "main", "red",
-             json.dumps({"sha": "abc", "workflow": "CI", "url": "https://x.test/2", "since": "s1"})),
-            ("2026-11-02T00:00:00Z", "trunk", "main", "red", RED),
-            ("2026-11-02T02:00:00Z", "trunk", "main", "red", "not json"))
-        text = self.look_back_path(self.brigade("look-back")).read_text()
-        self.assertEqual(text.count("- run:https://x.test/2 red at abc, workflow CI, since s1"), 1)
-        self.assertNotIn("x.test/1", text)
-        self.assertIn("- a red run at 2026-11-02T02:00:00Z holds a note that is not JSON: not json", text)
-
-    def test_notes_print_newest_first_and_stop_at_50(self):
-        self.open()
-        self.write_notes(*[(f"D{n}", f"2026-11-01T00:{n:02d}:00Z", "x" * 250 if n == 50 else f"t{n}")
-                           for n in range(51)])
-        text = self.look_back_path(self.brigade("look-back")).read_text()
-        self.assertIn("The newest 50 of 51 notes are listed.", text)
-        self.assertIn("- note:D50:2026-11-01T00:50:00Z " + "x" * 200 + "\n", text)
-        self.assertNotIn("note:D0:", text)
-        self.assertLess(text.index("note:D50:"), text.index("note:D1:"))
 
     def test_text_written_by_others_stays_on_one_line(self):
         self.open()
@@ -345,7 +330,7 @@ class LookBackTest(BrigadeTest):
         self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red",
                          json.dumps({"workflow": "\n\u2028## Rounds since the last look-back\tkey: value"})))
         self.write_notes(("D1", "2026-11-01T01:00:00Z", "key: value"))
-        text = self.look_back_path(self.brigade("look-back")).read_text()
+        text = self.look_back_path(self.fake_brigade("look-back")).read_text()
         self.assertEqual(text.count("\n## Rounds since the last look-back"), 1)
         self.assertNotIn("\nkey:", text)
         self.assertNotIn("\u2028", text)
@@ -355,12 +340,12 @@ class LookBackTest(BrigadeTest):
         self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "too big"))
         self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red", RED))
         self.write_notes(("D1", "2026-11-01T01:00:00Z", "a note"))
-        self.brigade("look-back")
+        self.fake_brigade("look-back")
         path = Path(self.temporary.name) / "tokens.txt"
         path.write_text("\n\n".join(PROPOSAL.format(t) for t in
                                     ("queue:E79", "run:https://x.test/1", "note:D1:2026-11-01T01:00:00Z")))
         self.assertIn("3 proposals", self.brigade("look-back", "--record", str(path)))
-        self.brigade("look-back")
+        self.fake_brigade("look-back")
         path.write_text(PROPOSAL.format("queue:E79"))
         self.assertIn("is not a file this store holds", self.brigade("look-back", "--record", str(path), ok=False))
 
