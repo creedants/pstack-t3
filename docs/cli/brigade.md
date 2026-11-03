@@ -683,11 +683,11 @@ record the CI time of recent merged pull requests, and file one upkeep ticket wh
 brigade.py [flags] look-back [--record [FILE]] [--none] [--reason TEXT]
 ```
 
-write a read-only brief over the week's review rounds, and record a reader's proposals
+write a read-only brief over review rounds since the last recorded look-back, and record a reader's proposals
 
 | Argument | Required | Choices | Default | Help |
 | --- | --- | --- | --- | --- |
-| `--record [FILE]` |  |  |  | record the proposals in this file against the newest brief; pass no file with --none |
+| `--record [FILE]` |  |  |  | record the proposals in this file against the outstanding brief; pass no file with --none |
 | `--none` |  |  |  | with --record, stamp a pass that found nothing usable |
 | `--reason TEXT` |  |  |  | one line saying why a --none pass found nothing usable |
 

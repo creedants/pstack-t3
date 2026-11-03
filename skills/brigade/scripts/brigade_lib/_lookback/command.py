@@ -9,9 +9,9 @@ from brigade_lib.shared import BrigadeError, plural
 
 
 def register(sub):
-    p = sub.add_parser("look-back", help="write a read-only brief over the week's review rounds, and record a reader's proposals")
+    p = sub.add_parser("look-back", help="write a read-only brief over review rounds since the last recorded look-back, and record a reader's proposals")
     p.add_argument("--record", nargs="?", metavar="FILE", const="",
-                   help="record the proposals in this file against the newest brief; pass no file with --none")
+                   help="record the proposals in this file against the outstanding brief; pass no file with --none")
     p.add_argument("--none", action="store_true",
                    help="with --record, stamp a pass that found nothing usable")
     p.add_argument("--reason", metavar="TEXT", help="one line saying why a --none pass found nothing usable")
@@ -39,7 +39,6 @@ def handle_locked(restaurant, args, view):
 
 
 def _stamped(restaurant):
-    """The brief this record call stamps, or a refusal naming why there is none."""
     brief = target(restaurant)
     if brief is None:
         raise BrigadeError("no look-back brief is recorded; run look-back first")
@@ -80,7 +79,6 @@ def _record(restaurant, args):
 
 
 def _stamp(restaurant, brief, recorded, words):
-    """Write the brief's stamp in one file replace and return the line the command prints."""
     stamp = seam.now()
     recorded["at"] = stamp
     brief = dict(brief, recorded=recorded)

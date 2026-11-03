@@ -11,7 +11,9 @@ from tests import isolation
 isolation.install()
 
 import json
+import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .support import BrigadeTest, setUpModule
@@ -66,6 +68,20 @@ class LookBackTest(BrigadeTest):
         self.brigade("set", "--mode", "full")
         sheet = self.brigade("next", "evening")
         self.assertNotIn("run look-back", sheet)
+
+    def test_evening_sheet_names_no_look_back_when_the_project_roles_file_sets_full_mode(self):
+        self.seed_rounds(1)
+        roles_dir = self.project / ".pstack"
+        roles_dir.mkdir(parents=True, exist_ok=True)
+        (roles_dir / "t3-roles.json").write_text(json.dumps({"mode": "full"}))
+        self.assertNotIn("run look-back", self.brigade("next", "evening"))
+
+    def test_evening_sheet_names_no_look_back_when_the_user_roles_file_sets_full_mode(self):
+        self.seed_rounds(1)
+        user_dir = Path(os.environ["XDG_CONFIG_HOME"]) / "pstack-t3"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        (user_dir / "roles.json").write_text(json.dumps({"mode": "full"}))
+        self.assertNotIn("run look-back", self.brigade("next", "evening"))
 
     def test_evening_sheet_names_no_look_back_when_no_round_was_recorded_since_the_last_run(self):
         self.seed_rounds(1)
@@ -145,6 +161,48 @@ class LookBackTest(BrigadeTest):
         self.assertEqual(second, f"L1 was recorded at {stamp}; nothing stamped")
         data = self.recorded_of()
         self.assertEqual(len(data["recorded"]["proposals"]), 1)
+
+    def test_a_second_evening_reuses_the_unrecorded_brief_so_a_repeat_record_stamps_once(self):
+        self.seed_rounds(1)
+        self.brigade("look-back")
+        self.brigade("look-back")
+        self.assertEqual(sorted(path.name for path in (self.at / "look-backs").iterdir()), ["L1.json", "L1.md"])
+        proposal = self.proposal_file("one.txt", "reports/D1-review-1.md")
+        first = self.brigade("look-back", "--record", proposal)
+        self.assertIn("recorded L1 at ", first)
+        stamp = self.recorded_of()["recorded"]["at"]
+        second = self.brigade("look-back", "--record", proposal)
+        self.assertEqual(second, f"L1 was recorded at {stamp}; nothing stamped")
+        self.assertEqual(len(self.recorded_of()["recorded"]["proposals"]), 1)
+
+    def test_a_store_holding_two_unrecorded_briefs_records_one_and_supersedes_the_other(self):
+        self.seed_rounds(1)
+        self.brigade("look-back")
+        first = json.loads((self.at / "look-backs" / "L1.json").read_text())
+        later = (datetime.fromisoformat(first["at"]) + timedelta(seconds=1)).isoformat()
+        second = dict(first, id="L2", at=later)
+        (self.at / "look-backs" / "L2.json").write_text(json.dumps(second, indent=2) + "\n")
+        (self.at / "look-backs" / "L2.md").write_text((self.at / "look-backs" / "L1.md").read_text())
+        self.brigade("look-back")
+        proposal = self.proposal_file("one.txt", "reports/D1-review-1.md")
+        self.brigade("look-back", "--record", proposal)
+        stamp = self.recorded_of("L2")["recorded"]["at"]
+        repeat = self.brigade("look-back", "--record", proposal)
+        self.assertEqual(len(self.recorded_of("L2")["recorded"]["proposals"]), 1)
+        self.assertIsNone(self.recorded_of("L1")["recorded"])
+        self.assertEqual(self.recorded_of("L1")["superseded"], "L2")
+        self.assertEqual(repeat, f"L2 was recorded at {stamp}; nothing stamped")
+
+    def test_an_empty_window_keeps_the_previous_boundary_so_the_next_brief_lists_no_round(self):
+        self.seed_rounds(1)
+        self.brigade("look-back")
+        self.brigade("look-back", "--record", "--none", "--reason", "nothing usable")
+        self.brigade("look-back")
+        text = (self.at / "look-backs" / "L2.md").read_text()
+        self.assertEqual(text.count("send-back"), 0)
+        self.assertEqual(self.recorded_of("L2")["through"], self.recorded_of("L1")["through"])
+        self.brigade("look-back", "--record", "--none", "--reason", "nothing usable")
+        self.assertNotIn("run look-back", self.brigade("next", "evening"))
 
     def test_record_refuses_a_report_path_that_escapes_reports_through_parent_segments_or_a_symlink(self):
         self.seed_rounds(1)

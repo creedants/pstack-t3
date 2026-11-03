@@ -65,7 +65,6 @@ def parse(text):
 
 
 def _evidence_problem(restaurant, value, threads):
-    """The problem with one evidence value, or None when this store holds what it names."""
     if value in threads:
         return None
     name = value[len("reports/"):] if value.startswith("reports/") else ""

@@ -6,7 +6,6 @@ NAME_RE = re.compile(r"L(\d+)\.json")
 
 
 def moment(text):
-    """The datetime an ISO stamp names, with a naive value read as UTC, or None when it does not parse."""
     try:
         found = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
     except (TypeError, ValueError):
@@ -65,19 +64,17 @@ def unreadable(restaurant):
     return sorted(bad)
 
 
-def newest(restaurant):
-    items = briefs(restaurant)
-    return items[-1] if items else None
+def outstanding(restaurant):
+    return [data for data in briefs(restaurant)
+            if data.get("recorded") is None and not data.get("superseded")]
 
 
 def target(restaurant):
-    items = briefs(restaurant)
-    if not items:
-        return None
-    for data in reversed(items):
-        if data.get("recorded") is None:
-            return data
-    return items[-1]
+    waiting = outstanding(restaurant)
+    if waiting:
+        return waiting[-1]
+    done = [data for data in briefs(restaurant) if not data.get("superseded")]
+    return done[-1] if done else None
 
 
 def last_recorded(restaurant):
@@ -97,6 +94,12 @@ def write(restaurant, data):
     relative = f"look-backs/{data['id']}.json"
     restaurant.write(relative, text)
     return restaurant.dir / relative
+
+
+def supersede(restaurant, kept):
+    for data in outstanding(restaurant):
+        if data["id"] != kept:
+            write(restaurant, dict(data, superseded=kept))
 
 
 def next_id(restaurant):

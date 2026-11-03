@@ -29,7 +29,7 @@ from brigade_lib._lookback.state import last_recorded
 from brigade_lib.items import attempt_starts
 from brigade_lib.reviews import item_verdicts, pass_check, round_count, round_debt, unrecorded_reviews
 from brigade_lib.shared import BrigadeError, MalformedTable, clean, slug
-from brigade_lib.store import MESSAGE_ONLY, MODES, ROUND_KIND, TABLES, reporting_of, round_budget_of, store_path
+from brigade_lib.store import MESSAGE_ONLY, MODES, ROUND_KIND, TABLES, reporting_of, roles_script, round_budget_of, store_path
 from brigade_lib.tickets import EVERY_ROW, label_words, priority_of, read_labels, request_files, ticket_age_of
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
 from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
@@ -205,6 +205,18 @@ def malformed_close(restaurant):
     return ""
 
 
+def effective_mode(restaurant, meta):
+    coordinator = meta.get("mode") if meta.get("mode") in MODES else None
+    try:
+        roles = runpy.run_path(str(roles_script()))
+        config = roles["merged_config"](meta.get("projectRoot") or os.getcwd())
+        mode = roles["effective_mode"](config, None, None, coordinator).mode
+    except Exception as error:
+        restaurant.warn(f"the roles file could not be read ({error}), so this wake reads light mode")
+        return "light"
+    return mode if mode in MODES else "light"
+
+
 def load_snapshot(restaurant, moment):
     """Read the store under the caller's lock. The caller already refused a bad owner."""
     read_labels(restaurant, EVERY_ROW)
@@ -250,7 +262,7 @@ def load_snapshot(restaurant, moment):
     pending = tuple((path.stem, path.read_text().strip()) for path in request_files(restaurant)[0])
     block = restaurant.owner_block() or ""
     trunk = _latest_trunk(restaurant.rows("log.tsv"))
-    mode = meta.get("mode") if meta.get("mode") in MODES else "light"
+    mode = effective_mode(restaurant, meta)
     recorded = last_recorded(restaurant)
     look_back_at = ((recorded or {}).get("recorded") or {}).get("at") or ""
     through = (recorded or {}).get("through") or ""
