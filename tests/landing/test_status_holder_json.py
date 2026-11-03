@@ -62,6 +62,9 @@ class StatusHolderJsonTest(LandingTestBase):
         self.queue_one(holder="docs/D7")
         sha = self.entry_fields(1, "sha")[0]
         self.assertEqual(self.land("status", "--holder", "docs/D7"), f"E1 queued (docs/D7, {sha[:12]})")
+        for value in (sha[:10], sha.upper()):
+            self.assertEqual(self.land("status", "--holder", "missing/", "--sha", value),
+                             f"no entries held by missing/ at {sha}")
 
     def test_a_multiline_note_stays_inside_its_one_entry(self):
         self.init()

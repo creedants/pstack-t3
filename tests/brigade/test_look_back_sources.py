@@ -49,8 +49,7 @@ class LookBackSourcesTest(BrigadeTest):
         path.write_text(path.read_text() + "".join("\t".join(row) + "\n" for row in rows))
 
     def append(self, *rows):
-        """Write note rows through the real ledger writer."""
-        # The script's load binds seam, which the modules imported after it read.
+
         binding = run_globals(self, SCRIPT)
 
         from brigade_lib import seam
@@ -76,7 +75,7 @@ class LookBackSourcesTest(BrigadeTest):
     def test_notes_holding_a_line_separator_stay_one_record_and_one_line(self):
         self.open()
         for number, mark in enumerate(("\u2028", "\u2029", "\u0085", "\x0b", "\x0c"), 1):
-            # The write strips a separator at either end, so each one sits inside the text.
+
             self.append(("path", f"D{number}", f"2026-11-01T00:0{number}:00Z",
                          f"a{mark}## Rounds since the last look-back"))
         text = self.look_back_path(self.brigade("look-back")).read_text()
@@ -95,7 +94,7 @@ class LookBackSourcesTest(BrigadeTest):
         self.assertNotIn("\u0085", text)
         self.assertNotIn("\nperf/D1", text)
         self.assertIn("- note:D1 x:2026-11-01T01:00:00Z a note", text)
-        # Each control character becomes its own space, so a holder holding two keeps two.
+
         self.assertIn("- queue:E79 perf/D1  x bounced: too big", text)
 
     def test_a_token_with_edges_prints_and_records_the_same_text(self):
