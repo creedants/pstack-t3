@@ -146,7 +146,7 @@ def _gh_runs(repo, trunk, owner_repo):
     try:
         result = subprocess.run(
             ["gh", "run", "list", "--repo", "github.com/" + owner_repo, "--branch", trunk, "--limit", "100",
-             "--json", "conclusion,status,headSha,createdAt,url,workflowName"],
+             "--json", "conclusion,status,headSha,createdAt,url,workflowName,event"],
             cwd=str(repo), capture_output=True, text=True, timeout=20)
     except FileNotFoundError:
         if not Path(str(repo)).is_dir():
@@ -182,11 +182,68 @@ def _is_valid_run(run):
     conclusion = run.get("conclusion")
     if conclusion is not None and not isinstance(conclusion, str):
         return False
+    event = run.get("event")
+    if event is not None and not isinstance(event, str):
+        return False
     for key in ("headSha", "createdAt", "url", "workflowName"):
         value = run.get(key)
         if not isinstance(value, str) or not value:
             return False
     return True
+
+
+def _is_dynamic(run):
+    """True when one gh run row is an automatic GitHub run."""
+    return isinstance(run, dict) and run.get("event") == "dynamic"
+
+
+def _judged_runs(runs):
+    """The judged completed run for each workflow name."""
+    judged = {}
+    seen = set()
+    for run in runs:
+        if not _is_valid_run(run):
+            continue
+        if _is_dynamic(run):
+            continue
+        workflow = run.get("workflowName")
+        newer = workflow in seen
+        seen.add(workflow)
+        if workflow in judged:
+            continue
+        if not _is_completed(run):
+            continue
+        if (run.get("conclusion") or "") == "cancelled" and newer:
+            continue
+        judged[workflow] = run
+    return judged
+
+
+def _failure_since(runs, workflow):
+    """The failure streak start for one workflow name."""
+    since = ""
+    for run in runs:
+        if not _is_valid_run(run):
+            continue
+        if _is_dynamic(run):
+            continue
+        if run.get("workflowName") != workflow:
+            continue
+        if not _is_completed(run):
+            continue
+        conclusion = run.get("conclusion") or ""
+        if conclusion == "cancelled":
+            continue
+        if conclusion == "failure":
+            if run.get("createdAt"):
+                since = run.get("createdAt")
+            continue
+        return since
+    if len(runs) >= 100:
+        oldest = runs[-1].get("createdAt") if isinstance(runs[-1], dict) else ""
+        if oldest:
+            return "before %s" % oldest
+    return since
 
 
 def _latest_trunk(rows):
@@ -261,49 +318,39 @@ def _observe_trunk(project_root, latest):
             if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
                 return line, None
             return line, (trunk, "unseen", reason)
-    completed = None
-    for run in runs:
-        if _is_completed(run):
-            completed = run
-            break
-    if completed is None:
+    judged = _judged_runs(runs)
+    if not judged:
         reason = "no completed run in the last 100 runs"
         line = "cannot see trunk CI: %s" % reason
         if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
             return line, None
         return line, (trunk, "unseen", reason)
-    conclusion = completed.get("conclusion") or ""
-    sha = completed.get("headSha") or ""
-    if conclusion == "failure":
-        newest_workflow = completed.get("workflowName") or ""
-        newest_url = completed.get("url") or ""
-        since = completed.get("createdAt") or ""
-        for run in runs:
-            if not _is_completed(run):
-                continue
-            if (run.get("conclusion") or "") != "failure":
-                break
-            if run.get("createdAt"):
-                since = run.get("createdAt")
-        else:
-            if len(runs) >= 100:
-                oldest = runs[-1].get("createdAt") or ""
-                if oldest:
-                    since = "before %s" % oldest
+    failures = [run for run in judged.values() if (run.get("conclusion") or "") == "failure"]
+    if failures:
+        newest = sorted(failures, key=lambda run: (run.get("createdAt") or "", run.get("workflowName") or ""))[-1]
+        newest_workflow = newest.get("workflowName") or ""
+        newest_url = newest.get("url") or ""
+        sha = newest.get("headSha") or ""
+        since = _failure_since(runs, newest_workflow)
         line = "trunk CI failing since %s: %s %s" % (since, newest_workflow, newest_url)
         note = json.dumps({"sha": sha, "workflow": newest_workflow, "url": newest_url, "since": since})
         if latest == {"id": trunk, "state": "red", "sha": sha,
                       "workflow": newest_workflow, "url": newest_url, "since": since}:
             return line, None
         return line, (trunk, "red", note)
-    if conclusion == "success":
-        if latest and latest.get("id") == trunk and latest.get("state") == "green" and latest.get("sha") == sha:
-            return None, None
-        return None, (trunk, "green", sha)
-    reason = "conclusion %s" % conclusion if conclusion else "no conclusion"
-    line = "cannot see trunk CI: %s" % reason
-    if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
-        return line, None
-    return line, (trunk, "unseen", reason)
+    odd = [run for run in judged.values() if (run.get("conclusion") or "") != "success"]
+    if odd:
+        newest = sorted(odd, key=lambda run: (run.get("createdAt") or "", run.get("workflowName") or ""))[-1]
+        conclusion = newest.get("conclusion") or ""
+        reason = "conclusion %s" % conclusion if conclusion else "no conclusion"
+        line = "cannot see trunk CI: %s" % reason
+        if latest and latest.get("id") == trunk and latest.get("state") == "unseen" and latest.get("reason") == reason:
+            return line, None
+        return line, (trunk, "unseen", reason)
+    newest = sorted(judged.values(), key=lambda run: (run.get("createdAt") or "", run.get("workflowName") or ""))[-1]
+    sha = newest.get("headSha") or ""
+    if latest and latest.get("id") == trunk and latest.get("state") == "green" and latest.get("sha") == sha:
+        return None, None
+    return None, (trunk, "green", sha)
 
 
