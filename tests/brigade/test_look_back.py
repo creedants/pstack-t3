@@ -55,7 +55,6 @@ class LookBackTest(BrigadeTest):
         run_globals(self, SCRIPT)["LAND"] = str(path)
 
     def fake_brigade(self, *args, ok=True):
-        """Run one command in this process, so it reads the fake land.py this test installed."""
         argv = ["--store", str(self.store), "--at", str(self.at), *_owner_words(self.at), *args]
         outcome = call_in_process(self, SCRIPT, [str(arg) for arg in argv])
         self.assertEqual(outcome.code == 0, ok, outcome.stdout_text() + outcome.stderr_text())
