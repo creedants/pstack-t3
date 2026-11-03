@@ -277,3 +277,38 @@ class WatchTest(BrigadeTest, _Helpers):
             out = self.brigade("watch")
         self.assertNotIn("trunk CI", out)
         self._assert_no_red_cues()
+    def test_a_cancelled_ci_run_passes_over_to_the_success_under_it_and_stays_green(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "in_progress", "conclusion": "", "headSha": "ddd444",
+             "createdAt": "2026-11-03T16:10:00Z", "url": "https://example.com/run/ci-3",
+             "workflowName": "ci", "event": "push"},
+            {"status": "completed", "conclusion": "cancelled", "headSha": "ccc333",
+             "createdAt": "2026-11-03T16:05:00Z", "url": "https://example.com/run/ci-2",
+             "workflowName": "ci", "event": "push"},
+            {"status": "completed", "conclusion": "success", "headSha": "bbb222",
+             "createdAt": "2026-11-03T16:00:00Z", "url": "https://example.com/run/ci-1",
+             "workflowName": "ci", "event": "push"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertNotIn("trunk CI", out)
+        rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual([(row["id"], row["state"], row["note"]) for row in rows],
+                         [("main", "green", "bbb222")])
+    def test_a_cancelled_newest_ci_run_with_nothing_newer_reports_cannot_see_cancelled(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "completed", "conclusion": "cancelled", "headSha": "ccc333",
+             "createdAt": "2026-11-03T16:05:00Z", "url": "https://example.com/run/ci-2",
+             "workflowName": "ci", "event": "push"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("cannot see trunk CI: conclusion cancelled", out)
+        unseen = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual((unseen[-1]["state"], unseen[-1]["note"]), ("unseen", "conclusion cancelled"))
