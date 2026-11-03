@@ -46,7 +46,6 @@ CHECK = ROOT / "verification" / "landing-queue" / "check.py"
 
 
 def load_check():
-    """check.py under a hyphenated directory, loaded from its path so it needs no package."""
     spec = importlib.util.spec_from_file_location("landing_queue_check", CHECK)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -54,7 +53,6 @@ def load_check():
 
 
 def trace_output(states=12):
-    """TLC output for an invariant violation whose trace of `states` states is longer than 4,000 characters."""
     lines = [
         "Error: Invariant NoDoubleLanding is violated.",
         "Error: The behavior up to this point is:",
@@ -92,14 +90,12 @@ def trace_output(states=12):
 
 
 def parse_failure_output():
-    """TLC output that answers with a parse error and never prints an `Error:` line."""
     lines = ["***Parse Error***", "Encountered end of file while parsing module LandingQueue."]
     lines.extend(f"line {step}: Parse Error" for step in range(200))
     return "\n".join(lines) + "\n"
 
 
 class FakeRun:
-    """A stand-in for check.run that answers every config with one canned output."""
 
     def __init__(self, output):
         self.output = output
@@ -112,7 +108,6 @@ class FakeRun:
 
 class LandingQueueCheckOutputTest(unittest.TestCase):
     def check(self, output, config_text):
-        """Run check.main over one config with fake tools and a fake TLC, returning its exit code and printed text."""
         module = load_check()
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
