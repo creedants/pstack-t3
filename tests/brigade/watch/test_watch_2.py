@@ -202,3 +202,88 @@ class WatchTest(BrigadeTest, _Helpers):
             again = self.brigade("watch")
         self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/2", again)
         self.assertEqual(len([row for row in self.log_rows() if row["kind"] == "trunk"]), 1)
+    def test_a_failing_ci_run_beats_a_newer_green_outsider_run_and_a_newer_green_dependency_row(self):
+        self.started()
+        self._remote_trunk()
+        from pathlib import Path as _Path
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "completed", "conclusion": "success", "headSha": "ddd444",
+             "createdAt": "2026-11-03T15:49:10Z", "url": "https://example.com/run/dependency",
+             "workflowName": "Dependency Graph", "event": "dynamic"},
+            {"status": "completed", "conclusion": "success", "headSha": "ddd444",
+             "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/outsider",
+             "workflowName": "outsider", "event": "push"},
+            {"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+             "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci",
+             "workflowName": "ci", "event": "push"}])
+        args_file = _Path(self.temporary.name) / "gh-args-event.txt"
+        bindir = self._gh_dir_recording(payload, args_file)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since 2026-11-03T15:49:05Z: ci https://example.com/run/ci", out)
+        self.assertNotIn("cannot see trunk CI", out)
+        self.assertIn("conclusion,status,headSha,createdAt,url,workflowName,event", args_file.read_text())
+        reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(len(reds), 1)
+        data = json.loads(reds[0]["note"])
+        self.assertEqual((reds[0]["id"], reds[0]["state"], data["sha"], data["workflow"], data["url"]),
+                         ("main", "red", "aaa111", "ci", "https://example.com/run/ci"))
+    def test_a_queued_ci_run_over_a_completed_failed_ci_run_still_reports_the_failure(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "queued", "conclusion": "", "headSha": "ddd444",
+             "createdAt": "2026-11-03T16:00:00Z", "url": "https://example.com/run/ci-2",
+             "workflowName": "ci", "event": "push"},
+            {"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+             "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci-1",
+             "workflowName": "ci", "event": "push"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since 2026-11-03T15:49:05Z: ci https://example.com/run/ci-1", out)
+    def test_a_cancelled_ci_run_passes_over_to_the_failure_under_it_and_extends_the_streak(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "in_progress", "conclusion": "", "headSha": "ddd444",
+             "createdAt": "2026-11-03T16:10:00Z", "url": "https://example.com/run/ci-3",
+             "workflowName": "ci", "event": "push"},
+            {"status": "completed", "conclusion": "cancelled", "headSha": "ccc333",
+             "createdAt": "2026-11-03T16:05:00Z", "url": "https://example.com/run/ci-2",
+             "workflowName": "ci", "event": "push"},
+            {"status": "completed", "conclusion": "failure", "headSha": "bbb222",
+             "createdAt": "2026-11-03T16:00:00Z", "url": "https://example.com/run/ci-1b",
+             "workflowName": "ci", "event": "push"},
+            {"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+             "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci-1",
+             "workflowName": "ci", "event": "push"},
+            {"status": "completed", "conclusion": "success", "headSha": "zzz000",
+             "createdAt": "2026-11-03T15:00:00Z", "url": "https://example.com/run/ci-0",
+             "workflowName": "ci", "event": "push"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since 2026-11-03T15:49:05Z: ci https://example.com/run/ci-1b", out)
+        reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        data = json.loads(reds[-1]["note"])
+        self.assertEqual((data["sha"], data["since"]), ("bbb222", "2026-11-03T15:49:05Z"))
+    def test_the_newest_failing_workflow_is_the_one_named(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "completed", "conclusion": "failure", "headSha": "bbb222",
+             "createdAt": "2026-11-03T16:00:00Z", "url": "https://example.com/run/outsider",
+             "workflowName": "outsider", "event": "push"},
+            {"status": "completed", "conclusion": "failure", "headSha": "aaa111",
+             "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci",
+             "workflowName": "ci", "event": "push"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("trunk CI failing since 2026-11-03T16:00:00Z: outsider https://example.com/run/outsider", out)
+        self.assertNotIn("ci https://example.com/run/ci", out)
