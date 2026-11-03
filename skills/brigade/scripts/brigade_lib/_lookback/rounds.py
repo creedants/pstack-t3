@@ -2,6 +2,29 @@ from brigade_lib._lookback.state import moment
 from brigade_lib.store import WORKER_ROLES
 
 ROUND_CAP = 50
+RANKS = {"send-back": 0, "blocked": 0, "pass-with-edits": 1, "pass": 2}
+RESULTS = ("send-back", "blocked", "pass-with-edits", "pass")
+
+
+def rank(verdict):
+    """The result rank. An unknown result sorts with what went wrong, so a wrong result is never hidden."""
+    return RANKS.get(verdict, 0)
+
+
+def rank_rounds(rounds, cap):
+    """The first cap rounds by rank then newest first, and the count of each result left out."""
+    ordered = sorted(rounds, key=lambda item: moment(item["at"]), reverse=True)
+    ordered.sort(key=lambda item: rank(item["verdict"]))
+    counts = {}
+    for item in ordered[cap:]:
+        verdict = item["verdict"]
+        counts[verdict] = counts.get(verdict, 0) + 1
+    left_out = {}
+    for result in RESULTS:
+        if result in counts:
+            left_out[result] = counts.pop(result)
+    left_out.update(counts)
+    return ordered[:cap], left_out
 
 
 def _worker_thread(rows, dish, at):

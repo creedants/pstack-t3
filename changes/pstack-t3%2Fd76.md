@@ -1,0 +1,4 @@
+- kind upkeep
+- Made the weekly look-back keep every round that did not pass before the newest passes, and say how many of each result it left out
+- Added queue refusals, failed main runs, and set-aside notes to the brief, each with an evidence token a proposal can cite
+- Moved the queue read outside the store lock and made `through` the newest moment any source offered

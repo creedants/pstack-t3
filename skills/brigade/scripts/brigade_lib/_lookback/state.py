@@ -69,6 +69,19 @@ def outstanding(restaurant):
             if data.get("recorded") is None and not data.get("superseded")]
 
 
+def listed_entries(restaurant, ident):
+    """The queue entry ids an earlier recorded look-back listed."""
+    seen = set()
+    for data in briefs(restaurant):
+        if data.get("id") == ident:
+            continue
+        if not isinstance(data.get("recorded"), dict):
+            continue
+        for value in data.get("queue") or []:
+            seen.add(value)
+    return seen
+
+
 def target(restaurant):
     waiting = outstanding(restaurant)
     if waiting:

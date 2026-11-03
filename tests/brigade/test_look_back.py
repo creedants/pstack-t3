@@ -17,13 +17,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .support import BrigadeTest, setUpModule
-from ._support.names import CLAUDE, CODEX
+from ._support.inprocess import run_globals
+from ._support.names import CLAUDE, CODEX, SCRIPT
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "t3/added/brigade/scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "t3/added/brigade/scripts"))
 
 MARKER = "the quick brown table column was never checked 9zq"
+RED = json.dumps({"sha": "abc", "workflow": "CI", "url": "https://x.test/1", "since": "s1"})
+PROPOSAL = "category: check-gap\nfix: check\nevidence: {}\nchange: Run the tests."
 
 
 class LookBackTest(BrigadeTest):
@@ -44,6 +47,28 @@ class LookBackTest(BrigadeTest):
         lines = out.splitlines()
         self.assertEqual(len(lines), 2)
         return Path(lines[1])
+
+    def fake_land(self, text):
+        path = Path(self.temporary.name) / "fake-land.py"
+        path.write_text(f"print({text!r})\n")
+        run_globals(self, SCRIPT)["LAND"] = str(path)
+
+    def append_log(self, *rows):
+        path = self.at / "log.tsv"
+        path.write_text(path.read_text() + "".join("\t".join(row) + "\n" for row in rows))
+
+    def write_notes(self, *rows):
+        body = "".join(f"\t{item}\t{at}\t{text}\n" for item, at, text in rows)
+        (self.at / "notes.tsv").write_text("path\titem\tat\ttext\n" + body)
+
+    def write_pass(self, *rows):
+        path = self.at / "pass.tsv"
+        path.write_text(path.read_text() + "".join(
+            f"{at}\tD1\t\ts{n}\t{v}\t{CLAUDE}\t{CODEX}\tn\t\t\t{reason}\n"
+            for n, (at, v, reason) in enumerate(rows)))
+
+    def record_none(self, why="nothing"):
+        return self.brigade("look-back", "--record", "--none", "--reason", why)
 
     def proposal_file(self, name, evidence):
         path = Path(self.temporary.name) / name
@@ -114,21 +139,13 @@ class LookBackTest(BrigadeTest):
     def test_brief_names_the_round_cap_when_more_rounds_exist_than_it_lists(self):
         self.seed_rounds(1)
         path = self.at / "pass.tsv"
-        lines = path.read_text().splitlines()
-        base = len(lines)
-        extra = []
-        for number in range(60):
-            stamp = f"2026-11-0{1 + (number % 2)}T10:{number % 60:02d}:00+00:00"
-            extra.append(f"{stamp}\tD1\t\tcap{number}\tsend-back\t{CLAUDE}\t{CODEX}\tnote\t\t\tother")
-        path.write_text("\n".join(lines + extra) + "\n")
-        out = self.brigade("look-back")
-        text = self.look_back_path(out).read_text()
-        self.assertIn(
-            "The newest 50 of 61 rounds are listed. The other 11 are older and are not repeated here.",
-            text,
-        )
+        extra = "".join(f"2026-11-0{1 + n % 2}T10:{n % 60:02d}:00+00:00\tD1\t\tc{n}\tsend-back\t{CLAUDE}\t{CODEX}\tn\t\t\tother\n"
+                        for n in range(60))
+        path.write_text(path.read_text() + extra)
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertIn("11 rounds are left out: 11 send-back.", text)
+        self.assertIn("More than 50 rounds that went wrong drop the oldest", text)
         self.assertEqual(text.count("reason other"), 50)
-        self.assertEqual(base, 2)
 
     def test_record_refuses_a_report_file_that_does_not_exist_and_stamps_nothing(self):
         self.seed_rounds(1)
@@ -255,3 +272,108 @@ class LookBackTest(BrigadeTest):
         out = self.brigade("look-back")
         self.assertEqual(out, "look-back is off; run set --look-back <days> to turn it on")
         self.assertEqual(self.store_files(), before)
+
+    def test_past_the_cap_wrong_results_come_first(self):
+        self.open()
+        kinds = ["pass"] * 3 + ["pass-with-edits"] * 2 + ["blocked", "send-back", "send-back"]
+        self.write_pass(*[(f"2026-11-03T11:{n:02d}:00Z", v, "other" if v == "send-back" else "")
+                          for n, v in enumerate(kinds)],
+                        *[(f"2026-11-0{1 + n % 2}T10:{n % 60:02d}:00Z", "send-back", "other")
+                          for n in range(60)])
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        first = next(line for line in text.splitlines() if line.startswith("- "))
+        self.assertTrue(first.startswith("- 2026-11-03T11:07:00Z D1 send-back,"), first)
+        self.assertIn("18 rounds are left out: 13 send-back, 2 pass-with-edits, 3 pass.", text)
+        self.assertEqual(text.count("reason other"), 49)
+
+    def test_through_is_the_newest_moment_any_source_offers(self):
+        self.open()
+        self.write_pass(("2026-11-01T00:00:00Z", "pass", ""))
+        self.write_notes(("D1", "2026-11-01T00:02:00Z", "a note"))
+        self.brigade("look-back")
+        self.record_none()
+        self.assertEqual(self.recorded_of()["through"], "2026-11-01T00:02:00Z")
+        path = self.at / "pass.tsv"
+        path.write_text(path.read_text() + f"2026-11-01T00:01:00Z\tD1\t\ts9\tpass\t{CLAUDE}\t{CODEX}\tn\t\t\t\n")
+        self.brigade("look-back")
+        self.assertIn("No review round is recorded", (self.at / "look-backs" / "L2.md").read_text())
+
+    def test_refusals_list_one_prefix_and_once(self):
+        self.open()
+        self.fake_land("E79 bounced (perf/D1, abc123def456): too big\n"
+                       "E80 bounced (other/D9, abc123def456): elsewhere")
+        first = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertIn("- queue:E79 perf/D1 bounced: too big", first)
+        self.assertNotIn("other/D9", first)
+        self.record_none()
+        self.brigade("look-back")
+        self.assertNotIn("queue:E79", (self.at / "look-backs" / "L2.md").read_text())
+
+    def test_a_lower_id_bounce_is_still_listed_next_time(self):
+        self.open()
+        self.fake_land("E79 bounced (perf/D1, abc123def456): one")
+        self.brigade("look-back")
+        self.record_none()
+        self.fake_land("E79 bounced (perf/D1, abc123def456): one\nE78 bounced (perf/D2, abc123def456): two")
+        self.brigade("look-back")
+        text = (self.at / "look-backs" / "L2.md").read_text()
+        self.assertIn("- queue:E78 perf/D2 bounced: two", text)
+        self.assertNotIn("queue:E79", text)
+
+    def test_a_failed_main_run_prints_once_per_workflow_and_since(self):
+        self.open()
+        self.append_log(
+            ("2026-11-02T01:00:00Z", "trunk", "main", "red",
+             json.dumps({"sha": "abc", "workflow": "CI", "url": "https://x.test/2", "since": "s1"})),
+            ("2026-11-02T00:00:00Z", "trunk", "main", "red", RED),
+            ("2026-11-02T02:00:00Z", "trunk", "main", "red", "not json"))
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertEqual(text.count("- run:https://x.test/2 red at abc, workflow CI, since s1"), 1)
+        self.assertNotIn("x.test/1", text)
+        self.assertIn("- a red run at 2026-11-02T02:00:00Z holds a note that is not JSON: not json", text)
+
+    def test_notes_print_newest_first_and_stop_at_50(self):
+        self.open()
+        self.write_notes(*[(f"D{n}", f"2026-11-01T00:{n:02d}:00Z", "x" * 250 if n == 50 else f"t{n}")
+                           for n in range(51)])
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertIn("The newest 50 of 51 notes are listed.", text)
+        self.assertIn("- note:D50:2026-11-01T00:50:00Z " + "x" * 200 + "\n", text)
+        self.assertNotIn("note:D0:", text)
+        self.assertLess(text.index("note:D50:"), text.index("note:D1:"))
+
+    def test_text_written_by_others_stays_on_one_line(self):
+        self.open()
+        self.fake_land("E79 bounced (perf/D1, abc123def456): \tkey: value")
+        self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red",
+                         json.dumps({"workflow": "\n## Rounds since the last look-back\tkey: value"})))
+        self.write_notes(("D1", "2026-11-01T01:00:00Z", "key: value"))
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertEqual(text.count("\n## Rounds since the last look-back"), 1)
+        self.assertNotIn("\nkey:", text)
+
+    def test_each_new_evidence_token_is_accepted(self):
+        self.open()
+        self.fake_land("E79 bounced (perf/D1, abc123def456): too big")
+        self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red", RED))
+        self.write_notes(("D1", "2026-11-01T01:00:00Z", "a note"))
+        self.brigade("look-back")
+        path = Path(self.temporary.name) / "tokens.txt"
+        path.write_text("\n\n".join(PROPOSAL.format(t) for t in
+                                    ("queue:E79", "run:https://x.test/1", "note:D1:2026-11-01T01:00:00Z")))
+        self.assertIn("3 proposals", self.brigade("look-back", "--record", str(path)))
+        self.brigade("look-back")
+        path.write_text(PROPOSAL.format("queue:E79"))
+        self.assertIn("is not a file this store holds", self.brigade("look-back", "--record", str(path), ok=False))
+
+    def test_no_landing_contract_still_writes_the_brief(self):
+        self.open()
+        self.write_pass(("2026-11-01T02:00:00Z", "send-back", "other"))
+        self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red", RED))
+        self.write_notes(("D1", "2026-11-01T01:00:00Z", "a note"))
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertIn("The queue could not be read, so no refusal is listed here.", text)
+        for line in ("2026-11-01T02:00:00Z D1 send-back, reason other",
+                     "- run:https://x.test/1 red at abc",
+                     "- note:D1:2026-11-01T01:00:00Z a note"):
+            self.assertIn(line, text)
