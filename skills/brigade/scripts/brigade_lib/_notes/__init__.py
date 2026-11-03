@@ -51,7 +51,7 @@ def read_notes(restaurant):
     path = restaurant.dir / LEDGER
     if not path.is_file():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
+    lines = path.read_text(encoding="utf-8").split("\n")
     rows = []
     for number, line in enumerate(lines, 1):
         if not line.strip():
