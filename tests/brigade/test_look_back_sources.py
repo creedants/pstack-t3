@@ -76,8 +76,9 @@ class LookBackSourcesTest(BrigadeTest):
     def test_notes_holding_a_line_separator_stay_one_record_and_one_line(self):
         self.open()
         for number, mark in enumerate(("\u2028", "\u2029", "\u0085", "\x0b", "\x0c"), 1):
+            # The write strips a separator at either end, so each one sits inside the text.
             self.append(("path", f"D{number}", f"2026-11-01T00:0{number}:00Z",
-                         mark + "## Rounds since the last look-back"))
+                         f"a{mark}## Rounds since the last look-back"))
         text = self.look_back_path(self.brigade("look-back")).read_text()
         self.assertEqual(text.count("\n## Rounds since the last look-back"), 1)
         for mark in ("\u2028", "\u2029", "\u0085", "\x0b", "\x0c"):
