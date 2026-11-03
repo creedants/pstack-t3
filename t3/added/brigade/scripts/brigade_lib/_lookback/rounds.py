@@ -7,7 +7,6 @@ RESULTS = ("send-back", "blocked", "pass-with-edits", "pass")
 
 
 def rank(verdict):
-    """The result rank. An unknown result sorts with what went wrong, so a wrong result is never hidden."""
     return RANKS.get(verdict, 0)
 
 
