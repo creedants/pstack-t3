@@ -142,7 +142,7 @@ def main(argv: list[str]) -> int:
             verdict = "holds" if ok else f"BREAKS {(broken or ['error'])[0]}"
         if not ok:
             failures += 1
-            print(f"\n--- {config.relative_to(HERE)}: {verdict}\n{output.strip()[-4000:]}\n")
+            print(f"\n--- {config.relative_to(HERE)}: {verdict}\n{output.strip()}\n")
         name = str(config.relative_to(HERE))
         print(f"{name:<42} {verdict:<28} {generated:>9} {distinct:>9} {deepest:>7} {seconds:>8.1f}")
     print()
