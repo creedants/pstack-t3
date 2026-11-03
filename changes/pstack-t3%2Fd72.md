@@ -1,0 +1,5 @@
+- kind study
+- A TLA+ model under `verification/landing-queue/` covers the landing queue and its path leases, with one action per transaction or external call and a header map from each action to the function it stands for
+- Nine invariants state the lease-overlap, owner-floor, one-integrator, one-trunk-writer, checked-head, crash-recovery, and widen-coverage promises, each with the harm it prevents
+- Eleven broken variants each remove or reorder one check and each fail a named invariant, and two of them replay pull request #474 and the widen fold behind pull request #555
+- A project-local skill at `.claude/skills/verify-landing-queue/SKILL.md` says when a change touches the verified code, runs the check with one command through the land slot, tells a real bug from a modelling error, and records the sync commit
