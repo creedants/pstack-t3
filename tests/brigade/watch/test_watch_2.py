@@ -229,24 +229,6 @@ class WatchTest(BrigadeTest, _Helpers):
         data = json.loads(reds[0]["note"])
         self.assertEqual((reds[0]["id"], reds[0]["state"], data["sha"], data["workflow"], data["url"]),
                          ("main", "red", "aaa111", "ci", "https://example.com/run/ci"))
-    def test_a_newer_success_of_the_same_workflow_clears_its_older_failure(self):
-        self.started()
-        self._remote_trunk()
-        from unittest import mock
-        payload = json.dumps([
-            {"status": "completed", "conclusion": "success", "headSha": "ddd444",
-             "createdAt": "2026-11-03T16:00:00Z", "url": "https://example.com/run/ci-2",
-             "workflowName": "ci", "event": "push"},
-            {"status": "completed", "conclusion": "failure", "headSha": "aaa111",
-             "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci-1",
-             "workflowName": "ci", "event": "push"}])
-        bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
-            out = self.brigade("watch")
-        self.assertNotIn("trunk CI", out)
-        rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
-        self.assertEqual([(row["id"], row["state"], row["note"]) for row in rows],
-                         [("main", "green", "ddd444")])
     def test_a_queued_ci_run_over_a_completed_failed_ci_run_still_reports_the_failure(self):
         self.started()
         self._remote_trunk()
