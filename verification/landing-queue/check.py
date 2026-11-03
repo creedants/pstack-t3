@@ -7,6 +7,9 @@ EXPECT line names. Exits 0 when every run answered as expected, 1 otherwise.
 
 One command. No arguments. Run it through the slot so a model check never
 crowds out a build, as the landing skill's Local command capacity says.
+
+TLC keeps its state in a new directory under ~/.cache/pstack-t3/scratch for each
+run. The run deletes that directory when TLC exits.
 """
 
 from __future__ import annotations
@@ -33,13 +36,15 @@ TLC_TOOL = (
 )
 JAVA_TOOL = "java@temurin-25"
 
-# TLC's own defaults for a repeatable run: one worker, no fingerprint
-# collisions, and a final liveness check. Deadlock is off because a lease slot
-# has no way back to `free`: every run ends with nothing left to take.
+# Use one worker and fingerprint polynomial index 0.
+# Fingerprinting does not eliminate collision risk. These configs check
+# invariants, not temporal liveness properties. Disable deadlock checking
+# because the bound in BoundNext leaves no enabled action at Depth.
 FLAGS = ["-workers", "1", "-fp", "0", "-lncheck", "final", "-nowarning", "-deadlock"]
 
 VIOLATED = re.compile(r"^Error: Invariant (\w+) is violated\.", re.MULTILINE)
 STATES = re.compile(r"(\d+) states generated, (\d+) distinct states found")
+LEVELS = re.compile(r"The depth of the complete state graph search is (\d+)\.")
 
 
 def mise(*args: str) -> subprocess.CompletedProcess[str]:
@@ -80,12 +85,17 @@ def expected(config: Path) -> str:
 
 def run(java: str, jar: str, config: Path) -> tuple[int, str, float]:
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix="landing-queue-tlc-") as meta:
+    scratch = Path(os.path.expanduser("~")) / ".cache" / "pstack-t3" / "scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    meta = tempfile.mkdtemp(prefix="landing-queue-tlc-", dir=scratch)
+    try:
         result = subprocess.run(
             [java, "-XX:+UseParallelGC", "-cp", jar, "tlc2.TLC", *FLAGS,
              "-metadir", meta, "-config", str(config), SPEC],
             cwd=HERE, capture_output=True, text=True,
         )
+    finally:
+        shutil.rmtree(meta)
     return result.returncode, result.stdout + result.stderr, time.monotonic() - started
 
 
@@ -93,7 +103,7 @@ def main() -> int:
     java, jar = tools()
     configs = sorted(HERE.glob("*.cfg")) + sorted((HERE / "variants").glob("*.cfg"))
     failures = 0
-    print(f"{'config':<34} {'result':<10} {'states':>9} {'distinct':>9} {'seconds':>8}")
+    print(f"{'config':<42} {'result':<28} {'states':>9} {'distinct':>9} {'deepest':>7} {'seconds':>8}")
     for config in configs:
         code, output, seconds = run(java, jar, config)
         wanted = expected(config)
@@ -101,6 +111,9 @@ def main() -> int:
         counts = STATES.search(output)
         generated = counts.group(1) if counts else "?"
         distinct = counts.group(2) if counts else "?"
+        # TLC counts the initial state as level 1. On a violation this is how far the search had got.
+        levels = LEVELS.search(output)
+        deepest = int(levels.group(1)) - 1 if levels else "-"
         if wanted:
             ok = wanted in broken
             verdict = f"breaks {wanted}" if ok else f"MISSED {wanted}"
@@ -111,7 +124,7 @@ def main() -> int:
             failures += 1
             print(f"\n--- {config.relative_to(HERE)}: {verdict}\n{output.strip()[-4000:]}\n")
         name = str(config.relative_to(HERE))
-        print(f"{name:<34} {verdict:<10} {generated:>9} {distinct:>9} {seconds:>8.1f}")
+        print(f"{name:<42} {verdict:<28} {generated:>9} {distinct:>9} {deepest:>7} {seconds:>8.1f}")
     print()
     if failures:
         print(f"{failures} of {len(configs)} runs answered differently than the model says.")
