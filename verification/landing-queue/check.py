@@ -5,15 +5,18 @@ Runs every config beside this file, then every config under variants/. A base
 config must hold every invariant. A variant must report the invariant its
 EXPECT line names. Exits 0 when every run answered as expected, 1 otherwise.
 
-One command. No arguments. Run it through the slot so a model check never
-crowds out a build, as the landing skill's Local command capacity says.
+Run it through the slot so a model check never crowds out a build, as the
+landing skill's Local command capacity says.
 
-TLC keeps its state in a new directory under ~/.cache/pstack-t3/scratch for each
-run. The run deletes that directory when TLC exits.
+--scratch-parent is required and has no default. Each run keeps TLC's state in
+a new directory under that parent and deletes that directory when TLC exits.
+The parent is the machine's scratch directory, the one a brief or the
+restaurant's scratchDir names.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import shutil
@@ -83,11 +86,17 @@ def expected(config: Path) -> str:
     return ""
 
 
-def run(java: str, jar: str, config: Path) -> tuple[int, str, float]:
+def scratch_parent(text: str) -> Path:
+    """The directory the run keeps TLC's state under, or a refusal naming the argument."""
+    parent = Path(text)
+    if not parent.is_dir():
+        raise SystemExit(f"--scratch-parent must name an existing directory, got {text!r}")
+    return parent
+
+
+def run(java: str, jar: str, config: Path, parent: Path) -> tuple[int, str, float]:
     started = time.monotonic()
-    scratch = Path(os.path.expanduser("~")) / ".cache" / "pstack-t3" / "scratch"
-    scratch.mkdir(parents=True, exist_ok=True)
-    meta = tempfile.mkdtemp(prefix="landing-queue-tlc-", dir=scratch)
+    meta = Path(tempfile.mkdtemp(prefix="landing-queue-tlc-", dir=parent))
     try:
         result = subprocess.run(
             [java, "-XX:+UseParallelGC", "-cp", jar, "tlc2.TLC", *FLAGS,
@@ -99,13 +108,24 @@ def run(java: str, jar: str, config: Path) -> tuple[int, str, float]:
     return result.returncode, result.stdout + result.stderr, time.monotonic() - started
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Check the landing queue's TLA+ model with TLC.",
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--scratch-parent",
+        required=True,
+        metavar="<dir>",
+        help="existing directory that holds a new TLC state directory per run",
+    )
+    parent = scratch_parent(parser.parse_args(argv).scratch_parent)
     java, jar = tools()
     configs = sorted(HERE.glob("*.cfg")) + sorted((HERE / "variants").glob("*.cfg"))
     failures = 0
     print(f"{'config':<42} {'result':<28} {'states':>9} {'distinct':>9} {'deepest':>7} {'seconds':>8}")
     for config in configs:
-        code, output, seconds = run(java, jar, config)
+        code, output, seconds = run(java, jar, config, parent)
         wanted = expected(config)
         broken = VIOLATED.findall(output)
         counts = STATES.search(output)
@@ -134,4 +154,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

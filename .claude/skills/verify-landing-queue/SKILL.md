@@ -75,8 +75,16 @@ transaction moved.
 One command, from the repository root:
 
 ```sh
-python3 skills/landing/scripts/land.py slot -- python3 verification/landing-queue/check.py
+python3 skills/landing/scripts/land.py slot -- python3 verification/landing-queue/check.py --scratch-parent <parent>
 ```
+
+`--scratch-parent` is required and has no default. It takes the machine's scratch
+directory, the one a brief or the restaurant's `scratchDir` names. Any existing
+writable directory works, so when neither names one, make one with `mktemp -d`
+and delete it afterwards. `check.py` creates a new directory under the parent for
+each config's TLC state and deletes that directory, by its exact path, when TLC
+exits. With the argument missing it prints a usage error naming
+`--scratch-parent` and runs nothing.
 
 It runs five base configs and every config in `variants/`, and exits 0 only when
 each answers what the model says it should. It prints one row per config with the

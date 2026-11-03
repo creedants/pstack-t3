@@ -4,8 +4,16 @@
 TLC over it and over the broken variants. Run it from the repository root:
 
 ```sh
-python3 skills/landing/scripts/land.py slot -- python3 verification/landing-queue/check.py
+python3 skills/landing/scripts/land.py slot -- python3 verification/landing-queue/check.py --scratch-parent <parent>
 ```
+
+`--scratch-parent` takes the machine's scratch directory, the one a brief or the
+restaurant's `scratchDir` names. It is required, and `check.py` has no default.
+Any existing writable directory works, so when neither names one, make one with
+`mktemp -d` and delete it afterwards. For each config `check.py` creates a new
+directory under the parent for TLC's own state and deletes that directory, by its
+exact path, when TLC exits. Without the argument it prints a usage error naming
+`--scratch-parent` and runs nothing.
 
 The skill at `.claude/skills/verify-landing-queue/SKILL.md` says when to run it,
 how to read a result, and how to keep it in step with the code.
@@ -238,7 +246,7 @@ sufficient, and this README makes no such claim.
 - Three leases. A widen folds at most one other lease.
 - The base-moved retry loop in `_merge/forge.py`. `RequestMerge` stands for the
   merge request only; the plain `gh pr merge` retries after a base-moved refusal
-  have no action, and the model has trunk move only between runs.
+  have no action. `OutsiderPush` can move trunk between modelled actions.
 - The helpers the model assumes. `foundation.overlaps` is treated as a set
   intersection over two atomic, non-nesting paths; the real function is
   prefix-aware, so nested paths overlap and the model cannot show it.
