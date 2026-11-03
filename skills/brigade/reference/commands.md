@@ -102,7 +102,7 @@ Read this before `look-back`, before `look-back --record`, and when either refus
 
 `$B look-back --record <file>` reads one proposal file, checks every block against the newest brief that has no stamp, and writes the stamp only when every block passes. A block must hold `category`, `fix`, `evidence`, and `change`, and may hold one `quote` of at most 120 characters. The categories are `navigation`, `check-gap`, `reviewer-rule`, `expensive-call`, `no-op-instruction`, and `unreachable`. The fix types are `check`, `reviewer-rule`, `pointer`, `tool`, `deletion`, and `access`. Evidence is one `reports/<name>` this store holds, as a regular file inside `reports/`, or one thread id that brief lists. A refusal names the proposal's number and the value it refused, and nothing is stamped, so the evening cue stays until the file is fixed.
 
-`$B look-back --record --none --reason "<one line>"` stamps a week that held nothing usable. Recording one brief twice prints `L<n> was recorded at <time>; nothing stamped` and writes nothing, so no proposal is stored twice. A stored proposal is not a ticket and not a decision. Only the owner's yes turns one into `$B ticket add`, by hand.
+`$B look-back --record --none --reason "<one line>"` stamps a week that held nothing usable. Recording one brief twice prints `L<n> was recorded at <time>; nothing stamped` and writes nothing, so no proposal is stored twice. A stored proposal is not a ticket and not a decision. Only the owner's yes turns one into `$B ticket add`, by hand. `look-backs/` sits in the store beside `reports/`, so it is never committed.
 
 
 ## Intake detail
