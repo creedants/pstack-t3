@@ -295,6 +295,45 @@ class WatchTest(BrigadeTest, _Helpers):
         rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
         self.assertEqual([(row["id"], row["state"], row["note"]) for row in rows],
                          [("main", "green", "ddd444")])
+    def test_a_newer_failed_dynamic_run_leaves_trunk_green_on_ci_sha(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "completed", "conclusion": "success", "headSha": "ddd444",
+             "createdAt": "2026-11-03T15:49:10Z", "url": "https://example.com/run/dependency",
+             "workflowName": "Dependency Graph", "event": "dynamic"},
+            {"status": "completed", "conclusion": "failure", "headSha": "eee555",
+             "createdAt": "2026-11-03T15:49:12Z", "url": "https://example.com/run/dependency-failed",
+             "workflowName": "Dependency Graph", "event": "dynamic"},
+            {"status": "completed", "conclusion": "success", "headSha": "ccc333",
+             "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci",
+             "workflowName": "ci", "event": "push"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertNotIn("trunk CI", out)
+        rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual([(row["id"], row["state"], row["note"]) for row in rows],
+                         [("main", "green", "ccc333")])
+    def test_only_dynamic_runs_report_no_completed_run_in_window(self):
+        self.started()
+        self._remote_trunk()
+        from unittest import mock
+        payload = json.dumps([
+            {"status": "completed", "conclusion": "success", "headSha": "ddd444",
+             "createdAt": "2026-11-03T15:49:10Z", "url": "https://example.com/run/dependency",
+             "workflowName": "Dependency Graph", "event": "dynamic"},
+            {"status": "completed", "conclusion": "success", "headSha": "eee555",
+             "createdAt": "2026-11-03T15:49:11Z", "url": "https://example.com/run/dependency-2",
+             "workflowName": "Dependency Graph", "event": "dynamic"}])
+        bindir = self._gh_dir(payload=payload)
+        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            out = self.brigade("watch")
+        self.assertIn("cannot see trunk CI: no completed run in the last 100 runs", out)
+        unseen = [row for row in self.log_rows() if row["kind"] == "trunk"]
+        self.assertEqual(unseen[-1]["state"], "unseen")
+        self.assertIn("no completed run in the last 100 runs", unseen[-1]["note"])
     def test_a_cancelled_ci_run_passes_over_to_the_success_under_it_and_stays_green(self):
         self.started()
         self._remote_trunk()
