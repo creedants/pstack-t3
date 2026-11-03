@@ -75,8 +75,8 @@
 \*   GraceEnds         _merge/rollup.py:absence_waits    EXT five minutes pass after that record
 \*   RequestMerge      _merge/required.py:request_merge  EXT `gh pr merge --auto --match-head-commit`. The checks read,
 \*                                                           the fetch, and same_tree stay folded because they are
-\*                                                           read-only. The note TX after it stays folded because a
-\*                                                           lost note only makes the next poll ask again.
+\*                                                           read-only. The note TX after it stays folded because no
+\*                                                           promise reads that note.
 \*   ChecksPost        the forge                         EXT required checks start on the pull request's head
 \*   ChecksFinish      the forge                         EXT required checks pass or fail
 \*   HeadMoves         the forge                         EXT someone pushes to the pull request's branch

@@ -236,8 +236,13 @@ sufficient, and this README makes no such claim.
 - A second generation beside the queue, except in `publish-one.cfg` and the
   `submit-no-owner-check` variant.
 - Three leases. A widen folds at most one other lease.
-- The helpers the model assumes. `foundation.overlaps` is set intersection over two
-  atomic paths, `foundation.covered` is a subset test, `foundation.fingerprint` is
+- The base-moved retry loop in `_merge/forge.py`. `RequestMerge` stands for the
+  merge request only; the plain `gh pr merge` retries after a base-moved refusal
+  have no action, and the model has trunk move only between runs.
+- The helpers the model assumes. `foundation.overlaps` is treated as a set
+  intersection over two atomic, non-nesting paths; the real function is
+  prefix-aware, so nested paths overlap and the model cannot show it.
+  `foundation.covered` is a subset test, `foundation.fingerprint` is
   equal exactly when a replay carries the same change, and `Store.tx` is all or
   nothing. A change to any of them can invalidate a promise without moving a
   transaction boundary.
@@ -245,10 +250,9 @@ sufficient, and this README makes no such claim.
 ## Result of this round
 
 21 runs. Every base config holds and every variant breaks its named invariant. The
-rows of the last run add up to 229 seconds with one TLC worker, on a 16-core machine
-that was running other test suites. The whole command took 9m38s because it waited
-for a slot for over five minutes first. An earlier run of the same configs on a
-quieter machine took 2m28s from start to finish.
+rows of the last run add up to about 168 seconds with one TLC worker, and the whole
+command took 2m48s from start to finish through the slot. The counts below are that
+run.
 
 | Config | States | Distinct |
 | --- | --- | --- |

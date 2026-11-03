@@ -133,7 +133,8 @@ by steps 1 and 2.
 - Runner: `verification/landing-queue/check.py`.
 - Verified at: `91251ca92`. Each action was compared with the code at that commit.
 - Last full run: 21 runs, every base config held and every variant broke its named
-  invariant, in 229 seconds of run time after a wait for a slot. States generated
+  invariant, in 2m48s through the slot, with the config rows adding up to about
+  168 seconds. States generated
   and distinct: leases
   133,513 and 7,714; merge-one 6,140,551 and 816,762; merge 4,570,849 and 898,400;
   publish-one 6,408,995 and 631,184; publish 2,668,895 and 633,592.
