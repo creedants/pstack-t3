@@ -12,7 +12,14 @@ isolation.install()
 
 from ..support import setUpModule
 from ..support import BrigadeTest, CLAUDE, CODEX, HELD_LINE, Path, ROOT, SCRIPT, STILL_OPEN, call, _WakeRace, datetime, json, os, runpy, shlex, subprocess, sys, time, timedelta, timezone
+from pathlib import Path as _Path
+from unittest import mock
 from .fixtures import _Helpers
+
+
+def _fake_path(bindir):
+    return mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")})
+
 
 class WatchTest(BrigadeTest, _Helpers):
     def test_trunk_green_adds_no_trunk_line(self):
@@ -21,8 +28,7 @@ class WatchTest(BrigadeTest, _Helpers):
         payload = ('[{"conclusion":"success","status":"completed","headSha":"ddd444",'
                    '"createdAt":"2026-10-02T00:00:00Z","url":"https://example.com/run/3","workflowName":"CI"}]')
         bindir = self._gh_dir(payload=payload)
-        from unittest import mock
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             before = self.brigade("watch")
         self.assertNotIn("trunk CI", before)
         greens = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -31,7 +37,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_trunk_unseen_reports_cannot_see_via_missing_and_failing_gh(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         bindir = self._gh_dir(with_gh=False)
         with mock.patch.dict(os.environ, {"PATH": str(bindir)}):
             missing = self.brigade("watch")
@@ -46,14 +51,13 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_malformed_non_dict_rows_clear_stored_red(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         bindir = self._gh_dir(payload=self._valid_red_payload())
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("trunk CI failing since", out)
         for bad in ("[null]", "[42]", '["bad"]'):
             bindir = self._gh_dir(payload=bad)
-            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            with _fake_path(bindir):
                 seen = self.brigade("watch")
             self.assertIn("cannot see trunk CI:", seen)
             self.assertEqual(seen.count("cannot see trunk CI:"), 1)
@@ -61,14 +65,13 @@ class WatchTest(BrigadeTest, _Helpers):
             self.assertEqual(rows[-1]["state"], "unseen")
             self._assert_no_red_cues()
             bindir = self._gh_dir(payload=self._valid_red_payload())
-            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            with _fake_path(bindir):
                 self.brigade("watch")
     def test_malformed_missing_fields_clear_stored_red(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         bindir = self._gh_dir(payload=self._valid_red_payload())
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             self.brigade("watch")
         base = {"status": "completed", "conclusion": "failure", "headSha": "aaa111",
                 "createdAt": "2026-10-02T00:00:00Z", "url": "https://example.com/run/2",
@@ -77,7 +80,7 @@ class WatchTest(BrigadeTest, _Helpers):
             bad = dict(base)
             del bad[key]
             bindir = self._gh_dir(payload=json.dumps([bad]))
-            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            with _fake_path(bindir):
                 seen = self.brigade("watch")
             self.assertIn("cannot see trunk CI:", seen)
             self.assertEqual(seen.count("cannot see trunk CI:"), 1)
@@ -85,17 +88,16 @@ class WatchTest(BrigadeTest, _Helpers):
             self.assertEqual(rows[-1]["state"], "unseen")
             self._assert_no_red_cues()
             bindir = self._gh_dir(payload=self._valid_red_payload())
-            with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+            with _fake_path(bindir):
                 self.brigade("watch")
     def test_in_progress_failure_never_reports_red(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         payload = json.dumps([{"status": "in_progress", "conclusion": "failure", "headSha": "aaa111",
                                "createdAt": "2026-10-02T00:00:00Z", "url": "https://example.com/run/2",
                                "workflowName": "CI"}])
         bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             seen = self.brigade("watch")
         self.assertIn("cannot see trunk CI:", seen)
         self.assertNotIn("trunk CI failing since", seen)
@@ -104,7 +106,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_non_default_remote_selects_explicit_repo(self):
         self.started()
         from contextlib import closing
-        from pathlib import Path as _Path
         with closing(self.landing_db()) as db, db:
             db.execute("UPDATE contract SET value = ? WHERE key = 'mode'", (json.dumps("merge"),))
             db.execute("UPDATE contract SET value = ? WHERE key = 'trunk'", (json.dumps("release/stable"),))
@@ -121,8 +122,7 @@ class WatchTest(BrigadeTest, _Helpers):
                                "workflowName": "CI"}])
         args_file = _Path(self.temporary.name) / "gh-args.txt"
         bindir = self._gh_dir_recording(payload, args_file)
-        from unittest import mock
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/2", out)
         recorded = args_file.read_text()
@@ -139,8 +139,7 @@ class WatchTest(BrigadeTest, _Helpers):
                        cwd=self.project, capture_output=True)
         payload = self._valid_red_payload()
         bindir = self._gh_dir(payload=payload)
-        from unittest import mock
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             seen = self.brigade("watch")
         self.assertIn("cannot see trunk CI:", seen)
         rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -151,8 +150,7 @@ class WatchTest(BrigadeTest, _Helpers):
         subprocess.run(["git", "remote", "remove", "origin"], cwd=self.project, capture_output=True)
         payload = self._valid_red_payload()
         bindir = self._gh_dir(payload=payload)
-        from unittest import mock
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             seen = self.brigade("watch")
         self.assertIn("cannot see trunk CI:", seen)
         rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -160,8 +158,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_long_failure_streak_reports_streak_start(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
-        from pathlib import Path as _Path
         rows = []
         for day in range(10, 0, -1):
             rows.append({"status": "completed", "conclusion": "failure", "headSha": f"aaa{day:03d}",
@@ -172,7 +168,7 @@ class WatchTest(BrigadeTest, _Helpers):
                      "workflowName": "CI"})
         args_file = _Path(self.temporary.name) / "gh-args-long.txt"
         bindir = self._gh_dir_recording(json.dumps(rows), args_file)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/10", out)
         reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -181,8 +177,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_in_progress_window_finds_newest_completed(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
-        from pathlib import Path as _Path
         rows = []
         for number in range(5):
             rows.append({"status": "in_progress", "conclusion": "", "headSha": f"zzz{number:03d}",
@@ -193,7 +187,7 @@ class WatchTest(BrigadeTest, _Helpers):
                      "workflowName": "CI"})
         args_file = _Path(self.temporary.name) / "gh-args-window.txt"
         bindir = self._gh_dir_recording(json.dumps(rows), args_file)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("trunk CI failing since 2026-10-01T00:00:00Z: CI https://example.com/run/old", out)
         reds = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -201,8 +195,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_truncated_failure_streak_reports_before_oldest_fetched(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
-        from pathlib import Path as _Path
         head = "1bd3ecf6510a180e34f1391d0910a869aae30f8a"
         base = datetime(2026, 10, 17, tzinfo=timezone.utc)
         rows = []
@@ -215,7 +207,7 @@ class WatchTest(BrigadeTest, _Helpers):
                      "url": "https://example.com/run/101", "workflowName": "CI"})
         args_file = _Path(self.temporary.name) / "gh-args-cutoff-streak.txt"
         bindir = self._gh_dir_recording(json.dumps(rows), args_file)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         oldest = (base - timedelta(hours=99)).isoformat()
         self.assertIn(f"trunk CI failing since before {oldest}: CI https://example.com/run/0", out)
@@ -230,8 +222,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_hidden_completed_failure_reports_no_completed_run_in_window(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
-        from pathlib import Path as _Path
         head = "1bd3ecf6510a180e34f1391d0910a869aae30f8a"
         base = datetime(2026, 10, 17, tzinfo=timezone.utc)
         rows = []
@@ -244,7 +234,7 @@ class WatchTest(BrigadeTest, _Helpers):
                      "url": "https://example.com/run/100", "workflowName": "CI"})
         args_file = _Path(self.temporary.name) / "gh-args-cutoff-hidden.txt"
         bindir = self._gh_dir_recording(json.dumps(rows), args_file)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("cannot see trunk CI: no completed run in the last 100 runs", out)
         unseen = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -254,9 +244,8 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_stored_red_owes_next_liveness_and_merge(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         bindir = self._gh_dir(payload=self._valid_red_payload())
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("trunk CI failing since", out)
         for wake in (("liveness",), ("merge", "D1")):
@@ -268,19 +257,17 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_stored_green_owes_no_next_red_step(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         payload = json.dumps([{"status": "completed", "conclusion": "success", "headSha": "ddd444",
                                "createdAt": "2026-10-02T00:00:00Z", "url": "https://example.com/run/3",
                                "workflowName": "CI"}])
         bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertNotIn("trunk CI", out)
         self._assert_no_red_cues()
     def test_a_newer_success_of_the_same_workflow_clears_its_older_failure(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         payload = json.dumps([
             {"status": "completed", "conclusion": "success", "headSha": "ddd444",
              "createdAt": "2026-11-03T16:00:00Z", "url": "https://example.com/run/ci-2",
@@ -289,7 +276,7 @@ class WatchTest(BrigadeTest, _Helpers):
              "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci-1",
              "workflowName": "ci", "event": "push"}])
         bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertNotIn("trunk CI", out)
         rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -298,11 +285,7 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_a_newer_failed_dynamic_run_leaves_trunk_green_on_ci_sha(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         payload = json.dumps([
-            {"status": "completed", "conclusion": "success", "headSha": "ddd444",
-             "createdAt": "2026-11-03T15:49:10Z", "url": "https://example.com/run/dependency",
-             "workflowName": "Dependency Graph", "event": "dynamic"},
             {"status": "completed", "conclusion": "failure", "headSha": "eee555",
              "createdAt": "2026-11-03T15:49:12Z", "url": "https://example.com/run/dependency-failed",
              "workflowName": "Dependency Graph", "event": "dynamic"},
@@ -310,7 +293,7 @@ class WatchTest(BrigadeTest, _Helpers):
              "createdAt": "2026-11-03T15:49:05Z", "url": "https://example.com/run/ci",
              "workflowName": "ci", "event": "push"}])
         bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertNotIn("trunk CI", out)
         rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -319,7 +302,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_only_dynamic_runs_report_no_completed_run_in_window(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         payload = json.dumps([
             {"status": "completed", "conclusion": "success", "headSha": "ddd444",
              "createdAt": "2026-11-03T15:49:10Z", "url": "https://example.com/run/dependency",
@@ -328,7 +310,7 @@ class WatchTest(BrigadeTest, _Helpers):
              "createdAt": "2026-11-03T15:49:11Z", "url": "https://example.com/run/dependency-2",
              "workflowName": "Dependency Graph", "event": "dynamic"}])
         bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("cannot see trunk CI: no completed run in the last 100 runs", out)
         unseen = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -337,7 +319,6 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_a_cancelled_ci_run_passes_over_to_the_success_under_it_and_stays_green(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         payload = json.dumps([
             {"status": "in_progress", "conclusion": "", "headSha": "ddd444",
              "createdAt": "2026-11-03T16:10:00Z", "url": "https://example.com/run/ci-3",
@@ -349,7 +330,7 @@ class WatchTest(BrigadeTest, _Helpers):
              "createdAt": "2026-11-03T16:00:00Z", "url": "https://example.com/run/ci-1",
              "workflowName": "ci", "event": "push"}])
         bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertNotIn("trunk CI", out)
         rows = [row for row in self.log_rows() if row["kind"] == "trunk"]
@@ -358,13 +339,12 @@ class WatchTest(BrigadeTest, _Helpers):
     def test_a_cancelled_newest_ci_run_with_nothing_newer_reports_cannot_see_cancelled(self):
         self.started()
         self._remote_trunk()
-        from unittest import mock
         payload = json.dumps([
             {"status": "completed", "conclusion": "cancelled", "headSha": "ccc333",
              "createdAt": "2026-11-03T16:05:00Z", "url": "https://example.com/run/ci-2",
              "workflowName": "ci", "event": "push"}])
         bindir = self._gh_dir(payload=payload)
-        with mock.patch.dict(os.environ, {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}):
+        with _fake_path(bindir):
             out = self.brigade("watch")
         self.assertIn("cannot see trunk CI: conclusion cancelled", out)
         unseen = [row for row in self.log_rows() if row["kind"] == "trunk"]
