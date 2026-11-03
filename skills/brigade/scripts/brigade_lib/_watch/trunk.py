@@ -193,7 +193,7 @@ def _is_valid_run(run):
 
 
 def _is_dynamic(run):
-    """True when one gh run row is an automatic GitHub run."""
+    """True when one gh run row is GitHub's dynamic event run."""
     return isinstance(run, dict) and run.get("event") == "dynamic"
 
 
