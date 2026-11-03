@@ -1,0 +1,6 @@
+- kind study
+- A TLA+ model under `verification/landing-queue/` covers the landing queue and its path leases, with one action per transaction or external call, except where the header map says why a death between folded parts cannot change a promise, and that map ties each action to the function it stands for
+- Ten invariants state the lease-overlap, owner-floor, one-integrator, one-trunk-writer, checked-head, crash-recovery, and widen-coverage promises, each with the harm it prevents
+- Sixteen broken variants each break one rule and each fail a named invariant, and two of them model the rule at the parent of pull request #474 and of commit `1adb24175`
+- A project-local skill at `.claude/skills/verify-landing-queue/SKILL.md` says when a change touches the verified code, runs the check with one command through the land slot, tells a real bug from a modelling error, and records the commit the model was last compared with
+- The model is split across sibling TLA+ modules under `verification/landing-queue/`, each within the 5000-token size limit, with `LandingQueue.tla` keeping the action-to-code map, the Next composition, and Spec
