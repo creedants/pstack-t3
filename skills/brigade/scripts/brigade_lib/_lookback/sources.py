@@ -1,7 +1,4 @@
-"""Everything a look-back reads besides review rounds: queue refusals, failed main runs, and set-aside notes."""
-
 import json
-import re
 from typing import NamedTuple
 
 from brigade_lib._leases.claims import land_result
@@ -13,15 +10,14 @@ from brigade_lib.store import HELD_LOCKS
 MAX_TEXT = 200
 NOTE_CAP = 50
 
-REFUSAL = re.compile(r"^E(\d+) bounced \((?P<holder>[^,()]+), (?P<sha>[0-9a-f]+)\)(?:: (?P<reason>.*))?$")
-
 
 CONTROLS = {code: " " for code in (*range(32), *range(127, 160), 0x2028, 0x2029)}
 
 
 def flatten(text, limit=MAX_TEXT):
-    """The text on one line: control characters and line separators become spaces, then it is cut to limit characters."""
-    return str(text).translate(CONTROLS)[:limit]
+    """One line: control characters and line separators become spaces, then the text is trimmed and cut to limit characters."""
+    one = str(text).translate(CONTROLS).strip()
+    return one[:limit].rstrip()
 
 
 def inside(at, bound):
@@ -30,28 +26,32 @@ def inside(at, bound):
 
 
 class Queue(NamedTuple):
-    text: str
+    entries: tuple
     problem: str
 
 
-UNREAD = Queue("", "the queue could not be read")
+UNREAD = Queue((), "the queue could not be read")
 
 
 def read_queue(project_root, prefix):
-    """The queue status text for this holder prefix, or UNREAD.
-
-    It runs outside the store lock because land.py takes its own, the way scope.read_status and
-    read_lease_list do.
-    """
     if HELD_LOCKS:
         raise BrigadeError(f"look-back reads the queue; release {HELD_LOCKS[0]}'s store lock before it")
     try:
-        result = land_result(project_root, "status", "--holder", prefix)
+        result = land_result(project_root, "status", "--holder", prefix, "--json")
     except (BrigadeError, OSError):
         return UNREAD
     if result.returncode != 0:
         return UNREAD
-    return Queue(result.stdout, "")
+    try:
+        entries = json.loads(result.stdout)
+    except ValueError:
+        return UNREAD
+    if not isinstance(entries, list):
+        return UNREAD
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("id") or not entry.get("state") or not entry.get("holder"):
+            return UNREAD
+    return Queue(tuple(entries), "")
 
 
 def refusals(queue, prefix, seen):
@@ -59,14 +59,11 @@ def refusals(queue, prefix, seen):
     if queue.problem:
         return []
     found = []
-    for line in queue.text.splitlines():
-        match = REFUSAL.match(line)
-        if match is None:
+    for entry in queue.entries:
+        holder = flatten(entry["holder"])
+        if entry["state"] != "bounced" or not holder.startswith(prefix):
             continue
-        holder = match.group("holder")
-        if not holder.startswith(prefix):
-            continue
-        ident = f"E{match.group(1)}"
+        ident = flatten(entry["id"])
         if ident in seen:
             continue
         found.append(
@@ -74,7 +71,7 @@ def refusals(queue, prefix, seen):
                 "id": ident,
                 "token": f"queue:{ident}",
                 "holder": holder,
-                "reason": flatten(match.group("reason") or ""),
+                "reason": flatten(entry.get("note") or ""),
             }
         )
     found.sort(key=lambda item: int(item["id"][1:]))
@@ -154,6 +151,7 @@ def notes(restaurant, since):
         stamp = moment(at)
         if stamp is None or not inside(stamp, bound):
             continue
+        item = flatten(item)
         rows.append({"at": at, "item": item, "text": flatten(text), "token": f"note:{item}:{at}"})
     rows.sort(key=lambda row: (moment(row["at"]), row["item"]), reverse=True)
     newest = rows[0]["at"] if rows else ""

@@ -65,7 +65,6 @@ def parse(text):
 
 
 def _tokens(brief):
-    """Every evidence token this brief printed: its threads, queue entries, failed runs, and notes."""
     tokens = set(brief.get("threads") or [])
     tokens.update(f"queue:{ident}" for ident in brief.get("queue") or [])
     tokens.update(brief.get("runs") or [])

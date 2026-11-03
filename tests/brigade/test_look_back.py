@@ -48,9 +48,10 @@ class LookBackTest(BrigadeTest):
         self.assertEqual(len(lines), 2)
         return Path(lines[1])
 
-    def fake_land(self, text):
+    def fake_land(self, *entries):
         path = Path(self.temporary.name) / "fake-land.py"
-        path.write_text(f"print({text!r})\n")
+        rows = [dict(zip(("id", "state", "holder", "sha", "note"), entry)) for entry in entries]
+        path.write_text(f"import json\nprint(json.dumps({rows!r}))\n")
         run_globals(self, SCRIPT)["LAND"] = str(path)
 
     def append_log(self, *rows):
@@ -72,12 +73,7 @@ class LookBackTest(BrigadeTest):
 
     def proposal_file(self, name, evidence):
         path = Path(self.temporary.name) / name
-        path.write_text(
-            "category: check-gap\n"
-            "fix: check\n"
-            f"evidence: {evidence}\n"
-            "change: Run the store tests in the pre-commit hook, so an unrecorded table column fails before review.\n"
-        )
+        path.write_text(PROPOSAL.format(evidence))
         return str(path)
 
     def recorded_of(self, ident="L1"):
@@ -139,7 +135,7 @@ class LookBackTest(BrigadeTest):
     def test_brief_names_the_round_cap_when_more_rounds_exist_than_it_lists(self):
         self.seed_rounds(1)
         path = self.at / "pass.tsv"
-        extra = "".join(f"2026-11-0{1 + n % 2}T10:{n % 60:02d}:00+00:00\tD1\t\tc{n}\tsend-back\t{CLAUDE}\t{CODEX}\tn\t\t\tother\n"
+        extra = "".join(f"2026-11-0{1 + n % 2}T10:{n % 60:02d}:00Z\tD1\t\tc{n}\tsend-back\t{CLAUDE}\t{CODEX}\tn\t\t\tother\n"
                         for n in range(60))
         path.write_text(path.read_text() + extra)
         text = self.look_back_path(self.brigade("look-back")).read_text()
@@ -198,7 +194,7 @@ class LookBackTest(BrigadeTest):
         first = json.loads((self.at / "look-backs" / "L1.json").read_text())
         later = (datetime.fromisoformat(first["at"]) + timedelta(seconds=1)).isoformat()
         second = dict(first, id="L2", at=later)
-        (self.at / "look-backs" / "L2.json").write_text(json.dumps(second, indent=2) + "\n")
+        (self.at / "look-backs" / "L2.json").write_text(json.dumps(second) + "\n")
         (self.at / "look-backs" / "L2.md").write_text((self.at / "look-backs" / "L1.md").read_text())
         self.brigade("look-back")
         proposal = self.proposal_file("one.txt", "reports/D1-review-1.md")
@@ -275,7 +271,7 @@ class LookBackTest(BrigadeTest):
 
     def test_past_the_cap_wrong_results_come_first(self):
         self.open()
-        kinds = ["pass"] * 3 + ["pass-with-edits"] * 2 + ["blocked", "send-back", "send-back"]
+        kinds = ["pass"] * 3 + ["pass-with-edits"] * 2 + ["blocked"] + ["send-back"] * 2
         self.write_pass(*[(f"2026-11-03T11:{n:02d}:00Z", v, "other" if v == "send-back" else "")
                           for n, v in enumerate(kinds)],
                         *[(f"2026-11-0{1 + n % 2}T10:{n % 60:02d}:00Z", "send-back", "other")
@@ -300,8 +296,8 @@ class LookBackTest(BrigadeTest):
 
     def test_refusals_list_one_prefix_and_once(self):
         self.open()
-        self.fake_land("E79 bounced (perf/D1, abc123def456): too big\n"
-                       "E80 bounced (other/D9, abc123def456): elsewhere")
+        self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "too big"),
+                       ("E80", "bounced", "other/D9", "abc123def456", "elsewhere"))
         first = self.look_back_path(self.brigade("look-back")).read_text()
         self.assertIn("- queue:E79 perf/D1 bounced: too big", first)
         self.assertNotIn("other/D9", first)
@@ -311,10 +307,11 @@ class LookBackTest(BrigadeTest):
 
     def test_a_lower_id_bounce_is_still_listed_next_time(self):
         self.open()
-        self.fake_land("E79 bounced (perf/D1, abc123def456): one")
+        self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "one"))
         self.brigade("look-back")
         self.record_none()
-        self.fake_land("E79 bounced (perf/D1, abc123def456): one\nE78 bounced (perf/D2, abc123def456): two")
+        self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "one"),
+                       ("E78", "bounced", "perf/D2", "abc123def456", "two"))
         self.brigade("look-back")
         text = (self.at / "look-backs" / "L2.md").read_text()
         self.assertIn("- queue:E78 perf/D2 bounced: two", text)
@@ -344,7 +341,7 @@ class LookBackTest(BrigadeTest):
 
     def test_text_written_by_others_stays_on_one_line(self):
         self.open()
-        self.fake_land("E79 bounced (perf/D1, abc123def456): \tkey: value")
+        self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "\tkey: value"))
         self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red",
                          json.dumps({"workflow": "\n\u2028## Rounds since the last look-back\tkey: value"})))
         self.write_notes(("D1", "2026-11-01T01:00:00Z", "key: value"))
@@ -355,7 +352,7 @@ class LookBackTest(BrigadeTest):
 
     def test_each_new_evidence_token_is_accepted(self):
         self.open()
-        self.fake_land("E79 bounced (perf/D1, abc123def456): too big")
+        self.fake_land(("E79", "bounced", "perf/D1", "abc123def456", "too big"))
         self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red", RED))
         self.write_notes(("D1", "2026-11-01T01:00:00Z", "a note"))
         self.brigade("look-back")
