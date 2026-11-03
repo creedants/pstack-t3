@@ -142,3 +142,14 @@ class LookBackSourcesTest(BrigadeTest):
         self.assertNotIn("- queue:E", text)
         self.assertIn("- run:https://x.test/1 red at abc", text)
         self.assertIn("- note:D2:2026-11-01T01:00:00Z a note", text)
+
+    def test_an_entry_without_a_state_reads_as_unread_and_the_other_sections_still_print(self):
+        self.open()
+        self.fake_land(("E79", "", "perf/D1", "abc123def456", "too big"))
+        self.append_log(("2026-11-01T00:00:00Z", "trunk", "main", "red", RUN))
+        self.write_notes(("D2", "2026-11-01T01:00:00Z", "a note"))
+        text = self.look_back_path(self.brigade("look-back")).read_text()
+        self.assertIn("The queue could not be read, so no refusal is listed here.", text)
+        self.assertNotIn("- queue:E", text)
+        self.assertIn("- run:https://x.test/1 red at abc", text)
+        self.assertIn("- note:D2:2026-11-01T01:00:00Z a note", text)
