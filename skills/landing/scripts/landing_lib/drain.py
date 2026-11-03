@@ -135,6 +135,9 @@ def holder_status(store, holder, sha=None):
         elif row["state"] == "bounced":
             line += f": {row['note']}"
         lines.append(line)
+    if sha and not lines:
+        resolved = seam.git("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}", cwd=store.repo, check=False)
+        sha = resolved.stdout.strip() if resolved.returncode == 0 else sha.lower()
     return "\n".join(lines) or f"no entries held by {holder}" + (f" at {sha}" if sha else "")
 
 
