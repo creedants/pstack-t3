@@ -301,7 +301,7 @@ land.py [flags] status [--holder HOLDER] [--sha SHA] [--json] [id]
 | `id` |  |  |  |  |
 | `--holder HOLDER` |  |  |  | list this holder's entries; a value ending in / matches every holder under it |
 | `--sha SHA` |  |  |  | with --holder, only entries at exactly this commit |
-| `--json` |  |  |  | print one JSON object. It holds mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit |
+| `--json` |  |  |  | print JSON instead of the lines. With --holder it is a list of that holder's entries, one object each holding id, state, holder, sha, and note. Alone it is one object holding mode, trunk, generated, rebuild, map, plus size keys only while the contract sets a limit |
 
 ## land.py size
 

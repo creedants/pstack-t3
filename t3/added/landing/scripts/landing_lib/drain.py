@@ -110,18 +110,23 @@ def report(store, out):
     return "\n".join(lines) or "nothing to land"
 
 
-def holder_status(store, holder, sha=None):
-    """Entries of one holder, or of every holder under a prefix that ends in /, optionally only those at one commit."""
+def holder_rows(store, holder, sha=None):
+    """The rows of one holder, or of every holder under a prefix that ends in /, optionally only those at one commit."""
     if sha:
         # submit stores the full SHA rev-parse gives, so a short or uppercase SHA compares the same way.
         resolved = seam.git("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}", cwd=store.repo, check=False)
         sha = resolved.stdout.strip() if resolved.returncode == 0 else sha.lower()
+    return [
+        row for row in store.db.execute("SELECT * FROM entry ORDER BY id")
+        if (row["holder"] == holder or (holder.endswith("/") and row["holder"].startswith(holder)))
+        and (not sha or row["sha"] == sha)
+    ]
+
+
+def holder_status(store, holder, sha=None):
+    """Entries of one holder, or of every holder under a prefix that ends in /, optionally only those at one commit."""
     lines = []
-    for row in store.db.execute("SELECT * FROM entry ORDER BY id"):
-        if row["holder"] != holder and not (holder.endswith("/") and row["holder"].startswith(holder)):
-            continue
-        if sha and row["sha"] != sha:
-            continue
+    for row in holder_rows(store, holder, sha):
         line = f"{seam.entry_label(row['id'])} {row['state']} ({row['holder']}, {row['sha'][:12]})"
         if row["state"] == "landed" and row["landed"]:
             line += f" as {row['landed'][:12]}"
@@ -131,6 +136,18 @@ def holder_status(store, holder, sha=None):
             line += f": {row['note']}"
         lines.append(line)
     return "\n".join(lines) or f"no entries held by {holder}" + (f" at {sha}" if sha else "")
+
+
+def holder_json(store, holder, sha=None):
+    """One JSON object per entry of one holder, each holding its id, state, holder, sha, and note."""
+    return json.dumps(
+        [
+            {"id": seam.entry_label(row["id"]), "state": row["state"], "holder": row["holder"],
+             "sha": row["sha"], "note": row["note"]}
+            for row in holder_rows(store, holder, sha)
+        ],
+        indent=2,
+    )
 
 
 def status(store, ident=None):
