@@ -11,18 +11,16 @@ from tests import isolation
 isolation.install()
 
 import json
+import shlex
 
 from .support import BrigadeTest, setUpModule, SCRIPT, _owner_words, call_in_process
 
 
 class ReviewCheckCueTest(BrigadeTest):
-    """The ready report-back wake prints the resolved check command, and no other wake does."""
-
     READ = ("see Read reports/D1.md and the diff. t3_thread_read the worker thread. "
             "If that run is still open, interrupt it, hang the attempt, then review per Run a service step 6.")
 
-    def report_back(self):
-        """This wake through call_in_process, which shares the landing env this process patched in."""
+    def report_back_in_process(self):
         outcome = call_in_process(self, SCRIPT, ["--store", str(self.store), "--at", str(self.at),
                                                  *_owner_words(self.at), "next", "report-back", "D1"])
         self.assertEqual(outcome.code, 0, outcome.stdout_text() + outcome.stderr_text())
@@ -36,7 +34,6 @@ class ReviewCheckCueTest(BrigadeTest):
         return outcome.stdout_text().strip()
 
     def contract(self, *checks):
-        """A landing contract on the project recording these checks, read by in-process brigade calls."""
         self.git_project()
         self.init_landing(*[word for check in checks for word in ("--check", check)])
         self.landing_env()
@@ -48,12 +45,12 @@ class ReviewCheckCueTest(BrigadeTest):
 
     def check_line(self, command):
         return (f"see After you read the diff and before dish D1 --state in-review and the verifier, "
-                f"run this check in the worker's worktree at its head through land.py slot -- {command}")
+                f"run this check in the worker's worktree at its head through land.py slot -- sh -c {shlex.quote(command)}")
 
     def test_stored_check_prints_on_a_ready_report_back_fails_when_the_wake_keeps_only_the_read_line(self):
         self.fired_bug_fix()
         self.brigade("set", "--check-command", "make lint")
-        self.assertEqual(self.report_back(), "\n".join([
+        self.assertEqual(self.report_back_in_process(), "\n".join([
             "wake: report-back D1",
             "reporting: milestones",
             "run dish D1 --reported",
@@ -62,8 +59,20 @@ class ReviewCheckCueTest(BrigadeTest):
             "reply: no (routine: worker report)",
         ]))
 
+    def test_compound_check_keeps_operators_inside_one_slot_fails_when_the_command_is_split(self):
+        self.fired_bug_fix()
+        self.brigade("set", "--check-command", "make lint && make test")
+        self.assertEqual(self.report_back_in_process(), "\n".join([
+            "wake: report-back D1",
+            "reporting: milestones",
+            "run dish D1 --reported",
+            self.READ,
+            "see After you read the diff and before dish D1 --state in-review and the verifier, "
+            "run this check in the worker's worktree at its head through land.py slot -- sh -c 'make lint && make test'",
+            "reply: no (routine: worker report)",
+        ]))
+
     def test_contract_check_prints_without_a_stored_key_fails_when_an_unset_store_prints_no_line(self):
-        # Processes: git and land build the fixture project and its contract.
         self.contract("make lint")
         self.fire_one()
         ready = "\n".join([
@@ -74,19 +83,18 @@ class ReviewCheckCueTest(BrigadeTest):
             self.check_line("make lint"),
             "reply: no (routine: worker report)",
         ])
-        self.assertEqual(self.report_back(), ready)
+        self.assertEqual(self.report_back_in_process(), ready)
         path = self.at / "restaurant.json"
         meta = json.loads(path.read_text())
         meta["checkCommand"] = ""
         path.write_text(json.dumps(meta, indent=2) + "\n")
-        self.assertEqual(self.report_back(), ready)
+        self.assertEqual(self.report_back_in_process(), ready)
 
     def test_stored_none_prints_no_check_line_fails_when_none_falls_through_to_the_contract(self):
-        # Processes: git and land build the fixture project and its contract.
         self.contract("make lint")
         self.fire_one()
         self.brigade("set", "--check-command", "none")
-        self.assertEqual(self.report_back(), "\n".join([
+        self.assertEqual(self.report_back_in_process(), "\n".join([
             "wake: report-back D1",
             "reporting: milestones",
             "run dish D1 --reported",
@@ -95,7 +103,6 @@ class ReviewCheckCueTest(BrigadeTest):
         ]))
 
     def test_missing_commands_print_no_check_line_fails_when_a_missing_or_split_contract_prints_a_line(self):
-        # Processes: git builds the fixture project; land adds a two-check contract after the first sheet.
         self.git_project()
         self.landing_env()
         self.fire_one()
@@ -106,15 +113,15 @@ class ReviewCheckCueTest(BrigadeTest):
             self.READ,
             "reply: no (routine: worker report)",
         ])
-        self.assertEqual(self.report_back(), plain)
+        self.assertEqual(self.report_back_in_process(), plain)
         self.init_landing("--check", "make lint", "--check", "make test")
-        self.assertEqual(self.report_back(), plain)
+        self.assertEqual(self.report_back_in_process(), plain)
 
     def test_held_dish_prints_no_check_line_fails_when_debt_or_an_open_decision_keeps_the_line(self):
         self.fired_bug_fix()
         self.brigade("set", "--check-command", "make lint")
         self.sent_back(3)
-        self.assertEqual(self.report_back(), "\n".join([
+        self.assertEqual(self.report_back_in_process(), "\n".join([
             "wake: report-back D1",
             "reporting: milestones",
             "run 86 add --dish D1 --round-budget",
@@ -124,7 +131,7 @@ class ReviewCheckCueTest(BrigadeTest):
         self.fresh()
         self.brigade("set", "--check-command", "make lint")
         self.park_item()
-        sheet = self.report_back()
+        sheet = self.report_back_in_process()
         self.assertEqual(sheet, "\n".join([
             "wake: report-back D1",
             "reporting: milestones",

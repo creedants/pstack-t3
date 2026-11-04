@@ -119,7 +119,7 @@ def prefix_cues(snapshot, trigger, failure, check):
         command = check()
         if command:
             cues.append(See(f"After you read the diff and before dish {dish_id} --state in-review and the verifier, "
-                            f"run this check in the worker's worktree at its head through land.py slot -- {command}"))
+                            f"run this check in the worker's worktree at its head through land.py slot -- sh -c {shlex.quote(command)}"))
         return cues
     if wake == "review":
         if open_for(snapshot, dish_id):
