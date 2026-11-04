@@ -188,6 +188,11 @@ def _build_command(meta):
     return "" if text == NO_COMMAND else text
 
 
+def check_for(root, meta):
+    """The check command the review preflight runs at the worker's head: the store's, else the landing contract's."""
+    return _check_command(meta) if records_check(meta) else contract_check(root)
+
+
 def _settings(root, meta, store=None):
     """Layout and commands from matching stores.
 
@@ -202,7 +207,7 @@ def _settings(root, meta, store=None):
     AffectedTests compares only stores that record it by raw value and refuses on difference.
     """
     if meta is not None:
-        check = _check_command(meta) if records_check(meta) else contract_check(root)
+        check = check_for(root, meta)
         return layout(meta), _build_command(meta), check, change_note_dir(meta)
     pick = None
     picked_path = None
