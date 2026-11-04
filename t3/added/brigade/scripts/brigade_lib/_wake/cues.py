@@ -104,7 +104,7 @@ def _ticket_age_on(snapshot):
     return bool(snapshot.ticket_age)
 
 
-def prefix_cues(snapshot, trigger, failure):
+def prefix_cues(snapshot, trigger, failure, check):
     wake, dish_id = trigger.wake, trigger.dish
     if wake == "report-back":
         cues = []
@@ -116,6 +116,10 @@ def prefix_cues(snapshot, trigger, failure):
             return cues
         cues.append(See(f"Read reports/{dish_id}.md and the diff. t3_thread_read the worker thread. "
                         f"If that run is still open, interrupt it, hang the attempt, then review per Run a service step 6."))
+        command = check()
+        if command:
+            cues.append(See(f"After you read the diff and before dish {dish_id} --state in-review and the verifier, "
+                            f"run this check in the worker's worktree at its head through land.py slot -- {command}"))
         return cues
     if wake == "review":
         if open_for(snapshot, dish_id):
@@ -346,9 +350,9 @@ def inbox_cues(snapshot):
     return [run] if run else []
 
 
-def compile_sheet(snapshot, trigger, failure, unsent):
+def compile_sheet(snapshot, trigger, failure, unsent, check):
     """The cues for this wake. The reply's close line comes before a report or drained line. It is a run when close would exit 0, and a see of the malformed row when close would refuse."""
     reply = reply_for(snapshot, trigger, failure, unsent)
-    return [*inbox_cues(snapshot), *prefix_cues(snapshot, trigger, failure), *tail_cues(snapshot, trigger, failure, reply)]
+    return [*inbox_cues(snapshot), *prefix_cues(snapshot, trigger, failure, check), *tail_cues(snapshot, trigger, failure, reply)]
 
 

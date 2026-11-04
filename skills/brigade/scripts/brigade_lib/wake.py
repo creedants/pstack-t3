@@ -3,6 +3,7 @@ from brigade_lib._wake.cues import admin_sends, compile_sheet, cue_line, format_
 from brigade_lib._wake.hangs import hang_attempt, record_hang, ticket_lines
 from brigade_lib._wake.occasions import CLOSE_OCCASIONS, DRAIN_LABELS, OCCASION_ORDER, ROUTINE_DETAILS, YES_OCCASIONS, blocked_needs_user, budget_reached, decision_detail, decision_holds, fresh_decision_ids, from_user_request, held_occasions, is_drained, merge_accepted, note_unsent, occasion_yes, reply_for, request_text, routine_detail, wake_label
 from brigade_lib._wake.snapshot import Debt, If, Reply, Run, See, Snapshot, Trigger, _trunk_cues, _trunk_red, accepted_argv, counted_timebox, crossing_send_back, dish_by_id, inbox_ready, load_inbox, load_snapshot, lowest_id, malformed_close, maybe_run, open_for
+from brigade_lib._affected.report import check_for
 from brigade_lib.startable import NO_WORKER, STARTS_AFTER, Standing, Waiting, lease_refusals, plan, startable, startable_lines, waiting_ticket
 from brigade_lib.watch import _latest_trunk, closing_options, dish_progress, open_item_decisions, option_key, record_model_clear, record_model_skip, record_worker_end, report_is_current, require_seat, watch, worker_where
 import argparse
@@ -57,8 +58,11 @@ def next_text(restaurant, args):
                 if trigger.request not in pending:
                     raise BrigadeError(f"no request {trigger.request} in the inbox")
             snapshot = load_snapshot(restaurant, datetime.now(timezone.utc))
+            meta = restaurant.meta
+        root = meta.get("projectRoot") or ""
+        check = lambda: check_for(root, meta)
         reply = reply_for(snapshot, trigger, failure, unsent)
-        return format_sheet(snapshot, trigger, compile_sheet(snapshot, trigger, failure, unsent), reply)
+        return format_sheet(snapshot, trigger, compile_sheet(snapshot, trigger, failure, unsent, check), reply)
     finally:
         seam.set("READ_ONLY", False)
 
