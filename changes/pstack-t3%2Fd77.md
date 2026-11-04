@@ -1,0 +1,2 @@
+- kind feature
+- The ready report-back wake prints one check line naming the resolved check command, so review runs the project's check at the worker's head before the verifier, and a failure reruns the brief instead of recording a round
