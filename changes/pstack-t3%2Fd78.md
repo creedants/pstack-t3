@@ -1,0 +1,2 @@
+- kind polish
+- The PR template now has Risk and How to revert prompts, and the brigade coordinator's body instruction names both
