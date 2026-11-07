@@ -1,4 +1,0 @@
-- kind fix
-- `watch` now judges each workflow on trunk by that workflow's own newest completed run, ignores GitHub's `dynamic` runs, and passes over a completed `cancelled` run when a newer run of the same workflow exists, so a green automatic dependency run created at `2026-11-03T15:49:10Z` no longer hid the `ci` run that failed at `2026-11-03T15:49:05Z`
-- `trunk CI failing since` and its `before <createdAt>` form now follow the named workflow's own failure streak, and `cannot see trunk CI: conclusion cancelled` prints only when no newer run of that workflow exists
-- `gh run list` is now asked for `event` as well as the fields it already asked for

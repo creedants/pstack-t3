@@ -1,2 +1,0 @@
-- kind fix
-- The ready report-back check line now wraps the resolved command as sh -c with shell quoting so a compound check stays inside one slot, and the review preflight names the check-failure relaunch as a new branch from the failed worker's head with no pass record and no round budget
