@@ -1,5 +1,0 @@
-- kind upkeep
-- Every job in .github/workflows/ci.yml now sets timeout-minutes, so a step that hangs while its runner still runs the job fails in minutes instead of holding it until GitHub's six-hour default
-- The 16 part jobs use 20 minutes and the four macOS part jobs use 45
-- The two gates, the generated job, and the two browser jobs use 10, which is at least three times the longest measured run of each
-- A test in tests/runner_tests/test_ci_jobs.py fails when a job has no positive integer timeout-minutes, and it pins 20 for the part jobs and 45 for the macOS part jobs

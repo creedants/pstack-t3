@@ -1,5 +1,0 @@
-- kind upkeep
-- The part split now has a test where a module's recorded overhead changes which part its test lands in, with the expected parts written as literal numbers
-- The part run launch order now has a test that lists the expected shard numbers as literals, so reversing the sort fails it
-- A missing durations file now has a test over the real repository discovery that covers every discovered test exactly once in eight parts and leaves no part empty
-- Four narration comments are gone from tests/runner_tests/test_parts.py

@@ -1,3 +1,0 @@
-- kind fix
-- `verification/landing-queue/check.py` printed only the last 4,000 characters of a run that answered differently than the model says, so a failing trace lost its `Error:` line and its first states. It now prints that run's whole TLC output, so the `Error:` line naming the invariant and every state from `State 1` to the last one are there whatever the trace's length, and a parse failure prints all of TLC's output
-- `tests/test_landing_queue_check.py` pins it with fake tools and a fake 12-state trace longer than 4,000 characters, so it needs no Java and no jar
