@@ -62,7 +62,7 @@ To merge first, run `python3 scripts/sync_upstream.py --merge`. For each overrid
 python3 scripts/release.py --dry-run X.Y.Z
 ```
 
-2. Read the section. It is a `## X.Y.Z (YYYY-MM-DD)` heading with today's date, then one group of bullets per fragment. `--date YYYY-MM-DD` sets another date.
+2. Read the section. It is a `## X.Y.Z (YYYY-MM-DD)` heading with today's date. The bullets follow in groups by fragment kind. `### New` holds the feature bullets, `### Fixed` the fix bullets, and `### Changed` the upkeep bullets. The polish and study bullets follow with no heading. Each group keeps the commit order of its fragments, and an empty group is left out. `--date YYYY-MM-DD` sets another date.
 3. Run the stable check. On the latest stable T3 Code release, run `setup-pstack` and one small real item. Record the result in the release notes file as `Stable check: T3 Code <version> passed`, with the version you ran. A real run refuses without that record. A real run also refuses unless the file passed with --notes-file has ## New, ## Fixed, and ## Before you upgrade, each with a non-empty line under it (use None. when there is nothing to report).
 
 4. Run it for real. The script writes that section above the latest heading in `CHANGELOG.md` and deletes the fragments. It never stages, commits, tags, pushes, or calls `gh`. It prints steps 5 and 6 when it finishes.

@@ -1,0 +1,2 @@
+- kind polish
+- CONTRIBUTING.md Releasing step 2 now says a release section groups its bullets under `### New`, `### Fixed`, and `### Changed` for feature, fix, and upkeep fragments, then polish and study bullets with no heading, each group in fragment commit order with an empty group left out
