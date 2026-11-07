@@ -1,0 +1,2 @@
+- kind polish
+- The PR template now asks for a risk line and how to revert, and the brigade coordinator writes both into the PR body
