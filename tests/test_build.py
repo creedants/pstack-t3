@@ -109,9 +109,9 @@ class BuildModeTest(unittest.TestCase):
     def test_a_read_only_copy_builds_the_same_files_and_modes_as_a_writable_one(self):
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             self.skipTest("read-only modes do not stop root writes")
-        # The override layer copies architect/SKILL.md over the file the vendor layer wrote.
-        for rel in ("vendor/pstack/skills/architect/SKILL.md", "t3/overrides/architect/SKILL.md"):
-            self.assertTrue((ROOT / rel).is_file(), rel)
+        # The architect override is gone: the new upstream text ships as is.
+        self.assertTrue((ROOT / "vendor/pstack/skills/architect/SKILL.md").is_file())
+        self.assertFalse((ROOT / "t3/overrides/architect/SKILL.md").exists())
 
         def set_owner_write(root, writable):
             for path in root.rglob("*"):

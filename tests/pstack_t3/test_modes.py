@@ -208,9 +208,9 @@ class ModesTest(unittest.TestCase):
             spawn = row.split("|")[1].strip()
             self.assertIn("(SKILL.md#gate-review)", row, spawn)
 
-    def test_full_mode_persona_keeps_investigation(self):
+    def test_full_mode_persona_keeps_why_investigation(self):
         persona = (ROOT / "skills/pstack-runtime/agents/comment-sicko.md").read_text()
-        self.assertIn("I run the **how** skill, the **why** skill, or both", persona)
+        self.assertIn("I trace the named symbol or call, run `/why` from the **why** skill on it, or both", persona)
 
     def test_gate_reuse_lives_in_gate_review(self):
         gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()
