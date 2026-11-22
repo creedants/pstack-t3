@@ -111,7 +111,7 @@ class StalledChildDocTest(unittest.TestCase):
         sources = {
             "how/SKILL.md": "../pstack-runtime", "arena/SKILL.md": "../pstack-runtime",
             "interrogate/SKILL.md": "../pstack-runtime", "swarm/SKILL.md": "../pstack-runtime",
-            "why/SKILL.md": "../pstack-runtime", "no-comments/SKILL.md": "../pstack-runtime",
+            "no-comments/SKILL.md": "../pstack-runtime",
             "poteto-mode/playbooks/feature.md": "../../pstack-runtime",
             "poteto-mode/playbooks/bug-fix.md": "../../pstack-runtime",
             "poteto-mode/playbooks/refactoring.md": "../../pstack-runtime",

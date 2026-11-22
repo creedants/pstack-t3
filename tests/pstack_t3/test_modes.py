@@ -25,7 +25,7 @@ from tests.pstack_t3.support import pointer_sentence, unfenced_lines, heading_sl
 
 MODE_POINTER_SITES = {
     **{f"{name}/SKILL.md": "skill" for name in (
-        "poteto-mode", "how", "why", "arena", "no-comments", "swarm", "interrogate",
+        "poteto-mode", "how", "arena", "no-comments", "swarm", "interrogate",
         "show-me-your-work", "recall", "automate-me", "maintain-verification-skill", "reflect",
         "pstack-author-skill", "landing",
     )},
@@ -42,6 +42,7 @@ MODES_UNCHANGED = {
     "brigade-admin/SKILL.md": "launches only standing threads, the admin and a coordinator the user asks for, which light mode keeps",
     "setup-pstack/SKILL.md": "the smoke test is kept, one per provider",
     "poteto-help/SKILL.md": "names delegate_task to explain the persona and spawns nothing",
+    "why/SKILL.md": "runs inline and writes no brief, so no modes line applies",
     "poteto-mode/playbooks/autonomous-run.md": "the watcher is kept",
     "poteto-mode/playbooks/eval.md": "keeps arena and its judge, because comparing candidates is its purpose",
 }
@@ -161,7 +162,7 @@ class ModesTest(unittest.TestCase):
         )
         self.assertIn("pass `--session-mode full`", light_row(light, "`reflect`"))
         verification = light_row(light, "Multi-phase verification")
-        self.assertIn("every **Verify, live** lane box that drives its surface", verification)
+        self.assertIn("Write each PR's unit, live, and perf checkboxes", verification)
         self.assertIn("Launch no perf lane.", verification)
         self.assertIn("(SKILL.md#gate-review)", verification)
 
