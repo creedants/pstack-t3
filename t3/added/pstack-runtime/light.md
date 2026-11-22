@@ -10,7 +10,7 @@ Read this file before every spawn and run the row for that spawn.
 | `architect` | Sketch two shapes and pick one. For a large or contested design, run the **arena** skill instead of sketching alone. |
 | Arena cross-judge | Spawn no judge. The parent picks. The [gate review](SKILL.md#gate-review) reads the chosen design. |
 | Arena candidates | Hand code to the single code delegate. Eval keeps arena and its judge, because comparing candidates is its whole purpose. |
-| Code delegate | Keep it, with the persona, the `roles.py mode` lines, and `roles.py check-brief`. Hillclimb runs one live hypothesis at a time. |
+| Code delegate | Keep it, with the worker line, the persona body, the `roles.py mode` lines, and `roles.py check-brief`. Hillclimb runs one live hypothesis at a time. |
 | Comment Sicko | Spawn no Comment Sicko child. The worker applies `agents/comment-sicko.md` to its own diff. The [gate review](SKILL.md#gate-review) checks the same rules. |
 | Comment Sicko follow-ups | Spawn no follow-up `how`, `why`, rerun, or `architect`. A finding that needs one goes into the gate verdict as a send-back. The contract in [Gate review](SKILL.md#gate-review) step 2 tells the reviewer the same. |
 | `interrogate` | No playbook runs it. A contested design escalates per [Resolve and carry the mode](SKILL.md#resolve-and-carry-the-mode). A child that opens a PR runs the [gate review](SKILL.md#gate-review) in its place. |

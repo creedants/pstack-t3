@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 from _roles.base import RolesError
-from _roles.mode import mode_problems
+from _roles.mode import GRAMMAR_LABELS, mode_problems
 from _roles import seam
 
 
@@ -14,7 +14,26 @@ def persona_path():
     return seam.AGENTS_DIR / "poteto-agent.md"
 
 
-WORKER_LINE = re.compile(r"Read /\S*/worker\.md before anything else\.")
+WORKER_LINE = re.compile(r"Read /.+/worker\.md before anything else\.")
+
+
+MISSING_WORKER = "missing worker line: open the brief with 'Read <absolute path>/worker.md before anything else.'"
+
+
+TEXT_BEFORE_MODE = (
+    "text before the mode lines: the pasted roles.py mode lines go directly below "
+    "the persona body, and the task text follows them"
+)
+
+
+_BRIEF_LINE = re.compile("(" + "|".join(map(re.escape, ("Playbook",) + GRAMMAR_LABELS)) + r"):(.*)")
+
+
+def first_brief_line_index(checked):
+    for index, line in enumerate(checked.splitlines()):
+        if _BRIEF_LINE.fullmatch(line.strip()):
+            return index
+    return None
 
 
 def strip_worker_line(text):
@@ -87,13 +106,27 @@ def playbook_stem(value):
 
 def brief_problems(text, persona_body, playbooks):
     problems = []
-    checked = strip_worker_line(text)
+    raw_lines = text.splitlines()
+    index = 0
+    while index < len(raw_lines) and not raw_lines[index].strip():
+        index += 1
+    if index >= len(raw_lines) or not WORKER_LINE.fullmatch(raw_lines[index].strip()):
+        problems.append(MISSING_WORKER)
+        checked = text
+    else:
+        checked = strip_worker_line(text)
     collapsed_body = " ".join(persona_body.split())
     collapsed_brief = " ".join(checked.split())
     if not collapsed_brief.startswith(collapsed_body):
         problems.append(
             f"missing persona: open the brief with the body of {persona_path()}, without its frontmatter"
         )
+    else:
+        first = first_brief_line_index(checked)
+        if first is not None:
+            prefix = "\n".join(checked.splitlines()[:first])
+            if " ".join(prefix.split()) != collapsed_body:
+                problems.append(TEXT_BEFORE_MODE)
     names = ", ".join(sorted(playbooks))
     values = playbook_values(text)
     stem = None
