@@ -22,21 +22,21 @@ For each candidate, call `t3_thread_read` with `view: "messages"` and `limit: 1`
 
 ## 2. Spawn three reviewers in parallel
 
-One message, three `delegate_task` calls with `mode: "async"` and `role: "review"`. Reviewers need MCP access to look up the tickets, chat threads, and observability traces the thread references, so keep the child's tools and let the brief carry the read-only constraint.
+One message, three `delegate_task` calls with `mode: "async"` and `role: "review"`. Reviewers need their tools to look up the tickets, chat threads, and observability traces the thread references, so keep the child's tools and let the brief carry the read-only constraint ("Do not edit files, commit, or push").
 
-Each reviewer and the synthesizer name a role. Set `target` to the target resolved from that role per the [runtime's Roles section](../pstack-runtime/SKILL.md#roles). Omit `target` for an `inherit` seat. If T3 rejects a target, fall back per the runtime and say which seat changed. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill.
+Each reviewer names a role. Set `target` to the target resolved from that role per the [runtime's Roles section](../pstack-runtime/SKILL.md#roles). Omit `target` for an `inherit` seat. If T3 rejects a target, fall back per the runtime and say which seat changed. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill.
 
-| Lens | Role | Prompt template |
-|---|---|---|
-| Judgment | `reflect judgment, divergent, synthesizer` | `references/judgment-reviewer.md` |
-| Tooling | `reflect tooling` | `references/tooling-reviewer.md` |
-| Divergent | `reflect judgment, divergent, synthesizer` | `references/divergent-reviewer.md` |
+| Lens | Role |
+|---|---|
+| Judgment | `reflect judgment, divergent, synthesizer` |
+| Tooling | `reflect tooling` |
+| Divergent | `reflect judgment, divergent, synthesizer` |
 
-Pass each template verbatim, substituting the thread id or digest where marked. Reviewers return findings in their final message, which arrives as the task's `summary`.
+Give each reviewer the thread id or digest where marked, plus its lens: judgment mines corrections the user gave and checks that were skipped or never run on the real artifact; tooling mines commands and quirks the agent had to discover and context the agent could have fetched; divergent surfaces the finding the other two would miss. Reviewers return findings in their final message, which arrives as the task's `summary`. Collect them per [the runtime's Delegation step 5](../pstack-runtime/SKILL.md#delegation).
 
 ## 3. Synthesize
 
-One `delegate_task` call with `role: "review"` and the target from the `reflect judgment, divergent, synthesizer` role. It spot-verifies citations through MCP, so it keeps its tools and the template carries the read-only constraint. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list.
+One `delegate_task` call with `role: "review"` and the target from the `reflect judgment, divergent, synthesizer` role. It keeps its tools and the brief carries the read-only constraint. Give it each reviewer's full output inlined. It spot-verifies citations and returns an Accepted / Rejected / Backlog list.
 
 ## 4. Structural enforcement check
 
