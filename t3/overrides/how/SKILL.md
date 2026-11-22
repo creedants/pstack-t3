@@ -14,7 +14,7 @@ If the scope is ambiguous, state your interpretation and explore. The user can r
 
 ## 1. Explain
 
-Spawn one `delegate_task` child with `mode: "async"`, a stable `clientRequestId` such as `how-<slug>`, and a read-only brief. Seat it on the `how explainer` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles): `target` is the role's seat, omitted for `inherit`. If `delegate_task` rejects the target, apply the runtime's fallback and say which seat changed. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill. The brief says "You have read-only access to the codebase. Do not edit files, commit, or push." Give it the user's question and this brief:
+Spawn one `delegate_task` child with `mode: "async"`, `role: "general"`, a stable `clientRequestId` such as `how-<slug>`, and a read-only brief. Seat it on the `how explainer` role per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles): `target` is the role's seat, omitted for `inherit`. If `delegate_task` rejects the target, apply the runtime's fallback and say which seat changed. Pass the seat the role this step names, per the Subagents section of the poteto-mode skill. The brief says "You have read-only access to the codebase. Do not edit files, commit, or push." Give it the user's question and this brief:
 
 > You are writing an architectural explanation for a senior engineer. Explore the codebase and write an explanation that a senior engineer unfamiliar with this area could read and walk away with a solid mental model. They should understand the architecture well enough to start working in it confidently. You have read-only access to the codebase.
 
