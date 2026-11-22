@@ -49,11 +49,6 @@ CASES = (
         for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py"))
     ),
     (
-        "t3/overrides/poteto-mode/scripts/check-plan.mjs",
-        "poteto-mode/scripts/check-plan.mjs",
-        None,
-    ),
-    (
         "t3/overrides/poteto-mode/scripts/worktree-audit.sh",
         "poteto-mode/scripts/worktree-audit.sh",
         None,

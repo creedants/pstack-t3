@@ -228,6 +228,8 @@ def runtime_bullet(section, prefix):
     return next(line for line in section.splitlines() if line.startswith(prefix))
 def override_text(path):
     return (ROOT / "t3/overrides" / path).read_text()
+def added_text(path):
+    return (ROOT / "t3/added" / path).read_text()
 def _context_catalog(provider_id, model_options):
     return {
         "providers": [{

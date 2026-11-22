@@ -70,10 +70,12 @@ class BuildTest(unittest.TestCase):
             self.assertTrue((ROOT / "skills/poteto-mode" / file).is_file(), title)
         self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
 
-    def test_vendor_playbook_entries_match_playbook_files(self):
+    def test_built_tree_lists_the_kept_orchestrate_playbook_and_its_file_resolves(self):
         import catalog
-        resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "vendor/pstack/skills")}
-        self.assertEqual(resolved, PLAYBOOK_FILES)
+        resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "skills")}
+        self.assertIn("Orchestrate", resolved)
+        self.assertTrue((ROOT / "skills/poteto-mode" / resolved["Orchestrate"]).is_file())
+        self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
         self.assertEqual(catalog.missing_playbooks(ROOT / "vendor/pstack/skills"), [])
 
     def test_a_skill_with_no_playbooks_heading_returns_nothing(self):

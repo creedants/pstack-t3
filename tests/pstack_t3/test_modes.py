@@ -25,7 +25,7 @@ from tests.pstack_t3.support import pointer_sentence, unfenced_lines, heading_sl
 
 MODE_POINTER_SITES = {
     **{f"{name}/SKILL.md": "skill" for name in (
-        "poteto-mode", "how", "why", "architect", "arena", "no-comments", "swarm", "interrogate",
+        "poteto-mode", "how", "why", "arena", "no-comments", "swarm", "interrogate",
         "show-me-your-work", "recall", "automate-me", "maintain-verification-skill", "reflect",
         "pstack-author-skill", "landing",
     )},
@@ -130,6 +130,12 @@ class ModesTest(unittest.TestCase):
         child = next(block for block in blocks if block.startswith("A child task that opens a PR"))
         self.assertIn("that child runs the **Gate** paragraph above in place of `/no-comments`.", child)
         self.assertIn("Run `/no-comments` before review.", text)
+
+    def test_architect_holds_no_modes_pointer_because_it_writes_no_brief(self):
+        text = (ROOT / "skills/architect/SKILL.md").read_text()
+        self.assertNotIn("delegate_task", text)
+        self.assertNotIn("t3_thread_launch", text)
+        self.assertNotIn(pointer_sentence("skill"), text)
 
     def test_gate_contract_is_literal(self):
         self.assertEqual(gate_contract(self.gate), GATE_CONTRACT)
