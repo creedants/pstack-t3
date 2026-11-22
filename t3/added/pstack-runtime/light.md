@@ -5,7 +5,7 @@ Read this file before every spawn and run the row for that spawn.
 | Spawn | Light behavior |
 | --- | --- |
 | `how` | Take the simple path for every question. Spawn one `how explainer`. Spawn no `how explorer`. |
-| `why` | Spawn one investigator on the `why investigators` role. Spawn no synthesizer. The parent writes the synthesis with citations, labeled inferences, and open unknowns. |
+| `why` | No child. The skill runs inline: the parent reads the commits, the PR discussions, and any other source itself, and labels its inferences. |
 | `architect` grounding | Reuse the `how` output the calling playbook already holds. Run `how` once only when there is none. |
 | `architect` | Sketch two shapes and pick one. For a large or contested design, run the **arena** skill instead of sketching alone. |
 | Arena cross-judge | Spawn no judge. The parent picks. The [gate review](SKILL.md#gate-review) reads the chosen design. |
@@ -23,7 +23,7 @@ Read this file before every spawn and run the row for that spawn.
 | `automate-me` | Spawn one miner over the whole history window. Its brief lists every `threadId` that `t3_thread_list` returns in the window, across every page. The parent filters and samples none, and tells the miner to read each one. |
 | Verification source wave | Spawn at most 3 source children, each reading a batch of feature files. |
 | Multi-phase exploration | Spawn one read-only explorer. |
-| Multi-phase verification | Write the plan's lane checklist as the playbook requires. At each code-ready head, launch the gates lane, one live lane per surface, and one audit lane on another model family, or a same-family read when only the author's family has a runnable seat. That audit lane is the gate review and runs [Gate review](SKILL.md#gate-review) steps 1 to 4. Each live lane's brief carries the boot recipe and every **Verify, live** lane box that drives its surface, and tells the lane to run and report each box. Launch no perf lane. The perf boxes stay in the plan and are not a merge gate. |
+| Multi-phase verification | Write each PR's unit, live, and perf checkboxes as the playbook requires. At each code-ready head, launch one gates child that runs that PR's gates and one audit lane on another model family, or a same-family read when only the author's family has a runnable seat. That audit lane is the gate review and runs [Gate review](SKILL.md#gate-review) steps 1 to 4. Each live box names its scenario and pass predicate, and the lanes child runs it and reports the result. Launch no perf lane. The perf box stays in the plan and is not a merge gate. |
 | Autopilot owner | One owner per PR. Each owner `message`, including a replacement's, carries the mode lines and the seat rule from [Resolve and carry the mode](SKILL.md#resolve-and-carry-the-mode). |
 | Autopilot verification | Two lane children per round. The gates lane reruns the gates at that SHA and keeps the patch-id rule in `playbooks/shipping.md`. One audit lane on another model family, or a same-family read when only the author's family has a runnable seat, is the gate review. It runs [Gate review](SKILL.md#gate-review) steps 1 to 4 at every new head SHA. |
 | Orchestrate sub-coordinator, worker, and long-lived owner | Keep them. Each brief or `message` carries the mode lines and the seat rule from [Resolve and carry the mode](SKILL.md#resolve-and-carry-the-mode). |

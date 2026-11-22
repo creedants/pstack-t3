@@ -109,9 +109,8 @@ class BuildModeTest(unittest.TestCase):
     def test_a_read_only_copy_builds_the_same_files_and_modes_as_a_writable_one(self):
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             self.skipTest("read-only modes do not stop root writes")
-        # The architect override is gone: the new upstream text ships as is.
-        self.assertTrue((ROOT / "vendor/pstack/skills/architect/SKILL.md").is_file())
-        self.assertFalse((ROOT / "t3/overrides/architect/SKILL.md").exists())
+        self.assertTrue((ROOT / "vendor/pstack/skills/poteto-mode/SKILL.md").is_file())
+        self.assertTrue((ROOT / "t3/overrides/poteto-mode/SKILL.md").is_file())
 
         def set_owner_write(root, writable):
             for path in root.rglob("*"):
