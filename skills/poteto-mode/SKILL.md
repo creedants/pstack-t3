@@ -7,7 +7,7 @@ description: poteto's agent style for concise, detailed responses, deliberate su
 
 Read [the pstack-t3 runtime](../pstack-runtime/SKILL.md) before spawning workers, choosing models, scheduling, or isolating work. It maps those steps onto T3's orchestrator tools.
 
-Bundled skills live at `../<name>/SKILL.md` from this file, so put this file's absolute path in every `delegate_task` brief that carries the poteto-agent persona.
+Bundled skills live at `../<name>/SKILL.md` from this file, so put this file's absolute path in every `poteto-agent` prompt.
 
 ## Non-negotiables
 
@@ -20,9 +20,9 @@ The remaining triggers live only here:
 - A fork you could settle by running something → prototype it per `playbooks/prototype.md` instead of asking.
 - Code → name the data shape first. Across a function boundary → **architect**. Fan-out → **swarm**. Bakeoff → **arena**. Contested design → **interrogate**.
 - Prose, your reply included → **unslop**. Docs, PR descriptions, commit messages → **technical-writing**.
-- Before commit → the `deslop` skill (`/deslop`) if installed. Otherwise strip slop from the diff yourself per the **unslop** skill before you commit.
+- Before commit → `/deslop` if installed, otherwise strip slop per **unslop**.
 - Before review → **no-comments**.
-- Shipping UI / IDE / CLI → the matching control skill. Use `control-cli` (CLIs and TUIs) and `control-ui` (browser / Electron / web UIs) if installed. Otherwise drive CLIs and TUIs in the terminal and browser / Electron / web UIs through T3's preview tools, per [the runtime's Verification surfaces](../pstack-runtime/SKILL.md#verification-surfaces).
+- Shipping UI / IDE / CLI → `control-ui` or `control-cli` if installed, otherwise the terminal and T3's preview tools per [the runtime's Verification surfaces](../pstack-runtime/SKILL.md#verification-surfaces).
 - A number you measured → **benchmark-checklist**.
 - PR status → the **Babysit** playbook, not any host built-in babysit skill. Landing a green stack → the **Shipping** playbook.
 - Bot review comments → judge each on its merits.
@@ -88,11 +88,9 @@ Read the leaf skill in full for any principle you apply. Each entry names when i
 
 [The runtime's Modes section](../pstack-runtime/SKILL.md#modes) sets the mode lines of every brief this skill writes and how its spawns run in light mode.
 
-**Defaults for every `delegate_task` call.** Follow [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation). `mode: "async"`, file pointers not inlined context, and a `target` resolved from the role (configurable via `/setup-pstack`, printed by `roles.py show`, defaults and fallback per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles)). Children keep this thread's runtime mode, and a read-only child is a read-only brief per [the runtime's Permissions section](../pstack-runtime/SKILL.md#permissions). Tier code delegates by difficulty, from the playbook's code role up to the `hardest tasks` role for cross-cutting design, gnarly concurrency, and subtle algorithms. The roles file overrides the model choices in the routed skills (`how`, `why`, `arena`, `swarm`, `architect`, `interrogate`, `reflect`) the same way. A role seat of `inherit` runs that role on this thread's provider and model (omit `target`). Send prose and judgment to the `judgment and prose` role.
+**Defaults for every `delegate_task` call.** Follow [the runtime's Delegation section](../pstack-runtime/SKILL.md#delegation). `mode: "async"`, file pointers not inlined context, and a `target` resolved from the role (configurable via `/setup-pstack`, printed by `roles.py show`, defaults and fallback per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles)). Children keep this thread's runtime mode, and a read-only child is a read-only brief per [the runtime's Permissions section](../pstack-runtime/SKILL.md#permissions). Tier code delegates by difficulty, from the playbook's code role up to the `hardest tasks` role for cross-cutting design, gnarly concurrency, and subtle algorithms. A role seat of `inherit` runs that role on this thread's provider and model (omit `target`). Send prose and judgment to the `judgment and prose` role.
 
-**Match the model to the job.** Before each spawn, start from the role the step names and pass that seat unchanged, per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). The hardest or subtlest work uses the `hardest tasks` role. Judgment uses `judgment and prose`. Routine work uses the playbook's code role. Verification stays on the `swarm workers` role. An `inherit` seat stays `inherit`. When `delegate_task` rejects a target, follow the rejected-target chain in [the runtime's fallback](../pstack-runtime/roles.md#fallback), and say so. A rejected target stays rejected. Never pass it again, and skip any fallback seat already rejected.
-
-**Fable 5.2 is an exception.** It runs outside a panel only when the user named it for this task or two Opus 5.5 xhigh runs of the same brief failed its check. Say which. Difficulty alone never qualifies.
+**Match the model to the job.** Before each spawn, pass the seat the step's role names unchanged, per [the runtime's Roles section](../pstack-runtime/SKILL.md#roles). The hardest work uses `hardest tasks`, judgment uses `judgment and prose`, routine work uses the playbook's code role, and verification stays on `swarm workers`. An `inherit` seat stays `inherit`. When `delegate_task` rejects a target, follow the rejected-target chain in [the runtime's fallback](../pstack-runtime/roles.md#fallback), and never pass a rejected target again.
 
 You own every subagent's work. Review the diff and write your own summary. A second opinion is the same prompt on another vendor's model.
 
@@ -104,28 +102,10 @@ Write short declarative sentences with no long dash and no colon as a connector.
 
 ## Playbooks
 
-Match the task to a playbook and open its steps at `playbooks/<title>.md`, with the title in kebab case. Copy its steps into the todolist tool first, before any task-specific todos. A step you choose not to do stays in the list with a one-line `skip: <reason>`. Large, cross-cutting, or unattended work, or a task no playbook fits, routes to the **figure-it-out** skill. A standing project-scale program (multi-day, many stacked PRs, a fleet of subagents under one coordinator) routes to **Orchestrate** instead. figure-it-out designs one bespoke run, orchestrate runs the program.
+Match the task to a playbook and open its steps at `playbooks/<title>.md`, with the title in kebab case. Copy its steps into the todolist tool first. Large, cross-cutting, or unattended work, or a task no playbook fits, routes to the **figure-it-out** skill. A standing project-scale program routes to **Orchestrate** instead.
 
-- **Investigation.** Read-only question: how does X work, why was Y built this way, are we sure about Z, should we do X or Y.
-- **Bug fix.** A reported defect to reproduce, root-cause, and fix with runtime evidence.
-- **Perf issue.** A measured slowness to trace and improve against a baseline.
-- **Hillclimb.** Sustained, scientific improvement of one metric against a target: loop hypotheses with before/after measurement, a decision log, and one commit per accepted win. Distinct from Perf issue, which is a one-off fix.
-- **Runtime forensics.** Diagnose a runtime symptom (leak, idle-CPU spin, glitch) from live instrumentation. The deliverable is a diagnosis, not a fix.
-- **Trace forensics.** Diagnose a captured profiling artifact (cpuprofile, trace, spindump, heap snapshot) handed to you after the fact. The deliverable is a diagnosis, not a fix.
-- **Feature.** New or changed behavior, built from a named data shape.
-- **Refactoring.** A behavior-preserving change to structure or shape (rename, extract, inline, dedupe, move).
-- **Prototype.** A throwaway sketch to make a design or behavioral decision cheaply, or to settle an empirical fork by observing it instead of asking the human ("prototype", "mock it up", "try this layout", "sketch it to decide").
-- **Visual parity.** Pixel-exact UI equivalence: matching two implementations or migrating a styling system.
-- **Authoring or modifying a skill.** Writing or editing a SKILL.md. File: `playbooks/authoring-a-skill.md`.
-- **Eval.** Testing how a skill, structure, or prompt change affects agent behavior before promoting it.
-- **Babysit.** Driving a PR or a stack to merge-ready: conflicts, review threads, CI.
-- **Shipping.** The half after Babysit. Independently verifying a green stack, then landing the contiguous verified run bottom-up through `gh` by default or Origin when its CLI is available.
-- **Autonomous run.** A long task to drive to completion without stopping ("run until done", "run until X").
-- **Orchestrate.** A standing project handed to one coordinator chat: multi-day, many stacked PRs, dozens to hundreds of subagents, minimal human turns ("run this whole project", "own this migration until it lands"). Distinct from Autonomous run, which drives one task to a predicate. Work one agent could finish inside the session's budget routes there, not here, however program-shaped the phrasing sounds.
-- **Autopilot-full.** A queue of independent PRs run to merged with full autonomy. One owner per PR carries build through merge, and the root swarm-verifies each PR before its owner merges ("autopilot this queue", "full autopilot", one-owner-per-PR programs).
-- **Autopilot-stack.** Autopilot-full without the merge. A queue of PRs built and verified with full autonomy, then handed to the operator to land. A PR stacks only on a PR it builds on ("autopilot-stack", "autopilot, don't merge", "stack them, don't ship", "build the stack, I'll land it").
-- **Session pickup.** Resuming or taking over a prior agent's in-flight work from a T3 thread, pushed branch, or worktree.
-- **Pause safely.** Suspending in-flight work cleanly so it can be resumed, on an explicit pause, going offline, a T3 restart or provider switch, or imminent context compaction. The complement to Session pickup.
-- **Multi-phase or multi-PR plan.** Work that spans phases or stacked PRs. File: `playbooks/multi-phase-plan.md`.
-- **Worktree and simulator cleanup.** Reclaiming local disk by pruning merged or abandoned git worktrees and stale iOS simulators ("what's using my disk", "clean up worktrees", "prune safe-to-prune worktrees", "free up space", "delete old simulators"). File: `playbooks/worktree-cleanup.md`.
-- **Opening a PR.** Invoked at the end of every other playbook.
+Investigation, Bug fix, Perf issue, Hillclimb, Runtime forensics, Trace forensics, Feature, Refactoring, Prototype, Visual parity, Authoring a skill, Eval, Babysit, Shipping, Autonomous run, Autopilot-full, Autopilot-stack, Session pickup, Pause safely, Multi-phase plan, Worktree cleanup, Opening a PR.
+
+Upstream removed one playbook, which pstack-t3 keeps:
+
+- **Orchestrate.** A standing project handed to one coordinator chat: multi-day, many stacked PRs, dozens of subagents, minimal human turns.
