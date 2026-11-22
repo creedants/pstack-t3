@@ -67,6 +67,24 @@ class CheckBriefCliTest(unittest.TestCase):
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
+    def test_worker_line_before_the_persona_passes(self):
+        brief = (
+            "Read /home/user/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
+
+    def test_a_second_worker_line_is_not_stripped(self):
+        brief = (
+            "Read /home/user/skills/poteto-mode/worker.md before anything else.\n"
+            "Read /home/user/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, MISSING_PERSONA)
+
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
         split = body.rfind(". ")

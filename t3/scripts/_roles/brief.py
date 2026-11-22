@@ -14,6 +14,19 @@ def persona_path():
     return seam.AGENTS_DIR / "poteto-agent.md"
 
 
+WORKER_LINE = re.compile(r"Read /\S*/worker\.md before anything else\.")
+
+
+def strip_worker_line(text):
+    lines = text.splitlines(keepends=True)
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines) and WORKER_LINE.fullmatch(lines[index].strip()):
+        return "".join(lines[index + 1:])
+    return text
+
+
 def playbook_stems():
     root = seam.TREE_ROOT
     rendered_tree = root / "poteto-mode" / "playbooks"
@@ -74,8 +87,9 @@ def playbook_stem(value):
 
 def brief_problems(text, persona_body, playbooks):
     problems = []
+    checked = strip_worker_line(text)
     collapsed_body = " ".join(persona_body.split())
-    collapsed_brief = " ".join(text.split())
+    collapsed_brief = " ".join(checked.split())
     if not collapsed_brief.startswith(collapsed_body):
         problems.append(
             f"missing persona: open the brief with the body of {persona_path()}, without its frontmatter"
