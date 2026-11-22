@@ -59,7 +59,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(catalog.kebab("Autopilot-full"), "autopilot-full")
         self.assertEqual(catalog.kebab("Opening a PR"), "opening-a-pr")
 
-    def test_the_built_playbooks_section_names_only_the_orchestrate_playbook_upstream_removed(self):
+    def test_catalog_extracts_only_the_orchestrate_bullet(self):
         import catalog
         resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "skills")}
         self.assertEqual(resolved, {"Orchestrate": "playbooks/orchestrate.md"})
