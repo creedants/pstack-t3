@@ -150,8 +150,13 @@ def t3_database(flag, environ, home):
     else:
         base = Path(chosen) if chosen else home / ".t3"
     for state in ("userdata",) if chosen else ("userdata", "dev"):
+        path = base / state / T3_DATABASE
         try:
-            found = (base / state / T3_DATABASE).is_file()
+            found = stat.S_ISREG(os.stat(path).st_mode)
+        except FileNotFoundError:
+            found = False
+        except NotADirectoryError:
+            found = False
         except OSError as error:
             raise SourceError(f"cannot look for T3's database under {source} ({error.strerror}); check its permissions and run this again") from None
         if found:
