@@ -1,1 +1,1 @@
-- Move the built-in reviewer default and the full-send `SOL` seat from `gpt-6.1-sol` to `gpt-6.2-sol`: `brigade_lib/full_send.py`, the `full-send` reference, `roles.md`'s family example, and the guide reference. A user roles file that names a seat keeps its seat.
+- Move brigade’s built-in full-send reviewer seat from `codex/gpt-6.1-sol` to `codex/gpt-6.2-sol` at `high`. Update the full-send reference and the model-family example in `roles.md`.
