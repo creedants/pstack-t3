@@ -5,8 +5,8 @@ import re
 from pathlib import Path
 
 
-from _roles.base import RolesError
-from _roles.mode import grammar_entry, mode_problems
+from _roles.base import ATTEMPTS, RolesError
+from _roles.mode import grammar_entry, mode_problems, waived_value
 from _roles import seam
 
 
@@ -41,6 +41,26 @@ def kickoff_entry(line):
 MODE_BLOCK_LABELS = ("Playbook", "Mode", "Mode source", "Attempt", "Waived by mode")
 
 
+def printed_block_end(lines, first):
+    rows = [index for index in range(first, len(lines)) if lines[index].strip()][:5]
+    entries = [kickoff_entry(lines[index]) or ("", "") for index in rows]
+    labels = [label for label, _ in entries]
+    at = 3 if labels[2:3] == ["Mode source"] else 2
+    if labels[:2] != ["Playbook", "Mode"] or labels[at:at + 1] != ["Attempt"]:
+        return None
+    stem, mode, attempt = playbook_stem(entries[0][1]), entries[1][1], entries[at][1]
+    if stem is None or attempt not in ATTEMPTS:
+        return None
+    later = [kickoff_entry(line) for line in lines[rows[at] + 1:]]
+    if at == 2 and any(entry is not None and entry[0] == "Mode source" and entry[1] for entry in later):
+        return None
+    if labels[at + 1:at + 2] == ["Waived by mode"]:
+        return rows[at + 1]
+    if waived_value(mode, (stem, attempt)) is not None:
+        return None
+    return rows[at]
+
+
 def kickoff_problem(checked, collapsed_body):
     lines = checked.splitlines()
     block = []
@@ -53,7 +73,10 @@ def kickoff_problem(checked, collapsed_body):
     first = block[0]
     if " ".join("\n".join(lines[:first]).split()) != collapsed_body:
         return TEXT_BEFORE_MODE
-    for line in lines[first:block[-1]]:
+    end = printed_block_end(lines, first)
+    if end is None:
+        end = block[-1]
+    for line in lines[first:end]:
         if not line.strip():
             continue
         entry = kickoff_entry(line)
