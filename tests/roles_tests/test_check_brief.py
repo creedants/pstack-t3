@@ -80,6 +80,10 @@ def _q(p,m,t="\nMode:\n"):
     return WORKER+f"{agent_body()}\n\n{mode_output('--playbook',p,'--attempt','first','--brief-mode',m)}\n"+TASK+t
 
 
+def _d(head):
+    return WORKER+f"{agent_body()}\n\nPlaybook: playbooks/{head}Gate: brigade\nMode source: brief\n\n"+TASK
+
+
 MISSING_PLAYBOOK = (
     "missing playbook: add one line 'Playbook: playbooks/<name>.md', "
     f"where <name> is one of: {PLAYBOOK_NAMES}\n"
@@ -283,6 +287,15 @@ class CheckBriefCliTest(unittest.TestCase):
 
     def test_reordered_light_waiver_gate_attempt_refused(self):
         self.assert_check(check_text(WORKER+f"{agent_body()}\n\nPlaybook: playbooks/bug-fix.md\nMode: light\nMode source: brief\nWaived by mode: Comment Sicko\nGate: brigade\nAttempt: first\n"+TASK),1,TEXT_BEFORE_MODE)
+
+    def test_quoted_light_no_waiver_no_placement(self):
+        self.assert_check(check_text(_q("investigation","light")),1,DUP_M)
+
+    def test_mode_source_after_full_attempt_refused(self):
+        self.assert_check(check_text(_d("refactoring.md\nMode: full\nAttempt: first\n")),1,TEXT_BEFORE_MODE)
+
+    def test_mode_source_after_light_waiver_refused(self):
+        self.assert_check(check_text(_d("bug-fix.md\nMode: light\nAttempt: first\nWaived by mode: Comment Sicko\n")),1,TEXT_BEFORE_MODE)
 
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
