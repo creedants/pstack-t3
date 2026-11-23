@@ -113,7 +113,7 @@ class RolesConfigTest(unittest.TestCase):
         text = (ROOT / "t3/added/pstack-runtime/roles.md").read_text()
         self.assertIn("There are no built-in model picks.", text)
         self.assertIn("Do not reconstruct role defaults", text)
-        self.assertIn("`gpt-6.1-sol` is `gpt`", text)
+        self.assertIn("`gpt-6.2-sol` is `gpt`", text)
         self.assertNotIn('"model": "gpt-6.1-sol"', text)
         defaults = text.split("## Built-in defaults", 1)[1].split("## Excluded seats", 1)[0]
         self.assertIn('resolves to `"inherit"`', defaults)

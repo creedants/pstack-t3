@@ -10,7 +10,7 @@ There are no built-in model picks. A role set in no roles file resolves to `"inh
 
 The roles file may carry two optional keys. `exclude` is a list of rules that refuse a seat, per [Excluded seats](#excluded-seats). `backups` maps a role name to a non-empty ordered list of seats (`{"providerInstanceId", "model", ...}`) that `roles.py backup` tries when a seat hits a usage limit, per [failures.md](failures.md#usage-limit). An `inherit` seat is refused in `backups`. `validate` checks both keys, and `roles.py write` keeps them.
 
-A model family is the leading word of the model ID after the normalizer runs, so `claude-opus-5-5` is `claude`, `gpt-6.2-sol` is `gpt`, and `grok-4.7` is `grok`. The version does not change the family, and `gpt-6.1-sol` is `gpt` too. The normalizer in [Claude Haiku 5.5](#claude-haiku-55) runs first, so `us.anthropic.claude-sonnet-5-5-v1:0` is `claude`. Diversity rules compare families, never providers, because one provider can serve another's models.
+A model family is the leading word of the model ID after the normalizer runs, so `claude-opus-5-5` is `claude`, `gpt-6.2-sol` is `gpt`, and `grok-4.7` is `grok`. The normalizer in [Claude Haiku 5.5](#claude-haiku-55) runs first, so `us.anthropic.claude-sonnet-5-5-v1:0` is `claude`. Diversity rules compare families, never providers, because one provider can serve another's models.
 
 `review backups` has no built-in seats, so `show` reports `"seats": "unset"` until the user sets it. Once it is set, `show` needs a catalog and reports `"seats": "catalog-required"` without one. With a catalog it prints the seats `backup` keeps when no provider is out and no author is named, and a `dropped <provider>/<model>: <reason>` note for each other seat that [Excluded seats](#excluded-seats) does not skip first. When a seat is dropped, `validate` lists it and exits 1, and `write` refuses the config unless `--force` is passed. When the role keeps fewer than two seats, `validate` prints `review backups: has <n> usable seats and needs 2`, with `seat` in place of `seats` when `<n>` is 1, and exits 1. `write` refuses that config unless `--force` is passed. With a catalog, `show` adds the same clause, without the role name, as the role's last note.
 
@@ -92,7 +92,7 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 | `hardest tasks` | 1 | Cross-cutting design, concurrency, subtle algorithms |
 | `how explorer` | 1 | how |
 | `how explainer` | 1 | how |
-| `why investigators` | 1 | why, one seat model for every investigator |
+| `why investigators` | 1 | recall, one seat model for every investigator |
 | `why synthesizer` | 1 | why |
 | `reflect tooling` | 1 | reflect |
 | `reflect judgment, divergent, synthesizer` | 1 | reflect |
