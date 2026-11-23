@@ -43,7 +43,7 @@ $interrogate review the last commit, "Fix median for even-length input".
 ```
 
 > **Reviewers.** Resolved `interrogate reviewers` with `roles.py`. Launched all four through `delegate_task` with identical read-only briefs.
-> - A: Codex / gpt-6.1-sol
+> - A: Codex / gpt-6.2-sol
 > - B: Claude / claude-opus-5-5
 > - C: Cursor / Auto
 > - D: Grok / grok-4.7

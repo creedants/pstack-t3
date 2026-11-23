@@ -16,7 +16,7 @@ SKILLS = (
     ("babysit-pr", "https://github.com/t3dotgg/tstack/blob/1085050f3baed1ac724caa4a8166145fb2ac88af/skills/babysit-pr/SKILL.md"),
 )
 WRITER = {"instanceId": "claudeAgent", "model": "claude-opus-5-5", "options": {"effort": "xhigh"}}
-SOL = {"providerInstanceId": "codex", "model": "gpt-6.1-sol", "options": {"reasoningEffort": "high"}}
+SOL = {"providerInstanceId": "codex", "model": "gpt-6.2-sol", "options": {"reasoningEffort": "high"}}
 TIMEBOX = ("never waives a full-send step (proof, a sol-loop round, or the PR draft). "
            "At the limit, write the report with what remains instead of skipping steps.")
 
