@@ -11,6 +11,7 @@ from tests import isolation
 isolation.install()
 
 import base64
+import errno
 import hashlib
 import json
 import os
@@ -87,6 +88,21 @@ class DatabasePathTest(ActivityCase):
         self.addCleanup(locked.chmod, 0o700)
         self.assertEqual(self.fails(3, t3_home=str(locked)),
                          "activity: cannot look for T3's database under the --t3-home directory (Permission denied); check its permissions and run this again")
+    def test_symlink_loop_at_userdata_falls_through_to_the_dev_database(self):
+        userdata = self.home / ".t3" / "userdata"
+        userdata.mkdir(parents=True)
+        (userdata / "statev2.sqlite").symlink_to("loop-a")
+        (userdata / "loop-a").symlink_to("loop-b")
+        (userdata / "loop-b").symlink_to("loop-a")
+        dev = self.make(self.home / ".t3", "dev")
+        self.assertEqual(self.find(None, {}, self.home), dev)
+    def test_bad_file_descriptor_from_stat_ends_in_the_no_database_message(self):
+        self.make(self.fixture.root / "explicit")
+        broken = OSError(errno.EBADF, "Bad file descriptor")
+        with mock.patch.object(MOD["os"], "stat", side_effect=broken):
+            with self.assertRaises(MOD["SourceError"]) as caught:
+                self.find(str(self.fixture.root / "explicit"), {}, self.home)
+        self.assertIn("no T3 Code database under the --t3-home directory", str(caught.exception))
 class ShapeTest(ActivityCase):
     def test_write_ahead_log_with_no_index_exits_3_and_changes_no_file(self):
         fixture = self.fixture.write()

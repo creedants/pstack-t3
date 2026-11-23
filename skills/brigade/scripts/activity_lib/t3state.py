@@ -158,7 +158,10 @@ def t3_database(flag, environ, home):
         except NotADirectoryError:
             found = False
         except OSError as error:
-            raise SourceError(f"cannot look for T3's database under {source} ({error.strerror}); check its permissions and run this again") from None
+            if error.errno in (errno.ELOOP, errno.EBADF):
+                found = False
+            else:
+                raise SourceError(f"cannot look for T3's database under {source} ({error.strerror}); check its permissions and run this again") from None
         if found:
             return base / state / T3_DATABASE
     raise SourceError(f"no T3 Code database under {source}; pass --t3-home <T3's base directory> or set T3CODE_HOME")
