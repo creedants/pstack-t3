@@ -215,6 +215,45 @@ class CheckBriefCliTest(unittest.TestCase):
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
+    def test_gate_line_inside_the_printed_full_block_is_refused(self):
+        lines = mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full")
+        parts = lines.splitlines()
+        attempt = next(index for index, line in enumerate(parts) if line.startswith("Attempt:"))
+        parts.insert(attempt, "Gate: brigade")
+        block = "\n".join(parts) + "\n"
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\n{block}\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_gate_line_inside_the_printed_light_block_is_refused(self):
+        lines = mode_output("--playbook", "feature", "--attempt", "first", "--brief-mode", "light")
+        parts = lines.splitlines()
+        waived = next(index for index, line in enumerate(parts) if line.startswith("Waived by mode:"))
+        parts.insert(waived, "Gate: brigade")
+        block = "\n".join(parts) + "\n"
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\n{block}\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_gate_line_after_the_complete_printed_block_passes(self):
+        lines = mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full")
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\n{lines}\n"
+            "Gate: pass at abc1234 by x/y\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
+
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
         split = body.rfind(". ")
