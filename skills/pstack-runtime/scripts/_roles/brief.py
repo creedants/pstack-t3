@@ -54,17 +54,13 @@ def kickoff_problem(checked, collapsed_body):
     if " ".join("\n".join(lines[:first]).split()) != collapsed_body:
         return TEXT_BEFORE_MODE
     end = block[-1]
-    for index in block:
-        entry = kickoff_entry(lines[index])
-        if entry is not None and entry[0] == "Waived by mode":
-            end = index
-            break
-    else:
-        for index in block:
-            entry = kickoff_entry(lines[index])
-            if entry is not None and entry[0] == "Attempt":
-                end = index
-                break
+    nxt = [i for i in range(first, len(lines)) if lines[i].strip()][:5]
+    lab = [(kickoff_entry(lines[i]) or ("",))[0] for i in nxt]
+    if lab[:2] == ["Playbook", "Mode"]:
+        val = (kickoff_entry(lines[nxt[1]]) or ("", ""))[1]
+        off = 2 + (lab[2:3] == ["Mode source"])
+        if lab[off:off+1] == ["Attempt"]:
+            end = nxt[off+1] if val == "light" and lab[off+1:off+2] == ["Waived by mode"] else (nxt[off] if val != "light" else end)
     for line in lines[first:end]:
         if not line.strip():
             continue
