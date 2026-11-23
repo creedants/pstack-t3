@@ -53,7 +53,19 @@ def kickoff_problem(checked, collapsed_body):
     first = block[0]
     if " ".join("\n".join(lines[:first]).split()) != collapsed_body:
         return TEXT_BEFORE_MODE
-    for line in lines[first:block[-1]]:
+    end = block[-1]
+    for index in block:
+        entry = kickoff_entry(lines[index])
+        if entry is not None and entry[0] == "Waived by mode":
+            end = index
+            break
+    else:
+        for index in block:
+            entry = kickoff_entry(lines[index])
+            if entry is not None and entry[0] == "Attempt":
+                end = index
+                break
+    for line in lines[first:end]:
         if not line.strip():
             continue
         entry = kickoff_entry(line)
