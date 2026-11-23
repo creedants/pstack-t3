@@ -48,6 +48,19 @@ TEXT_BEFORE_MODE = (
 )
 
 
+WORKER = "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+
+
+TASK = "Implement the change described in the plan.\n"
+
+
+def _gate_before(lines, prefix):
+    parts = lines.splitlines()
+    at = next(index for index, line in enumerate(parts) if line.startswith(prefix))
+    parts.insert(at, "Gate: brigade")
+    return "\n".join(parts) + "\n"
+
+
 MISSING_PLAYBOOK = (
     "missing playbook: add one line 'Playbook: playbooks/<name>.md', "
     f"where <name> is one of: {PLAYBOOK_NAMES}\n"
@@ -72,18 +85,18 @@ class CheckBriefCliTest(unittest.TestCase):
 
     def test_passing_brief(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
     def test_worker_line_before_the_persona_passes(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
@@ -91,7 +104,7 @@ class CheckBriefCliTest(unittest.TestCase):
     def test_a_second_worker_line_is_not_stripped(self):
         brief = (
             "Read /tmp/skills/poteto-mode/worker.md before anything else.\n"
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            + WORKER +
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
         )
         completed = check_text(brief)
@@ -101,7 +114,7 @@ class CheckBriefCliTest(unittest.TestCase):
         brief = (
             "Read /tmp/my skills/poteto-mode/worker.md before anything else.\n\n"
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
@@ -109,76 +122,133 @@ class CheckBriefCliTest(unittest.TestCase):
     def test_persona_first_brief_is_refused_without_the_worker_line(self):
         brief = (
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 1, MISSING_WORKER)
 
     def test_task_prose_above_the_mode_lines_is_refused(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\nDo the thing now.\n\n"
             "Playbook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 1, TEXT_BEFORE_MODE)
 
-    def test_malformed_playbook_heading_above_task_is_refused(self):
+    def test_prose_before_the_attempt_line_is_refused(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
-            f"{agent_body()}\n\nPlaybook: fake heading\n\nDo the thing now.\n\n"
-            "Playbook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            WORKER +
+            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+            "Mode source: brief\n\nDo the thing now.\n\nAttempt: first\n"
         )
         completed = check_text(brief)
         self.assert_check(completed, 1, TEXT_BEFORE_MODE)
 
-    def test_indented_playbook_heading_above_task_is_refused(self):
+    def test_prose_before_the_waived_by_mode_line_is_refused(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
-            f"{agent_body()}\n\n  Playbook: playbooks/refactoring.md\n\nDo the thing now.\n\n"
+            WORKER +
+            f"{agent_body()}\n\nPlaybook: playbooks/feature.md\nMode: light\n"
+            "Mode source: brief\nAttempt: first\n\nDo the thing now.\n\n"
+            "Waived by mode: Arena, Interrogate, Comment Sicko\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_gate_line_before_the_mode_block_is_refused(self):
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\nGate: brigade\n\n"
             "Playbook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_malformed_playbook_heading_is_not_part_of_the_mode_block(self):
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\nPlaybook: fake heading\n\n"
+            "Playbook: playbooks/refactoring.md\nMode: full\n\n"
+            + TASK
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_indented_playbook_heading_is_not_part_of_the_mode_block(self):
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\n  Playbook: playbooks/refactoring.md\n\n"
+            "Playbook: playbooks/refactoring.md\nMode: full\n\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 1, TEXT_BEFORE_MODE)
 
     def test_gate_line_above_task_is_refused(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\nGate: fake\n\nDo the thing now.\n\n"
             "Playbook: playbooks/refactoring.md\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 1, TEXT_BEFORE_MODE)
 
     def test_mode_line_before_the_playbook_line_with_prose_between_is_refused(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\nMode: full\n\nDo the thing now.\n\n"
             "Playbook: playbooks/refactoring.md\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 1, TEXT_BEFORE_MODE)
 
     def test_blank_line_between_the_playbook_and_mode_lines_passes(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\n\nMode: full\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
     def test_task_gate_line_after_the_mode_block_passes(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
             "Gate: pass at abc1234 by x/y\n\n"
-            "Implement the change described in the plan.\n"
+            + TASK
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
+
+    def test_gate_line_inside_the_printed_full_block_is_refused(self):
+        block = _gate_before(
+            mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full"),
+            "Attempt:",
+        )
+        brief = WORKER + f"{agent_body()}\n\n{block}\n" + TASK
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_gate_line_inside_the_printed_light_block_is_refused(self):
+        block = _gate_before(
+            mode_output("--playbook", "feature", "--attempt", "first", "--brief-mode", "light"),
+            "Waived by mode:",
+        )
+        brief = WORKER + f"{agent_body()}\n\n{block}\n" + TASK
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_gate_line_after_the_complete_printed_block_passes(self):
+        lines = mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full")
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\n{lines}\n"
+            "Gate: pass at abc1234 by x/y\n\n" + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
@@ -190,44 +260,58 @@ class CheckBriefCliTest(unittest.TestCase):
         sentence = body[split + 2:]
         self.assertTrue(sentence.endswith("."))
         self.assertLess(len(sentence), len(body))
-        brief = f"{body[:-len(sentence)].rstrip()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+        brief = (
+            WORKER +
+            f"{body[:-len(sentence)].rstrip()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+        )
         completed = check_text(brief)
-        self.assert_check(completed, 1, MISSING_WORKER + MISSING_PERSONA)
+        self.assert_check(completed, 1, MISSING_PERSONA)
 
     def test_persona_after_other_text(self):
-        brief = f"Read this note first.\n\n{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+        brief = (
+            WORKER +
+            f"Read this note first.\n\n{agent_body()}\n\n"
+            "Playbook: playbooks/refactoring.md\nMode: full\n"
+        )
         completed = check_text(brief)
-        self.assert_check(completed, 1, MISSING_WORKER + MISSING_PERSONA)
+        self.assert_check(completed, 1, MISSING_PERSONA)
 
     def test_frontmatter_paste(self):
-        brief = PERSONA_PATH.read_text(encoding="utf-8") + "\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+        brief = (
+            WORKER
+            + PERSONA_PATH.read_text(encoding="utf-8")
+            + "\nPlaybook: playbooks/refactoring.md\nMode: full\n"
+        )
         completed = check_text(brief)
-        self.assert_check(completed, 1, MISSING_WORKER + MISSING_PERSONA)
+        self.assert_check(completed, 1, MISSING_PERSONA)
 
     def test_missing_playbook_line(self):
-        brief = f"{agent_body()}\n\nMode: full\n\nImplement the change described in the plan.\n"
+        brief = WORKER + f"{agent_body()}\n\nMode: full\n\n" + TASK
         completed = check_text(brief)
-        self.assert_check(completed, 1, MISSING_WORKER + MISSING_PLAYBOOK)
+        self.assert_check(completed, 1, MISSING_PLAYBOOK)
 
     def test_unknown_playbook_name(self):
-        brief = f"{agent_body()}\n\nPlaybook: playbooks/not-a-playbook.md\nMode: full\n"
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\nPlaybook: playbooks/not-a-playbook.md\nMode: full\n"
+        )
         completed = check_text(brief)
         self.assert_check(
             completed,
             1,
-            MISSING_WORKER
-            + f"unknown playbook 'playbooks/not-a-playbook.md': expected one of: {PLAYBOOK_NAMES}\n",
+            f"unknown playbook 'playbooks/not-a-playbook.md': expected one of: {PLAYBOOK_NAMES}\n",
         )
 
     def test_two_playbook_lines(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/refactoring.md\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: full\n"
         )
         completed = check_text(brief)
-        self.assert_check(completed, 1, MISSING_WORKER + "more than one Playbook line: keep one\n")
+        self.assert_check(completed, 1, "more than one Playbook line: keep one\n")
 
     def test_missing_brief_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -244,7 +328,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
 
     def test_light_feature_first_passes(self):
         brief = (
-            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: light\n"
@@ -255,16 +339,18 @@ class CheckBriefModeCliTest(unittest.TestCase):
 
     def test_two_mode_lines(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: light\n"
             "Mode: light\n"
             "Attempt: retry\n"
         )
-        self.assert_check(check_text(brief), 1, MISSING_WORKER + "more than one Mode line: keep one\n")
+        self.assert_check(check_text(brief), 1, "more than one Mode line: keep one\n")
 
     def test_mode_with_trailing_words(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: light (from restaurant.json)\n"
@@ -274,12 +360,12 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            MISSING_WORKER
-            + "bad Mode value 'light (from restaurant.json)': expected full or light\n",
+            "bad Mode value 'light (from restaurant.json)': expected full or light\n",
         )
 
     def test_waiver_under_full(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: full\n"
@@ -288,12 +374,12 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            MISSING_WORKER
-            + "unexpected Waived by mode line: Mode: full waives nothing, remove it\n",
+            "unexpected Waived by mode line: Mode: full waives nothing, remove it\n",
         )
 
     def test_wrong_waivers_feature_first(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: light\n"
@@ -303,12 +389,12 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            MISSING_WORKER
-            + "wrong Waived by mode line: expected 'Waived by mode: Arena, Interrogate, Comment Sicko'\n",
+            "wrong Waived by mode line: expected 'Waived by mode: Arena, Interrogate, Comment Sicko'\n",
         )
 
     def test_light_without_attempt(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: light\n"
@@ -316,41 +402,48 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            MISSING_WORKER
-            + "missing Attempt: Mode: light needs one line 'Attempt: <kind>', "
+            "missing Attempt: Mode: light needs one line 'Attempt: <kind>', "
             "where <kind> is one of: first, fix, bounce\n",
         )
 
     def test_code_delegate_without_mode_fails(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/refactoring.md\n"
             "Attempt: nonsense\n"
             "Waived by mode: How\n"
             "Waived by mode: Arena, Interrogate, Comment Sicko\n"
-            "\nImplement the change described in the plan.\n"
+            "\n" + TASK
         )
-        self.assert_check(check_text(brief), 1, MISSING_WORKER + MISSING_MODE)
+        self.assert_check(check_text(brief), 1, MISSING_MODE)
 
     def test_persona_and_playbook_only_fails(self):
-        brief = f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\n"
-        self.assert_check(check_text(brief), 1, MISSING_WORKER + MISSING_MODE)
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\n"
+        )
+        self.assert_check(check_text(brief), 1, MISSING_MODE)
 
     def test_pasted_light_session_output_passes(self):
         lines = mode_output("--playbook", "feature", "--attempt", "first", "--session-mode", "light")
-        self.assert_check(check_text(f"Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n{agent_body()}\n\n{lines}"), 0, "ok playbooks/feature.md\n")
+        self.assert_check(check_text(f"{WORKER}{agent_body()}\n\n{lines}"), 0, "ok playbooks/feature.md\n")
 
     def test_pasted_default_output_passes(self):
         lines = mode_output("--playbook", "refactoring", "--attempt", "first")
-        self.assert_check(check_text(f"Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n{agent_body()}\n\n{lines}"), 0, "ok playbooks/refactoring.md\n")
+        self.assert_check(check_text(f"{WORKER}{agent_body()}\n\n{lines}"), 0, "ok playbooks/refactoring.md\n")
 
     def test_own_playbook_line_beside_pasted_output_fails(self):
         lines = mode_output("--playbook", "feature", "--attempt", "first", "--session-mode", "light")
-        brief = f"{agent_body()}\n\nPlaybook: playbooks/feature.md\n{lines}"
-        self.assert_check(check_text(brief), 1, MISSING_WORKER + "more than one Playbook line: keep one\n")
+        brief = (
+            WORKER +
+            f"{agent_body()}\n\nPlaybook: playbooks/feature.md\n{lines}"
+        )
+        self.assert_check(check_text(brief), 1, "more than one Playbook line: keep one\n")
 
     def test_bad_attempt_no_traceback(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/feature.md\n"
             "Mode: light\n"
@@ -360,12 +453,12 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            MISSING_WORKER
-            + "bad Attempt value 'retry': expected one of: first, fix, bounce\n",
+            "bad Attempt value 'retry': expected one of: first, fix, bounce\n",
         )
 
     def test_unknown_playbook_skips_waivers(self):
         brief = (
+            WORKER +
             f"{agent_body()}\n\n"
             "Playbook: playbooks/nope.md\n"
             "Mode: light\n"
@@ -375,8 +468,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            MISSING_WORKER
-            + f"unknown playbook 'playbooks/nope.md': expected one of: {PLAYBOOK_NAMES}\n",
+            f"unknown playbook 'playbooks/nope.md': expected one of: {PLAYBOOK_NAMES}\n",
         )
 
     def test_mode_output_round_trips(self):
@@ -422,7 +514,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
                     ))
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(completed.stderr, "")
-                checked = check_text(f"Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n{body}\n\n{completed.stdout}")
+                checked = check_text(f"{WORKER}{body}\n\n{completed.stdout}")
                 self.assert_check(checked, 0, f"ok playbooks/{stem}.md\n")
 
     def test_problem_order_persona_playbook_mode(self):
