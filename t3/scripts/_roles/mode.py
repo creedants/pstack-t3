@@ -203,7 +203,6 @@ def brief_lines(decision, key):
 
 
 def grammar_entry(line):
-    """Label and stripped value for one grammar line as written, or None."""
     match = _GRAMMAR_LINE.fullmatch(line)
     if match is None:
         return None
