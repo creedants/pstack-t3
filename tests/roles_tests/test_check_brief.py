@@ -253,6 +253,18 @@ class CheckBriefCliTest(unittest.TestCase):
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
+    def test_quoted_mode_line_after_complete_full_block_omits_placement(self):
+        lines = mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full")
+        brief = WORKER + f"{agent_body()}\n\n{lines}\n" + TASK + "\nMode:\n"
+        completed = check_text(brief)
+        self.assert_check(completed, 1, "more than one Mode line: keep one\n")
+
+    def test_quoted_mode_line_after_complete_light_block_omits_placement(self):
+        lines = mode_output("--playbook", "bug-fix", "--attempt", "first", "--brief-mode", "light")
+        brief = WORKER + f"{agent_body()}\n\n{lines}\n" + TASK + "\nMode:\n"
+        completed = check_text(brief)
+        self.assert_check(completed, 1, "more than one Mode line: keep one\n")
+
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
         split = body.rfind(". ")
