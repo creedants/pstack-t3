@@ -1,3 +1,3 @@
 - Restore the Escalation sentence that nothing moves work from full to light mid-flight.
-- List recall as a caller of the `why investigators` role alongside why.
-- Retarget the model-family example from `gpt-6.1-sol` to `gpt-6.2-sol`.
+- List recall as the caller of the `why investigators` role.
+- Pin the model-family test to `gpt-6.2-sol` and drop the extra `gpt-6.1-sol` example.

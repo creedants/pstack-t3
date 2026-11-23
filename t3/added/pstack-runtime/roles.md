@@ -92,7 +92,7 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 | `hardest tasks` | 1 | Cross-cutting design, concurrency, subtle algorithms |
 | `how explorer` | 1 | how |
 | `how explainer` | 1 | how |
-| `why investigators` | 1 | why and recall, one seat model for every investigator |
+| `why investigators` | 1 | recall, one seat model for every investigator |
 | `why synthesizer` | 1 | why |
 | `reflect tooling` | 1 | reflect |
 | `reflect judgment, divergent, synthesizer` | 1 | reflect |
