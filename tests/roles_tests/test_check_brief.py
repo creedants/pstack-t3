@@ -76,8 +76,12 @@ def _gate_before(lines, prefix):
     return "\n".join(parts) + "\n"
 
 
+def _m(p,m):
+    return mode_output('--playbook',p,'--attempt','first','--brief-mode',m)
+
+
 def _q(p,m,t="\nMode:\n"):
-    return WORKER+f"{agent_body()}\n\n{mode_output('--playbook',p,'--attempt','first','--brief-mode',m)}\n"+TASK+t
+    return WORKER+f"{agent_body()}\n\n{_m(p,m)}\n"+TASK+t
 
 
 def _d(head):
@@ -239,42 +243,20 @@ class CheckBriefCliTest(unittest.TestCase):
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
     def test_task_gate_line_after_the_mode_block_passes(self):
-        brief = (
-            WORKER +
-            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
-            + GATE_P
-            + TASK
-        )
-        completed = check_text(brief)
-        self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
+        brief = WORKER + f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n" + GATE_P + TASK
+        self.assert_check(check_text(brief), 0, "ok playbooks/refactoring.md\n")
 
     def test_gate_line_inside_the_printed_full_block_is_refused(self):
-        block = _gate_before(
-            mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full"),
-            "Attempt:",
-        )
-        brief = WORKER + f"{agent_body()}\n\n{block}\n" + TASK
-        completed = check_text(brief)
-        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+        block = _gate_before(_m("refactoring", "full"), "Attempt:")
+        self.assert_check(check_text(WORKER + f"{agent_body()}\n\n{block}\n" + TASK), 1, TEXT_BEFORE_MODE)
 
     def test_gate_line_inside_the_printed_light_block_is_refused(self):
-        block = _gate_before(
-            mode_output("--playbook", "feature", "--attempt", "first", "--brief-mode", "light"),
-            "Waived by mode:",
-        )
-        brief = WORKER + f"{agent_body()}\n\n{block}\n" + TASK
-        completed = check_text(brief)
-        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+        block = _gate_before(_m("feature", "light"), "Waived by mode:")
+        self.assert_check(check_text(WORKER + f"{agent_body()}\n\n{block}\n" + TASK), 1, TEXT_BEFORE_MODE)
 
     def test_gate_line_after_the_complete_printed_block_passes(self):
-        lines = mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full")
-        brief = (
-            WORKER +
-            f"{agent_body()}\n\n{lines}\n"
-            + GATE_P + TASK
-        )
-        completed = check_text(brief)
-        self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
+        brief = WORKER + f"{agent_body()}\n\n{_m('refactoring', 'full')}\n" + GATE_P + TASK
+        self.assert_check(check_text(brief), 0, "ok playbooks/refactoring.md\n")
 
     def test_quoted_full_no_placement(self):
         self.assert_check(check_text(_q("refactoring","full")),1,DUP_M)
