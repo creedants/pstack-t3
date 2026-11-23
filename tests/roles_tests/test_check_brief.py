@@ -66,6 +66,9 @@ GATE_P = "Gate: pass at abc1234 by x/y\n\n"
 BAD_M = "bad Mode value 'light (from restaurant.json)': expected full or light\n"
 
 
+W_FULL = "unexpected Waived by mode line: Mode: full waives nothing, remove it\n"
+
+
 def _gate_before(lines, prefix):
     parts = lines.splitlines()
     at = next(index for index, line in enumerate(parts) if line.startswith(prefix))
@@ -73,8 +76,8 @@ def _gate_before(lines, prefix):
     return "\n".join(parts) + "\n"
 
 
-def _q(p, m):
-    return WORKER + f"{agent_body()}\n\n{mode_output('--playbook', p, '--attempt', 'first', '--brief-mode', m)}\n" + TASK + "\nMode:\n"
+def _q(p,m,t="\nMode:\n"):
+    return WORKER+f"{agent_body()}\n\n{mode_output('--playbook',p,'--attempt','first','--brief-mode',m)}\n"+TASK+t
 
 
 MISSING_PLAYBOOK = (
@@ -275,6 +278,12 @@ class CheckBriefCliTest(unittest.TestCase):
     def test_quoted_light_no_placement(self):
         self.assert_check(check_text(_q("bug-fix","light")),1,DUP_M)
 
+    def test_quoted_full_waiver_no_placement(self):
+        self.assert_check(check_text(_q("refactoring","full","\nWaived by mode:\n")),1,W_FULL)
+
+    def test_reordered_light_waiver_gate_attempt_refused(self):
+        self.assert_check(check_text(WORKER+f"{agent_body()}\n\nPlaybook: playbooks/bug-fix.md\nMode: light\nMode source: brief\nWaived by mode: Comment Sicko\nGate: brigade\nAttempt: first\n"+TASK),1,TEXT_BEFORE_MODE)
+
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
         split = body.rfind(". ")
@@ -396,7 +405,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            "unexpected Waived by mode line: Mode: full waives nothing, remove it\n",
+            W_FULL,
         )
 
     def test_wrong_waivers_feature_first(self):
@@ -494,27 +503,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
         )
 
     def test_mode_output_round_trips(self):
-        rows = (
-            ("feature", "first"),
-            ("feature", "fix"),
-            ("feature", "bounce"),
-            ("bug-fix", "first"),
-            ("bug-fix", "fix"),
-            ("bug-fix", "bounce"),
-            ("refactoring", "first"),
-            ("refactoring", "fix"),
-            ("refactoring", "bounce"),
-            ("perf-issue", "first"),
-            ("perf-issue", "fix"),
-            ("perf-issue", "bounce"),
-            ("hillclimb", "first"),
-            ("hillclimb", "fix"),
-            ("hillclimb", "bounce"),
-            ("authoring-a-skill", "first"),
-            ("authoring-a-skill", "fix"),
-            ("authoring-a-skill", "bounce"),
-            ("investigation", "first"),
-        )
+        rows = [(s,a) for s in ("feature","bug-fix","refactoring","perf-issue","hillclimb","authoring-a-skill") for a in ("first","fix","bounce")]+[("investigation","first")]
         body = agent_body()
         for stem, attempt in rows:
             with self.subTest(stem=stem, attempt=attempt):
