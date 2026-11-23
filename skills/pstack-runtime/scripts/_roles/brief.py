@@ -42,7 +42,6 @@ MODE_BLOCK_LABELS = ("Playbook", "Mode", "Mode source", "Attempt", "Waived by mo
 
 
 def printed_block_end(lines, first):
-    """Index of the last line of the complete printed block that opens at first, or None."""
     rows = [index for index in range(first, len(lines)) if lines[index].strip()][:5]
     entries = [kickoff_entry(lines[index]) or ("", "") for index in rows]
     labels = [label for label, _ in entries]
