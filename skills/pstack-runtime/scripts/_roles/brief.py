@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 from _roles.base import RolesError
-from _roles.mode import GRAMMAR_LABELS, mode_problems
+from _roles.mode import grammar_entry, mode_problems
 from _roles import seam
 
 
@@ -26,13 +26,40 @@ TEXT_BEFORE_MODE = (
 )
 
 
-_BRIEF_LINE = re.compile("(" + "|".join(map(re.escape, ("Playbook",) + GRAMMAR_LABELS)) + r"):(.*)")
+def playbook_entry(line):
+    match = re.fullmatch(r"Playbook:\s*(\S+)\s*", line)
+    return match.group(1) if match else None
 
 
-def first_brief_line_index(checked):
-    for index, line in enumerate(checked.splitlines()):
-        if _BRIEF_LINE.fullmatch(line.strip()):
-            return index
+def kickoff_entry(line):
+    value = playbook_entry(line)
+    if value is not None:
+        return "Playbook", value
+    return grammar_entry(line)
+
+
+def kickoff_problem(checked, collapsed_body):
+    lines = checked.splitlines()
+    entries = []
+    for index, line in enumerate(lines):
+        entry = kickoff_entry(line)
+        if entry is not None:
+            entries.append((index, entry))
+    if not entries:
+        return None
+    first = entries[0][0]
+    if " ".join("\n".join(lines[:first]).split()) != collapsed_body:
+        return TEXT_BEFORE_MODE
+    first_index = {}
+    for index, entry in entries:
+        first_index.setdefault(entry[0], index)
+    boundary = [first_index[label] for label in ("Playbook", "Mode") if label in first_index]
+    if not boundary:
+        return None
+    last = max(boundary)
+    for line in lines[first:last]:
+        if line.strip() and kickoff_entry(line) is None:
+            return TEXT_BEFORE_MODE
     return None
 
 
@@ -87,9 +114,9 @@ def load_brief_rules():
 def playbook_values(text):
     values = []
     for line in text.splitlines():
-        match = re.fullmatch(r"Playbook:\s*(\S+)\s*", line)
-        if match:
-            values.append(match.group(1))
+        value = playbook_entry(line)
+        if value is not None:
+            values.append(value)
     return values
 
 
@@ -122,11 +149,9 @@ def brief_problems(text, persona_body, playbooks):
             f"missing persona: open the brief with the body of {persona_path()}, without its frontmatter"
         )
     else:
-        first = first_brief_line_index(checked)
-        if first is not None:
-            prefix = "\n".join(checked.splitlines()[:first])
-            if " ".join(prefix.split()) != collapsed_body:
-                problems.append(TEXT_BEFORE_MODE)
+        problem = kickoff_problem(checked, collapsed_body)
+        if problem is not None:
+            problems.append(problem)
     names = ", ".join(sorted(playbooks))
     values = playbook_values(text)
     stem = None

@@ -202,13 +202,21 @@ def brief_lines(decision, key):
     return lines
 
 
+def grammar_entry(line):
+    """Label and stripped value for one grammar line as written, or None."""
+    match = _GRAMMAR_LINE.fullmatch(line)
+    if match is None:
+        return None
+    return match.group(1), match.group(2).strip()
+
+
 def _grammar_lines(text):
     """Label to stripped values, in brief order."""
     found = {label: [] for label in GRAMMAR_LABELS}
     for line in text.splitlines():
-        match = _GRAMMAR_LINE.fullmatch(line)
-        if match:
-            found[match.group(1)].append(match.group(2).strip())
+        entry = grammar_entry(line)
+        if entry is not None:
+            found[entry[0]].append(entry[1])
     return found
 
 
@@ -314,6 +322,7 @@ __all__ = [
     "LIGHT_WAIVERS",
     "durable_reason",
     "GRAMMAR_LABELS",
+    "grammar_entry",
     "waived_value",
     "brief_lines",
     "MISSING_MODE",

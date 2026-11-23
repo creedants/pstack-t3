@@ -124,6 +124,65 @@ class CheckBriefCliTest(unittest.TestCase):
         completed = check_text(brief)
         self.assert_check(completed, 1, TEXT_BEFORE_MODE)
 
+    def test_malformed_playbook_heading_above_task_is_refused(self):
+        brief = (
+            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\nPlaybook: fake heading\n\nDo the thing now.\n\n"
+            "Playbook: playbooks/refactoring.md\nMode: full\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_indented_playbook_heading_above_task_is_refused(self):
+        brief = (
+            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\n  Playbook: playbooks/refactoring.md\n\nDo the thing now.\n\n"
+            "Playbook: playbooks/refactoring.md\nMode: full\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_gate_line_above_task_is_refused(self):
+        brief = (
+            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\nGate: fake\n\nDo the thing now.\n\n"
+            "Playbook: playbooks/refactoring.md\nMode: full\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_mode_line_before_the_playbook_line_with_prose_between_is_refused(self):
+        brief = (
+            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\nMode: full\n\nDo the thing now.\n\n"
+            "Playbook: playbooks/refactoring.md\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 1, TEXT_BEFORE_MODE)
+
+    def test_blank_line_between_the_playbook_and_mode_lines_passes(self):
+        brief = (
+            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\n\nMode: full\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
+
+    def test_task_gate_line_after_the_mode_block_passes(self):
+        brief = (
+            "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
+            f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
+            "Gate: pass at abc1234 by x/y\n\n"
+            "Implement the change described in the plan.\n"
+        )
+        completed = check_text(brief)
+        self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
+
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
         split = body.rfind(". ")
