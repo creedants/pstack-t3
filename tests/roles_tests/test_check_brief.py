@@ -54,11 +54,27 @@ WORKER = "Read /tmp/skills/poteto-mode/worker.md before anything else.\n\n"
 TASK = "Implement the change described in the plan.\n"
 
 
+DUP_M = "more than one Mode line: keep one\n"
+
+
+DUP_P = "more than one Playbook line: keep one\n"
+
+
+GATE_P = "Gate: pass at abc1234 by x/y\n\n"
+
+
+BAD_M = "bad Mode value 'light (from restaurant.json)': expected full or light\n"
+
+
 def _gate_before(lines, prefix):
     parts = lines.splitlines()
     at = next(index for index, line in enumerate(parts) if line.startswith(prefix))
     parts.insert(at, "Gate: brigade")
     return "\n".join(parts) + "\n"
+
+
+def _q(p, m):
+    return WORKER + f"{agent_body()}\n\n{mode_output('--playbook', p, '--attempt', 'first', '--brief-mode', m)}\n" + TASK + "\nMode:\n"
 
 
 MISSING_PLAYBOOK = (
@@ -219,7 +235,7 @@ class CheckBriefCliTest(unittest.TestCase):
         brief = (
             WORKER +
             f"{agent_body()}\n\nPlaybook: playbooks/refactoring.md\nMode: full\n\n"
-            "Gate: pass at abc1234 by x/y\n\n"
+            + GATE_P
             + TASK
         )
         completed = check_text(brief)
@@ -248,22 +264,16 @@ class CheckBriefCliTest(unittest.TestCase):
         brief = (
             WORKER +
             f"{agent_body()}\n\n{lines}\n"
-            "Gate: pass at abc1234 by x/y\n\n" + TASK
+            + GATE_P + TASK
         )
         completed = check_text(brief)
         self.assert_check(completed, 0, "ok playbooks/refactoring.md\n")
 
-    def test_quoted_mode_line_after_complete_full_block_omits_placement(self):
-        lines = mode_output("--playbook", "refactoring", "--attempt", "first", "--brief-mode", "full")
-        brief = WORKER + f"{agent_body()}\n\n{lines}\n" + TASK + "\nMode:\n"
-        completed = check_text(brief)
-        self.assert_check(completed, 1, "more than one Mode line: keep one\n")
+    def test_quoted_full_no_placement(self):
+        self.assert_check(check_text(_q("refactoring","full")),1,DUP_M)
 
-    def test_quoted_mode_line_after_complete_light_block_omits_placement(self):
-        lines = mode_output("--playbook", "bug-fix", "--attempt", "first", "--brief-mode", "light")
-        brief = WORKER + f"{agent_body()}\n\n{lines}\n" + TASK + "\nMode:\n"
-        completed = check_text(brief)
-        self.assert_check(completed, 1, "more than one Mode line: keep one\n")
+    def test_quoted_light_no_placement(self):
+        self.assert_check(check_text(_q("bug-fix","light")),1,DUP_M)
 
     def test_persona_truncated_by_one_sentence(self):
         body = agent_body()
@@ -323,7 +333,7 @@ class CheckBriefCliTest(unittest.TestCase):
             "Mode: full\n"
         )
         completed = check_text(brief)
-        self.assert_check(completed, 1, "more than one Playbook line: keep one\n")
+        self.assert_check(completed, 1, DUP_P)
 
     def test_missing_brief_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -358,7 +368,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
             "Mode: light\n"
             "Attempt: retry\n"
         )
-        self.assert_check(check_text(brief), 1, "more than one Mode line: keep one\n")
+        self.assert_check(check_text(brief), 1, DUP_M)
 
     def test_mode_with_trailing_words(self):
         brief = (
@@ -372,7 +382,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
         self.assert_check(
             check_text(brief),
             1,
-            "bad Mode value 'light (from restaurant.json)': expected full or light\n",
+            BAD_M,
         )
 
     def test_waiver_under_full(self):
@@ -451,7 +461,7 @@ class CheckBriefModeCliTest(unittest.TestCase):
             WORKER +
             f"{agent_body()}\n\nPlaybook: playbooks/feature.md\n{lines}"
         )
-        self.assert_check(check_text(brief), 1, "more than one Playbook line: keep one\n")
+        self.assert_check(check_text(brief), 1, DUP_P)
 
     def test_bad_attempt_no_traceback(self):
         brief = (
@@ -537,5 +547,5 @@ class CheckBriefModeCliTest(unittest.TestCase):
             MISSING_WORKER
             + MISSING_PERSONA
             + f"unknown playbook 'playbooks/not-a-playbook.md': expected one of: {PLAYBOOK_NAMES}\n"
-            + "bad Mode value 'light (from restaurant.json)': expected full or light\n",
+            + BAD_M,
         )
