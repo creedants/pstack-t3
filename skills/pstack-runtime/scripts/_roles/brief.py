@@ -54,7 +54,10 @@ def kickoff_problem(checked, collapsed_body):
     if " ".join("\n".join(lines[:first]).split()) != collapsed_body:
         return TEXT_BEFORE_MODE
     for line in lines[first:block[-1]]:
-        if line.strip() and kickoff_entry(line) is None:
+        if not line.strip():
+            continue
+        entry = kickoff_entry(line)
+        if entry is None or entry[0] not in MODE_BLOCK_LABELS:
             return TEXT_BEFORE_MODE
     return None
 
