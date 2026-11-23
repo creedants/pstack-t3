@@ -93,7 +93,7 @@ Do not reconstruct role defaults in the calling skill. Pass a file path to `--ca
 | `how explorer` | 1 | how |
 | `how explainer` | 1 | how |
 | `why investigators` | 1 | recall, one seat model for every investigator |
-| `why synthesizer` | 1 | why |
+| `why synthesizer` | 1 | no shipped skill seats it; kept so roles files that name it still load |
 | `reflect tooling` | 1 | reflect |
 | `reflect judgment, divergent, synthesizer` | 1 | reflect |
 | `arena runners` | N | arena, one candidate per seat |
