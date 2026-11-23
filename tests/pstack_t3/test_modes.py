@@ -25,7 +25,7 @@ from tests.pstack_t3.support import pointer_sentence, unfenced_lines, heading_sl
 
 MODE_POINTER_SITES = {
     **{f"{name}/SKILL.md": "skill" for name in (
-        "poteto-mode", "how", "why", "architect", "arena", "no-comments", "swarm", "interrogate",
+        "poteto-mode", "how", "arena", "no-comments", "swarm", "interrogate",
         "show-me-your-work", "recall", "automate-me", "maintain-verification-skill", "reflect",
         "pstack-author-skill", "landing",
     )},
@@ -42,6 +42,7 @@ MODES_UNCHANGED = {
     "brigade-admin/SKILL.md": "launches only standing threads, the admin and a coordinator the user asks for, which light mode keeps",
     "setup-pstack/SKILL.md": "the smoke test is kept, one per provider",
     "poteto-help/SKILL.md": "names delegate_task to explain the persona and spawns nothing",
+    "why/SKILL.md": "runs inline and writes no brief, so no modes line applies",
     "poteto-mode/playbooks/autonomous-run.md": "the watcher is kept",
     "poteto-mode/playbooks/eval.md": "keeps arena and its judge, because comparing candidates is its purpose",
 }
@@ -131,6 +132,12 @@ class ModesTest(unittest.TestCase):
         self.assertIn("that child runs the **Gate** paragraph above in place of `/no-comments`.", child)
         self.assertIn("Run `/no-comments` before review.", text)
 
+    def test_architect_holds_no_modes_pointer_because_it_writes_no_brief(self):
+        text = (ROOT / "skills/architect/SKILL.md").read_text()
+        self.assertNotIn("delegate_task", text)
+        self.assertNotIn("t3_thread_launch", text)
+        self.assertNotIn(pointer_sentence("skill"), text)
+
     def test_gate_contract_is_literal(self):
         self.assertEqual(gate_contract(self.gate), GATE_CONTRACT)
 
@@ -155,7 +162,7 @@ class ModesTest(unittest.TestCase):
         )
         self.assertIn("pass `--session-mode full`", light_row(light, "`reflect`"))
         verification = light_row(light, "Multi-phase verification")
-        self.assertIn("every **Verify, live** lane box that drives its surface", verification)
+        self.assertIn("Write each PR's unit, live, and perf checkboxes", verification)
         self.assertIn("Launch no perf lane.", verification)
         self.assertIn("(SKILL.md#gate-review)", verification)
 
@@ -202,9 +209,9 @@ class ModesTest(unittest.TestCase):
             spawn = row.split("|")[1].strip()
             self.assertIn("(SKILL.md#gate-review)", row, spawn)
 
-    def test_full_mode_persona_keeps_investigation(self):
+    def test_full_mode_persona_keeps_why_investigation(self):
         persona = (ROOT / "skills/pstack-runtime/agents/comment-sicko.md").read_text()
-        self.assertIn("I run the **how** skill, the **why** skill, or both", persona)
+        self.assertIn("I trace the named symbol or call, run `/why` from the **why** skill on it, or both", persona)
 
     def test_gate_reuse_lives_in_gate_review(self):
         gate = (ROOT / "skills/pstack-runtime/gate-review.md").read_text()

@@ -19,7 +19,7 @@ sys.path.append(str(ROOT / "t3/scripts"))
 sys.path.append(str(ROOT / "scripts"))
 
 import roles  # noqa: E402
-from tests.pstack_t3.support import runtime_doc_section, runtime_section, runtime_docs_section, runtime_bullet, override_text
+from tests.pstack_t3.support import runtime_doc_section, runtime_section, runtime_docs_section, runtime_bullet, override_text, added_text
 
 
 class ThreadLifecycleDocTest(unittest.TestCase):
@@ -140,7 +140,7 @@ class ForkDocTest(unittest.TestCase):
             self.assertNotIn(claim, self.section)
 
     def test_orchestrate_sub_coordinator_stays_a_delegated_child(self):
-        text = override_text("poteto-mode/playbooks/orchestrate.md")
+        text = added_text("poteto-mode/playbooks/orchestrate.md")
         bullet = next(line for line in text.splitlines() if line.startswith("- **Sub-coordinator.**"))
         self.assertIn("A sub-coordinator is a `delegate_task` child that itself calls `delegate_task`.", bullet)
         self.assertNotIn("fork", bullet.lower())
@@ -191,7 +191,7 @@ class ConfigureOwnerDocTest(unittest.TestCase):
             self.assertNotIn(claim, self.bullet)
 
     def test_orchestrate_retry_links_configure_for_owners_only(self):
-        text = override_text("poteto-mode/playbooks/orchestrate.md")
+        text = added_text("poteto-mode/playbooks/orchestrate.md")
         bullet = next(line for line in text.splitlines() if line.startswith("- Retry by mode:"))
         self.assertIn(
             "A long-lived owner takes the new model in place per "

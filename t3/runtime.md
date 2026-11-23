@@ -35,7 +35,7 @@ Tool names may carry a harness prefix, such as `mcp__t3-code__delegate_task` or 
 | subagent, worker, delegate, reviewer, runner, judge | A child task created with `delegate_task`, owned by this thread. |
 | cloud worker | A child task. T3 children run on this machine, so they can reach local files, browsers, and auth. |
 | background, `run_in_background` | `delegate_task` with `mode: "async"`. |
-| wait for a worker | A thread with a schedule of its own ends the turn, and its completions wake it. Any other thread keeps a bounded wait with `t3_thread_wait`. Call `task_status` for a result mid-turn. See [waiting.md](waiting.md). |
+| wait for a worker | A thread with a schedule of its own ends the turn, and its completions wake it. Any other thread keeps a bounded wait with `t3_thread_wait`. See [waiting.md](waiting.md). |
 | cancel a worker | `task_cancel`. |
 | model slug, role model | A target `{providerInstanceId, model, options}` from `orchestrator_capabilities`, resolved through roles. See [Roles](#roles). |
 | `inherit-parent`, `auto` | `"inherit"`. Omit `target` so the child inherits this thread's provider, model, and options. |
@@ -56,7 +56,7 @@ A deadline or timebox sets the order of work. It never waives a step. This holds
 
 ## Delegation
 
-4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. When the role entry `roles.py show` printed for the child's seat has `haikuBrief`, paste its paragraphs unchanged, in order, at the end of the brief, per [Claude Haiku 5.5](#claude-haiku-55). A code-writing child inside a poteto-mode playbook opens with the poteto-agent persona body. Below it, paste unchanged the lines `python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" --playbook <name> --attempt <kind> [--brief-mode <value> | --session-mode light]` prints, per [Modes](#modes). They start with the `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`, and carry the required `Mode:` line. Write no `Playbook:` line of your own, because a second one fails the check. See [Resolve and carry the mode](#resolve-and-carry-the-mode) for the `Attempt:` and `Waived by mode:` lines. Copy the printed `Mode:` value into `--brief-mode` on the `roles.py show` call that seats the delegate, and pass no other mode flag. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged. A seat that matches this thread's model, or an edit that looks small, is not a `skip:` reason for the code delegate.
+4. A child starts with only its brief. It sees none of this conversation. Put the goal, the exact paths or SHAs, how to verify, and the report shape in the brief. Point at files instead of pasting large context. Write tool steps as plain verbs ("read", "search the repo", "run"), because the child may be a different provider with different tool names. When the role entry `roles.py show` printed for the child's seat has `haikuBrief`, paste its paragraphs unchanged, in order, at the end of the brief, per [Claude Haiku 5.5](#claude-haiku-55). A code-writing child in a poteto-mode playbook opens with `Read <absolute path>/worker.md before anything else.`, then the persona body of `agents/poteto-agent.md`. Below them, paste unchanged the lines `python3 <pstack-runtime>/scripts/roles.py mode --cwd "$PWD" --playbook <name> --attempt <kind> [--brief-mode <value> | --session-mode light]` prints, per [Modes](#modes). They start with the `Playbook: playbooks/<name>.md` line, such as `Playbook: playbooks/feature.md`, and carry the required `Mode:` line. Nothing sits between the persona and those lines, and the task text follows them. Write no `Playbook:` line of your own, because a second one fails the check. See [Resolve and carry the mode](#resolve-and-carry-the-mode) for the `Attempt:` and `Waived by mode:` lines. Copy the printed `Mode:` value into `--brief-mode` on the `roles.py show` call that seats the delegate, and pass no other mode flag. Write that brief to a file and run `python3 <pstack-runtime>/scripts/roles.py check-brief <file>` before `delegate_task`. Exit 1 names what is missing. Fix the brief, run the check again, and pass the checked text unchanged. A seat that matches this thread's model, or an edit that looks small, is not a `skip:` reason for the code delegate.
 
 Steps 1 to 3, 5, and 6 live in [delegation.md](delegation.md).
 
@@ -140,7 +140,7 @@ Before a light `roles.py show` or `roles.py backup` call, read [roles.md](roles.
 
 An explicit budget wins. Pass the live catalog and `--parent` on every light `show` call, per [Roles](#roles), so a configured `inherit` seat of a capped role gets the cap.
 
-Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A thread whose brief has a `Mode:` line stops at a verifiable point and reports `Contested: <reason>` under its status. A thread whose mode came from the session or the roles files switches that work to full, announces the escalation, and runs the step full mode prescribes, such as `interrogate`. Nothing moves work from full to light mid-flight.
+Escalation only moves work toward `full`. `roles.py mode` prints `Mode: full` and `Mode source: escalated: <reason>` when a lease covers a pattern in the project's `"escalate"` list, at the second send-back, or when `--escalated` carries a recorded reason. A light thread that finds its design contested does not run `interrogate`. A thread whose brief has a `Mode:` line stops at a verifiable point and reports `Contested: <reason>` under its status. A thread whose mode came from the session or the roles files switches that work to full, announces the escalation, and runs the step full mode prescribes, such as `interrogate`.
 
 ### Light behavior
 
@@ -154,7 +154,7 @@ Light behavior lives in [light.md](light.md#light-behavior).
 - A review reads the whole diff against its base on round one. A later round reads the fix diff since the last reviewed SHA, per [Rounds after the first](../brigade/verdict-protocol.md#rounds-after-the-first).
 - Owner fences. Leases, `--owner` generations, worktrees, and the pass-at-head gate.
 - A fresh worker for every send-back, per [Fresh children by default](#fresh-children-by-default).
-- The code delegate, with the persona, the `roles.py mode` lines, and `roles.py check-brief`.
+- The code delegate, with the worker line, the persona body, the `roles.py mode` lines, and `roles.py check-brief`.
 - One executing fresh-child test per changed spawn or coordination behavior.
 
 ### Gate review
@@ -189,7 +189,7 @@ Forks live in [threads.md](threads.md#forks).
 
 ## Scheduling
 
-`schedule_task` creates recurring work in T3's scheduler. It runs even when no turn is active, so it replaces `/loop`, Cursor automations, and hourly ticks.
+`schedule_task` runs work with no turn active.
 
 The other schedule fields live in [threads.md](threads.md#scheduling).
 
@@ -242,6 +242,6 @@ Before you write a child brief that needs a specific MCP server, read [Skill loc
 
 ## Personas
 
-- `agents/poteto-agent.md` is the persona for code-writing delegates inside a poteto-mode playbook. Paste its body at the top of the child's brief, paste the `roles.py mode` lines, and run `roles.py check-brief` per [Delegation](#delegation) step 4.
+- `agents/poteto-agent.md` is the persona for code-writing delegates inside a poteto-mode playbook. The child's brief opens with that worker line, then the persona body below it, then the `roles.py mode` lines, then the task. Run `roles.py check-brief` per [Delegation](#delegation) step 4.
 - `agents/comment-sicko.md` is the persona for the no-comments review. Paste its body at the top of that reviewer's brief.
 - Paste the body only, without the frontmatter.

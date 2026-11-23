@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "t3/scripts"))
 sys.path.append(str(ROOT / "scripts"))
 
-from tests.pstack_t3.support import pointer_sentence, runtime_docs, runtime_doc_section, override_text
+from tests.pstack_t3.support import pointer_sentence, runtime_docs, runtime_doc_section, override_text, added_text
 
 
 class VisualReportsDocTest(unittest.TestCase):
@@ -60,7 +60,7 @@ class VisualReportsDocTest(unittest.TestCase):
             self.assertIn(sentence, self.section)
 
     def test_orchestrate_reply_keeps_upstream_facts_and_links_the_section(self):
-        text = override_text("poteto-mode/playbooks/orchestrate.md")
+        text = added_text("poteto-mode/playbooks/orchestrate.md")
         reply = next(line for line in text.splitlines() if line.startswith("**Reply:**"))
         self.assertTrue(reply.startswith(
             "**Reply:** what landed against the goal, each PR's live state and verdict with its link, "

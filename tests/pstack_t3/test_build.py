@@ -51,7 +51,7 @@ class BuildTest(unittest.TestCase):
         text = catalog.render(ROOT / "skills")
         for skill_md in (ROOT / "skills").glob("*/SKILL.md"):
             self.assertIn(f"[`{skill_md.parent.name}`]", text)
-        self.assertIn("(../skills/poteto-mode/playbooks/bug-fix.md)", text)
+        self.assertIn("(../skills/poteto-mode/playbooks/orchestrate.md)", text)
 
     def test_kebab_lowercases_and_hyphenates_three_playbook_titles(self):
         import catalog
@@ -59,10 +59,11 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(catalog.kebab("Autopilot-full"), "autopilot-full")
         self.assertEqual(catalog.kebab("Opening a PR"), "opening-a-pr")
 
-    def test_built_playbook_bullets_resolve_to_the_files_in_playbook_files(self):
+    def test_catalog_extracts_only_the_orchestrate_bullet(self):
         import catalog
         resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "skills")}
-        self.assertEqual(resolved, PLAYBOOK_FILES)
+        self.assertEqual(resolved, {"Orchestrate": "playbooks/orchestrate.md"})
+        self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
 
     def test_every_built_playbook_bullet_resolves_to_an_existing_file(self):
         import catalog
@@ -70,11 +71,9 @@ class BuildTest(unittest.TestCase):
             self.assertTrue((ROOT / "skills/poteto-mode" / file).is_file(), title)
         self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
 
-    def test_vendor_playbook_entries_match_playbook_files(self):
-        import catalog
-        resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "vendor/pstack/skills")}
-        self.assertEqual(resolved, PLAYBOOK_FILES)
-        self.assertEqual(catalog.missing_playbooks(ROOT / "vendor/pstack/skills"), [])
+    def test_every_shipped_playbook_file_exists(self):
+        for title, file in PLAYBOOK_FILES.items():
+            self.assertTrue((ROOT / "skills/poteto-mode" / file).is_file(), title)
 
     def test_a_skill_with_no_playbooks_heading_returns_nothing(self):
         import catalog

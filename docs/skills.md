@@ -31,7 +31,7 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 | [`ketchup`](../skills/ketchup/SKILL.md) | Catch the user up on what changed in this chat since their last message, in plain words and small visuals. List every item waiting on them with what they need to decide it from the reply alone. Use for /ketchup. |
 | [`recall`](../skills/recall/SKILL.md) | Reconstruct your recent working context from your own chat history, live state, and the shared record (user reports, prior fixes, incidents), then hand back a tight current-state brief. Use for 'recall my work on X', 'catch me up', 'what have I been working on', 'where did I leave off', before starting or resuming work. |
 | [`teach`](../skills/teach/SKILL.md) | Explain a body of work plainly so a person actually understands it. Runs the `how` and `why` skills and weaves what they find into one clear explanation. Use for 'teach me this', 'help me really understand X', 'explain this change or subsystem to me'. |
-| [`why`](../skills/why/SKILL.md) | Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Discovers available MCPs and queries each evidence category (source control, issue tracker, long-form docs, real-time chat, infrastructure observability, error tracking, product analytics warehouse) in parallel, then returns a cited read on decisions and tradeoffs. Use how for runtime behavior. |
+| [`why`](../skills/why/SKILL.md) | Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Returns a cited read on decisions and tradeoffs. Use how for runtime behavior. |
 
 ## Plan and run long work
 
@@ -118,26 +118,4 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 
 | Playbook | For |
 | --- | --- |
-| [Investigation](../skills/poteto-mode/playbooks/investigation.md) | Read-only question: how does X work, why was Y built this way, are we sure about Z, should we do X or Y. |
-| [Bug fix](../skills/poteto-mode/playbooks/bug-fix.md) | A reported defect to reproduce, root-cause, and fix with runtime evidence. |
-| [Perf issue](../skills/poteto-mode/playbooks/perf-issue.md) | A measured slowness to trace and improve against a baseline. |
-| [Hillclimb](../skills/poteto-mode/playbooks/hillclimb.md) | Sustained, scientific improvement of one metric against a target: loop hypotheses with before/after measurement, a decision log, and one commit per accepted win. Distinct from Perf issue, which is a one-off fix. |
-| [Runtime forensics](../skills/poteto-mode/playbooks/runtime-forensics.md) | Diagnose a runtime symptom (leak, idle-CPU spin, glitch) from live instrumentation. The deliverable is a diagnosis, not a fix. |
-| [Trace forensics](../skills/poteto-mode/playbooks/trace-forensics.md) | Diagnose a captured profiling artifact (cpuprofile, trace, spindump, heap snapshot) handed to you after the fact. The deliverable is a diagnosis, not a fix. |
-| [Feature](../skills/poteto-mode/playbooks/feature.md) | New or changed behavior, built from a named data shape. |
-| [Refactoring](../skills/poteto-mode/playbooks/refactoring.md) | A behavior-preserving change to structure or shape (rename, extract, inline, dedupe, move). |
-| [Prototype](../skills/poteto-mode/playbooks/prototype.md) | A throwaway sketch to make a design or behavioral decision cheaply, or to settle an empirical fork by observing it instead of asking the human ("prototype", "mock it up", "try this layout", "sketch it to decide"). |
-| [Visual parity](../skills/poteto-mode/playbooks/visual-parity.md) | Pixel-exact UI equivalence: matching two implementations or migrating a styling system. |
-| [Authoring or modifying a skill](../skills/poteto-mode/playbooks/authoring-a-skill.md) | Writing or editing a SKILL.md. |
-| [Eval](../skills/poteto-mode/playbooks/eval.md) | Testing how a skill, structure, or prompt change affects agent behavior before promoting it. |
-| [Babysit](../skills/poteto-mode/playbooks/babysit.md) | Driving a PR or a stack to merge-ready: conflicts, review threads, CI. |
-| [Shipping](../skills/poteto-mode/playbooks/shipping.md) | The half after Babysit. Independently verifying a green stack, then landing the contiguous verified run bottom-up through `gh` by default or Origin when its CLI is available. |
-| [Autonomous run](../skills/poteto-mode/playbooks/autonomous-run.md) | A long task to drive to completion without stopping ("run until done", "run until X"). |
-| [Orchestrate](../skills/poteto-mode/playbooks/orchestrate.md) | A standing project handed to one coordinator chat: multi-day, many stacked PRs, dozens to hundreds of subagents, minimal human turns ("run this whole project", "own this migration until it lands"). Distinct from Autonomous run, which drives one task to a predicate. Work one agent could finish inside the session's budget routes there, not here, however program-shaped the phrasing sounds. |
-| [Autopilot-full](../skills/poteto-mode/playbooks/autopilot-full.md) | A queue of independent PRs run to merged with full autonomy. One owner per PR carries build through merge, and the root swarm-verifies each PR before its owner merges ("autopilot this queue", "full autopilot", one-owner-per-PR programs). |
-| [Autopilot-stack](../skills/poteto-mode/playbooks/autopilot-stack.md) | Autopilot-full without the merge. A queue of PRs built and verified with full autonomy, then handed to the operator to land. A PR stacks only on a PR it builds on ("autopilot-stack", "autopilot, don't merge", "stack them, don't ship", "build the stack, I'll land it"). |
-| [Session pickup](../skills/poteto-mode/playbooks/session-pickup.md) | Resuming or taking over a prior agent's in-flight work from a T3 thread, pushed branch, or worktree. |
-| [Pause safely](../skills/poteto-mode/playbooks/pause-safely.md) | Suspending in-flight work cleanly so it can be resumed, on an explicit pause, going offline, a T3 restart or provider switch, or imminent context compaction. The complement to Session pickup. |
-| [Multi-phase or multi-PR plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) | Work that spans phases or stacked PRs. |
-| [Worktree and simulator cleanup](../skills/poteto-mode/playbooks/worktree-cleanup.md) | Reclaiming local disk by pruning merged or abandoned git worktrees and stale iOS simulators ("what's using my disk", "clean up worktrees", "prune safe-to-prune worktrees", "free up space", "delete old simulators"). |
-| [Opening a PR](../skills/poteto-mode/playbooks/opening-a-pr.md) | Invoked at the end of every other playbook. |
+| [Orchestrate](../skills/poteto-mode/playbooks/orchestrate.md) | A standing project handed to one coordinator chat: multi-day, many stacked PRs, dozens of subagents, minimal human turns. |

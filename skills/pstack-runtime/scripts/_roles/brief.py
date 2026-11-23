@@ -6,12 +6,71 @@ from pathlib import Path
 
 
 from _roles.base import RolesError
-from _roles.mode import mode_problems
+from _roles.mode import grammar_entry, mode_problems
 from _roles import seam
 
 
 def persona_path():
     return seam.AGENTS_DIR / "poteto-agent.md"
+
+
+WORKER_LINE = re.compile(r"Read /.+/worker\.md before anything else\.")
+
+
+MISSING_WORKER = "missing worker line: open the brief with 'Read <absolute path>/worker.md before anything else.'"
+
+
+TEXT_BEFORE_MODE = (
+    "text before the mode lines: the pasted roles.py mode lines go directly below "
+    "the persona body, and the task text follows them"
+)
+
+
+def playbook_entry(line):
+    match = re.fullmatch(r"Playbook:\s*(\S+)\s*", line)
+    return match.group(1) if match else None
+
+
+def kickoff_entry(line):
+    value = playbook_entry(line)
+    if value is not None:
+        return "Playbook", value
+    return grammar_entry(line)
+
+
+def kickoff_problem(checked, collapsed_body):
+    lines = checked.splitlines()
+    entries = []
+    for index, line in enumerate(lines):
+        entry = kickoff_entry(line)
+        if entry is not None:
+            entries.append((index, entry))
+    if not entries:
+        return None
+    first = entries[0][0]
+    if " ".join("\n".join(lines[:first]).split()) != collapsed_body:
+        return TEXT_BEFORE_MODE
+    first_index = {}
+    for index, entry in entries:
+        first_index.setdefault(entry[0], index)
+    boundary = [first_index[label] for label in ("Playbook", "Mode") if label in first_index]
+    if not boundary:
+        return None
+    last = max(boundary)
+    for line in lines[first:last]:
+        if line.strip() and kickoff_entry(line) is None:
+            return TEXT_BEFORE_MODE
+    return None
+
+
+def strip_worker_line(text):
+    lines = text.splitlines(keepends=True)
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines) and WORKER_LINE.fullmatch(lines[index].strip()):
+        return "".join(lines[index + 1:])
+    return text
 
 
 def playbook_stems():
@@ -55,9 +114,9 @@ def load_brief_rules():
 def playbook_values(text):
     values = []
     for line in text.splitlines():
-        match = re.fullmatch(r"Playbook:\s*(\S+)\s*", line)
-        if match:
-            values.append(match.group(1))
+        value = playbook_entry(line)
+        if value is not None:
+            values.append(value)
     return values
 
 
@@ -74,12 +133,25 @@ def playbook_stem(value):
 
 def brief_problems(text, persona_body, playbooks):
     problems = []
+    raw_lines = text.splitlines()
+    index = 0
+    while index < len(raw_lines) and not raw_lines[index].strip():
+        index += 1
+    if index >= len(raw_lines) or not WORKER_LINE.fullmatch(raw_lines[index].strip()):
+        problems.append(MISSING_WORKER)
+        checked = text
+    else:
+        checked = strip_worker_line(text)
     collapsed_body = " ".join(persona_body.split())
-    collapsed_brief = " ".join(text.split())
+    collapsed_brief = " ".join(checked.split())
     if not collapsed_brief.startswith(collapsed_body):
         problems.append(
             f"missing persona: open the brief with the body of {persona_path()}, without its frontmatter"
         )
+    else:
+        problem = kickoff_problem(checked, collapsed_body)
+        if problem is not None:
+            problems.append(problem)
     names = ", ".join(sorted(playbooks))
     values = playbook_values(text)
     stem = None

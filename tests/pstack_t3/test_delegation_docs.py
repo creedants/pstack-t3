@@ -111,16 +111,20 @@ class StalledChildDocTest(unittest.TestCase):
         sources = {
             "how/SKILL.md": "../pstack-runtime", "arena/SKILL.md": "../pstack-runtime",
             "interrogate/SKILL.md": "../pstack-runtime", "swarm/SKILL.md": "../pstack-runtime",
-            "why/SKILL.md": "../pstack-runtime", "no-comments/SKILL.md": "../pstack-runtime",
-            "poteto-mode/playbooks/orchestrate.md": "../../pstack-runtime",
+            "no-comments/SKILL.md": "../pstack-runtime",
             "poteto-mode/playbooks/feature.md": "../../pstack-runtime",
             "poteto-mode/playbooks/bug-fix.md": "../../pstack-runtime",
             "poteto-mode/playbooks/refactoring.md": "../../pstack-runtime",
             "poteto-mode/playbooks/perf-issue.md": "../../pstack-runtime",
             "poteto-mode/playbooks/hillclimb.md": "../../pstack-runtime",
         }
+        added = {
+            "poteto-mode/playbooks/orchestrate.md": "../../pstack-runtime",
+        }
         missing = [name for name, runtime in sources.items()
                    if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/overrides" / name).read_text()]
+        missing += [name for name, runtime in added.items()
+                    if f"Delegation step 5]({runtime}/SKILL.md#delegation)" not in (ROOT / "t3/added" / name).read_text()]
         self.assertEqual(missing, [])
 
     def test_failure_handling_relaunches_a_usage_limit_from_the_backups_key(self):

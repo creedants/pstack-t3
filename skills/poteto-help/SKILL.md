@@ -48,7 +48,7 @@ pstack-t3 runs in T3 Code. [Outside T3](../pstack-runtime/SKILL.md#outside-t3) c
 
 ## Start a task with `$poteto-mode`
 
-`$poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A step it skips stays in the list as `skip: <reason>`. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. Read [`references/prompting.md`](references/prompting.md) before you help word one. [The guide's first task](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#3-your-first-rigorous-task) has an example.
+`$poteto-mode` matches the task to a playbook, copies the playbook's steps into the todo list, and runs the other skills as the steps need them. A good prompt states the goal and how to tell it's done. It doesn't list skills, because a hand-written sequence tends to drop or reorder steps the playbook would keep. Read [`references/prompting.md`](references/prompting.md) before you help word one. [The guide's first task](https://github.com/creedants/pstack-t3/blob/main/docs/guide.md#3-your-first-rigorous-task) has an example.
 
 Whether `$poteto-mode` stays on:
 
@@ -132,7 +132,7 @@ Playbooks are step lists inside `$poteto-mode`, not skills, so they have no `$` 
 - "full autopilot on this queue" runs Autopilot-full. "autopilot, don't merge" runs Autopilot-stack.
 - "run the eval playbook" runs Eval.
 
-Without `$poteto-mode`, a phrase such as "babysit this pr" can start the host's own skill for the same job instead. The Playbooks section of [`poteto-mode`](../poteto-mode/SKILL.md) lists every playbook and when it applies. Opening, babysitting, and landing a PR are the [opening](../poteto-mode/playbooks/opening-a-pr.md), [babysit](../poteto-mode/playbooks/babysit.md), and [shipping](../poteto-mode/playbooks/shipping.md) playbooks.
+Without `$poteto-mode`, a phrase such as "babysit this pr" can start the host's own skill for the same job instead. The Playbooks section of [`poteto-mode`](../poteto-mode/SKILL.md) lists every playbook. Opening, babysitting, and landing a PR are the [opening](../poteto-mode/playbooks/opening-a-pr.md), [babysit](../poteto-mode/playbooks/babysit.md), and [shipping](../poteto-mode/playbooks/shipping.md) playbooks.
 
 pstack has no planning skill. T3's plan mode works alongside it. For work that spans phases or stacked PRs, asking `$poteto-mode` for a plan runs the [Multi-phase plan playbook](../poteto-mode/playbooks/multi-phase-plan.md), which writes the plan and doesn't implement it. For a design question, the Prototype playbook or `$architect` settles it in code first.
 
