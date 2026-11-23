@@ -16,7 +16,7 @@ Full send runs one item with tstack's full-send method in place of a poteto-mode
 
 ## Seats
 
-The defaults live in `<skills>/brigade/scripts/brigade_lib/full_send.py`: `WRITER` is `claudeAgent/claude-opus-5-5` at `xhigh`, and `SOL` is `codex/gpt-6.1-sol` at `high`. A full-send item never takes a seat from `roles.py show` or the worker roles. To change a default, change that file in the pstack-t3 repository.
+The defaults live in `<skills>/brigade/scripts/brigade_lib/full_send.py`: `WRITER` is `claudeAgent/claude-opus-5-5` at `xhigh`, and `SOL` is `codex/gpt-6.2-sol` at `high`. A full-send item never takes a seat from `roles.py show` or the worker roles. To change a default, change that file in the pstack-t3 repository.
 
 - **Writer.** `$B launch <dish> --parent <your provider/model> --catalog <file>` prints the writer's `modelSelection` without running `roles.py`. It exits 1 while the writer's provider is cooling, because the station has no backup seat. Launch nothing before the end it names. Confirm the readback and record the thread per steps 4.3 and 4.4.
 - **Sol rounds.** The brief gives the worker the `SOL` target. The worker lists them under `## Notes`, never `## Threads`.
