@@ -38,26 +38,22 @@ def kickoff_entry(line):
     return grammar_entry(line)
 
 
+MODE_BLOCK_LABELS = ("Playbook", "Mode", "Mode source", "Attempt", "Waived by mode")
+
+
 def kickoff_problem(checked, collapsed_body):
     lines = checked.splitlines()
-    entries = []
+    block = []
     for index, line in enumerate(lines):
         entry = kickoff_entry(line)
-        if entry is not None:
-            entries.append((index, entry))
-    if not entries:
+        if entry is not None and entry[0] in MODE_BLOCK_LABELS:
+            block.append(index)
+    if not block:
         return None
-    first = entries[0][0]
+    first = block[0]
     if " ".join("\n".join(lines[:first]).split()) != collapsed_body:
         return TEXT_BEFORE_MODE
-    first_index = {}
-    for index, entry in entries:
-        first_index.setdefault(entry[0], index)
-    boundary = [first_index[label] for label in ("Playbook", "Mode") if label in first_index]
-    if not boundary:
-        return None
-    last = max(boundary)
-    for line in lines[first:last]:
+    for line in lines[first:block[-1]]:
         if line.strip() and kickoff_entry(line) is None:
             return TEXT_BEFORE_MODE
     return None
