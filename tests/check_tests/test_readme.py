@@ -268,6 +268,80 @@ class SkillCountCheckTest(unittest.TestCase):
 
 
 
+class SkillCountWriteTest(unittest.TestCase):
+    def _skills(self, names):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        for name in names:
+            (root / name).mkdir()
+            (root / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\n\nbody\n")
+        return root
+
+    def test_write_guide_count_rewrites_stale_and_mismatched_quotes_only(self):
+        root = self._skills(("a", "b", "c"))
+        guide = root / "docs/guide.md"
+        guide.parent.mkdir()
+        raw = "Guide · 2/2 stays.\r\n`2/2 pstack-t3`\r\n`1/9 pstack-t3` end".encode("utf-8")
+        want = "Guide · 2/2 stays.\r\n`3/3 pstack-t3`\r\n`3/3 pstack-t3` end".encode("utf-8")
+        guide.write_bytes(raw)
+        self.assertTrue(check.write_guide_count(guide, root))
+        self.assertEqual(guide.read_bytes(), want)
+        self.assertEqual(check.guide_count_findings(guide, root), [])
+
+    def test_write_readme_count_rewrites_stale_phrase_and_keeps_surrounding_bytes(self):
+        root = self._skills(("a", "b", "c"))
+        readme = root / "README.md"
+        raw = "· All 2 skills, recall 2 skills, all 2 skillsets.\r\nall 2 skills\r\nall 2 skills end".encode("utf-8")
+        want = "· All 2 skills, recall 2 skills, all 2 skillsets.\r\nall 3 skills\r\nall 3 skills end".encode("utf-8")
+        readme.write_bytes(raw)
+        self.assertTrue(check.write_readme_count(readme, root))
+        self.assertEqual(readme.read_bytes(), want)
+        self.assertEqual(check.readme_count_findings(readme, root), [])
+
+    def test_write_count_leaves_already_matching_files_unwritten(self):
+        root = self._skills(("a", "b"))
+        guide, readme = root / "docs/guide.md", root / "README.md"
+        guide.parent.mkdir()
+        guide.write_text("`2/2 pstack-t3`\n", encoding="utf-8")
+        readme.write_text("all 2 skills\n", encoding="utf-8")
+        stamp = 1_000_000
+        for path in (guide, readme):
+            os.utime(path, (stamp, stamp))
+        self.assertFalse(check.write_guide_count(guide, root))
+        self.assertFalse(check.write_readme_count(readme, root))
+        self.assertEqual((guide.stat().st_mtime_ns, readme.stat().st_mtime_ns), (stamp * 10**9, stamp * 10**9))
+
+    def test_write_count_leaves_unquoted_and_unreadable_files_alone_for_findings(self):
+        root = self._skills(("a", "b"))
+        guide, readme = root / "docs/guide.md", root / "README.md"
+        guide.parent.mkdir()
+        stamp = 1_000_000
+        cases = (
+            ("unquoted guide", guide, check.write_guide_count, check.guide_count_findings, b"no count\n", ("quotes no doctor count",)),
+            ("unstated readme", readme, check.write_readme_count, check.readme_count_findings, b"no count\n", ("states no skill count",)),
+            ("missing guide", guide, check.write_guide_count, check.guide_count_findings, None, ("could not be read",)),
+            ("missing readme", readme, check.write_readme_count, check.readme_count_findings, None, ("could not be read",)),
+            ("bad utf-8 guide", guide, check.write_guide_count, check.guide_count_findings, b"\xff\xfe", ("could not be read", "UnicodeDecodeError")),
+            ("bad utf-8 readme", readme, check.write_readme_count, check.readme_count_findings, b"\xff\xfe", ("could not be read", "UnicodeDecodeError")),
+        )
+        for label, path, writer, finder, raw, snippets in cases:
+            with self.subTest(label):
+                if raw is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(raw)
+                    os.utime(path, (stamp, stamp))
+                self.assertFalse(writer(path, root))
+                if raw is None:
+                    self.assertFalse(path.exists())
+                else:
+                    self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), (raw, stamp * 10**9))
+                findings = "\n".join(finder(path, root))
+                for snippet in snippets:
+                    self.assertIn(snippet, findings)
+
+
 class MinimumT3CodeVersionCheckTest(unittest.TestCase):
     """The tests cover agreeing minimum-version sentences, a different version in each document, and a gate string that cannot be read."""
 

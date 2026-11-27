@@ -13,6 +13,7 @@ isolation.install()
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -394,22 +395,56 @@ class TreeFilesTest(unittest.TestCase):
 
 
 class BuildReferenceTest(unittest.TestCase):
+    def _copy_repo(self, skip=None):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        copy = Path(tmp.name)
+        for rel in tree_files(ROOT):
+            if rel and (not skip or not rel.startswith(skip)) and (ROOT / rel).is_file():
+                (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / rel, copy / rel)
+        return copy
+
+    def _build(self, copy):
+        return subprocess.run([sys.executable, str(copy / "scripts/build.py")], capture_output=True, text=True)
+
+    def _probe(self, copy):
+        probe = copy / "t3/added/probe-skill/SKILL.md"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("---\nname: probe-skill\ndescription: d\n---\n\n# P\n\nBody.\n")
+
     def test_default_build_writes_the_committed_command_line_reference_pages(self):
-        listed = tree_files(ROOT)
-        with tempfile.TemporaryDirectory() as directory:
-            copy = Path(directory)
-            for rel in listed:
-                if rel and not rel.startswith("docs/cli/") and (ROOT / rel).is_file():
-                    (copy / rel).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(ROOT / rel, copy / rel)
-            result = subprocess.run(
-                [sys.executable, str(copy / "scripts/build.py")],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            built = sorted(path.name for path in (copy / "docs/cli").iterdir())
-            self.assertEqual(built, sorted(path.name for path in (ROOT / "docs/cli").iterdir()))
-            for name in built:
-                with self.subTest(name):
-                    self.assertEqual((copy / "docs/cli" / name).read_text(), (ROOT / "docs/cli" / name).read_text())
+        copy = self._copy_repo("docs/cli/")
+        res = self._build(copy)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        built = sorted(p.name for p in (copy / "docs/cli").iterdir())
+        self.assertEqual(built, sorted(p.name for p in (ROOT / "docs/cli").iterdir()))
+        for name in built:
+            with self.subTest(name):
+                self.assertEqual((copy / "docs/cli" / name).read_text(), (ROOT / "docs/cli" / name).read_text())
+
+    def test_default_build_rewrites_stale_guide_and_readme_counts_from_shipped_skills(self):
+        copy = self._copy_repo()
+        n = sum(1 for _ in (copy / "skills").glob("*/SKILL.md"))
+        self._probe(copy)
+        res = self._build(copy)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        guide, readme = copy / "docs/guide.md", copy / "README.md"
+        g_text, r_text = guide.read_text(), readme.read_text()
+        self.assertIn(f"{n + 1}/{n + 1} pstack-t3", g_text)
+        self.assertNotIn(f"{n}/{n} pstack-t3", g_text)
+        self.assertIn(f"all {n + 1} skills", r_text)
+        self.assertNotIn(f"all {n} skills", r_text)
+        self.assertEqual((check.guide_count_findings(guide, copy / "skills"), check.readme_count_findings(readme, copy / "skills")), ([], []))
+
+    def test_default_build_fails_before_replacing_skills_when_guide_or_readme_lacks_count(self):
+        copy = self._copy_repo()
+        guide, readme = copy / "docs/guide.md", copy / "README.md"
+        guide.write_text(re.sub(r"\d+/\d+ pstack-t3", "none", guide.read_text()))
+        readme.write_text(re.sub(r"\ball \d+ skills\b", "all 60 skills", readme.read_text()))
+        self._probe(copy)
+        res = self._build(copy)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("quotes no doctor count", res.stdout + res.stderr)
+        self.assertFalse((copy / "skills/probe-skill").exists())
+        self.assertIn("all 60 skills", readme.read_text())
