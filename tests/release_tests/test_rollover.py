@@ -39,7 +39,7 @@ class RolloverTest(ReleaseCase):
             steps = (
                 "this script never stages, commits, tags, or pushes. the remaining steps:\n"
                 "  git add CHANGELOG.md changes/ docs/changelog/\n"
-                '  git commit -m "release 0.1.1"\n'
+                '  git commit -m "Release 0.1.1"\n'
                 '  git tag -a v0.1.1 -m "pstack-t3 0.1.1"    # on the commit that lands on main\n'
                 "  git push origin v0.1.1\n"
                 "  gh release create v0.1.1 --notes-file <release notes file>\n"
@@ -67,7 +67,7 @@ class RolloverTest(ReleaseCase):
             steps = (
                 "this script never stages, commits, tags, or pushes. the remaining steps:\n"
                 "  git add CHANGELOG.md changes/ docs/changelog/\n"
-                '  git commit -m "release 0.1.1"\n'
+                '  git commit -m "Release 0.1.1"\n'
                 '  git tag -a v0.1.1 -m "pstack-t3 0.1.1"    # on the commit that lands on main\n'
                 "  git push origin v0.1.1\n"
                 "  gh release create v0.1.1 --notes-file <release notes file>\n"
