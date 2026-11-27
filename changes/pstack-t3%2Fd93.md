@@ -1,2 +1,2 @@
-- `scripts/build.py` now writes the shipped skill count into every `N/N pstack-t3` doctor count quote in `docs/guide.md` and every `all N skills` phrase in `README.md` on a default build.
+- `scripts/build.py` now writes the shipped skill count into every `N/M pstack-t3` doctor count quote in `docs/guide.md` and every `all N skills` phrase in `README.md` on a default build.
 - It leaves `docs/guide.md` and `README.md` untouched when their counts already match, and fails before replacing `skills/` when either file cannot be read or lacks a count.

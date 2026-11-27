@@ -155,11 +155,11 @@ def write_readme_count(readme, root):
 
 
 def guide_count_findings(guide, root):
-    """check_tree calls this when guide is true in a bare CLI run and build.py --out. Default build.py calls it directly when the guide is unreadable or lacks a count.
+    """Report doctor count quotes in guide that disagree with the shipped skill count under root.
 
     The shipped count is every SKILL.md entry directly in a directory of the
     tree. A quote is a pair of numbers with a slash between them and pstack-t3
-    after them, the shape link_health in scripts/install.py prints. A quote
+    after them, the shape link_health in scripts/_install/doctor.py prints. A quote
     whose two numbers differ, or whose first number differs from the shipped
     count, is a finding that names the guide, the line, the quoted count, and
     the shipped count. A guide that quotes no doctor count is one finding. A
@@ -187,7 +187,7 @@ def guide_count_findings(guide, root):
 
 
 def readme_count_findings(readme, root):
-    """check_tree calls this when guide is true in a bare CLI run and build.py --out. Default build.py calls it directly when README.md is unreadable or lacks a count.
+    """Report stated skill counts in readme that disagree with the shipped skill count under root.
 
     The shipped count is every SKILL.md entry directly in a directory of
     the tree. A stated count is the digits between `all ` and ` skills`

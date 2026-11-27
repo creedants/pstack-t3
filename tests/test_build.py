@@ -437,7 +437,7 @@ class BuildReferenceTest(unittest.TestCase):
         self.assertNotIn(f"all {n} skills", r_text)
         self.assertEqual((check.guide_count_findings(guide, copy / "skills"), check.readme_count_findings(readme, copy / "skills")), ([], []))
 
-    def test_default_build_fails_before_replacing_skills_when_guide_or_readme_lacks_count(self):
+    def test_default_build_fails_before_replacing_skills_when_guide_lacks_count(self):
         copy = self._copy_repo()
         guide, readme = copy / "docs/guide.md", copy / "README.md"
         guide.write_text(re.sub(r"\d+/\d+ pstack-t3", "none", guide.read_text()))
