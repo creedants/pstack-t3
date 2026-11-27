@@ -215,11 +215,12 @@ def render(destination):
         skill_md.write_text(normalize_skill(skill_md.read_text(), skill))
 
 
-def build(destination, update_lock=False, skip_lock=False):
+def build(destination=None, update_lock=False, skip_lock=False):
     problems = [] if skip_lock else check_lock(update_lock)
     if problems:
         raise SystemExit("override drift:\n  " + "\n  ".join(problems))
-    writing_repo = destination == ROOT / "skills"
+    writing_repo = destination is None
+    target = ROOT / "skills" if writing_repo else destination
     with tempfile.TemporaryDirectory(prefix="pstack-t3-build-") as temporary:
         staged = Path(temporary) / "skills"
         render(staged)
@@ -248,15 +249,15 @@ def build(destination, update_lock=False, skip_lock=False):
             findings.extend(minimum_version_findings(readme_path, guide_path))
         if findings:
             raise SystemExit("check failed:\n  " + "\n  ".join(findings))
-        replace_tree(staged, destination)
+        replace_tree(staged, target)
     if writing_repo:
         import cli_reference
 
-        write(destination)
+        write(target)
         cli_reference.write()
-        write_guide_count(ROOT / "docs/guide.md", destination)
-        write_readme_count(ROOT / "README.md", destination)
-    return destination
+        write_guide_count(ROOT / "docs/guide.md", target)
+        write_readme_count(ROOT / "README.md", target)
+    return target
 
 
 def replace_tree(source, destination):
@@ -281,6 +282,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--update-lock", action="store_true", help="record digests for overrides and personas with a counterpart and null for overrides without one, omitting personas without one")
     parser.add_argument("--skip-lock", action="store_true", help="check a work-in-progress port without the drift lock")
-    parser.add_argument("--out", type=Path, default=ROOT / "skills")
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
     print(f"built {build(args.out, args.update_lock, args.skip_lock)}")
