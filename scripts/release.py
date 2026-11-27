@@ -285,7 +285,7 @@ def splice(changelog, section):
  return (head + "\n\n" if head else "") + section + ("\n" + tail if tail else "")
 def remaining_steps(version, archived=False):
  first = "git add CHANGELOG.md changes/ docs/changelog/" if archived else "git add CHANGELOG.md changes/"
- return [first, f'git commit -m "release {version}"',
+ return [first, f'git commit -m "Release {version}"',
    f'git tag -a v{version} -m "pstack-t3 {version}"    # on the commit that lands on main',
    f"git push origin v{version}", f"gh release create v{version} --notes-file <release notes file>"]
 def read_utf8(path):

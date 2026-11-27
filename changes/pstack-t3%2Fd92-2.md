@@ -1,0 +1,1 @@
+- `scripts/release.py` now prints `git commit -m "Release <version>"` in its remaining steps instead of the lowercase `release` commit title.

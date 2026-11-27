@@ -241,7 +241,7 @@ class ReleaseSectionsTest(unittest.TestCase):
                 "would delete changes/five.md", "would delete changes/four.md", "would delete changes/one.md",
                 "would delete changes/three.md", "would delete changes/two.md", "nothing changed",
             ]) + "\n" + "this script never stages, commits, tags, or pushes. the remaining steps:\n"
-                '  git add CHANGELOG.md changes/\n  git commit -m "release 0.5.0"\n'
+                '  git add CHANGELOG.md changes/\n  git commit -m "Release 0.5.0"\n'
                 '  git tag -a v0.5.0 -m "pstack-t3 0.5.0"    # on the commit that lands on main\n'
                 "  git push origin v0.5.0\n  gh release create v0.5.0 --notes-file <release notes file>\n")
             self.assertEqual(git(repo, "status", "--porcelain"), "")

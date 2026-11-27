@@ -39,7 +39,7 @@ SECTION = HEADING + UPKEEP + "- eta one\n  eta continued\n- eta two\n- beta\n- a
 STEPS = (
     "this script never stages, commits, tags, or pushes. the remaining steps:\n"
     "  git add CHANGELOG.md changes/\n"
-    '  git commit -m "release 0.2.1"\n'
+    '  git commit -m "Release 0.2.1"\n'
     '  git tag -a v0.2.1 -m "pstack-t3 0.2.1"    # on the commit that lands on main\n'
     "  git push origin v0.2.1\n"
     "  gh release create v0.2.1 --notes-file <release notes file>\n"
