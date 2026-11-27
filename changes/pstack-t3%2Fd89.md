@@ -1,1 +1,0 @@
-- The role table no longer names why as the caller of `why synthesizer`; no shipped skill seats it and the role is kept so roles files that name it still load.

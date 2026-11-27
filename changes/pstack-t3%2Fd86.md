@@ -1,1 +1,0 @@
-- `activity.py` reports an unreadable T3 base directory as permission denied on Python 3.14.
