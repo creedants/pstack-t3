@@ -109,15 +109,73 @@ _STATED_COUNT = re.compile(r"\ball (\d+) skills\b")
 
 
 def _shipped_skill_count(root):
-    return sum(1 for _skill in root.glob("*/SKILL.md"))
+    return sum(1 for _skill in Path(root).glob("*/SKILL.md"))
+
+
+def _guide_count_agrees(match, shipped):
+    return match.group(1) == match.group(2) and int(match.group(1)) == shipped
+
+
+def _readme_count_agrees(match, shipped):
+    return int(match.group(1)) == shipped
+
+
+def _count_rewrite(path, pattern, agrees, replacement):
+    text = _readme_text(Path(path))
+    if text is None:
+        return None, None
+    updated, count = pattern.subn(lambda match: match.group(0) if agrees(match) else replacement, text)
+    return text, updated if count else None
+
+
+def rewritten_guide_count(guide, root):
+    """Return guide text with every disagreeing doctor count quote set to root's shipped count, or None when unreadable or unquoted."""
+    shipped = _shipped_skill_count(root)
+    _text, updated = _count_rewrite(
+        guide, _QUOTED_COUNT, lambda match: _guide_count_agrees(match, shipped), f"{shipped}/{shipped} pstack-t3"
+    )
+    return updated
+
+
+def rewritten_readme_count(readme, root):
+    """Return README text with every disagreeing stated skill count set to root's shipped count, or None when unreadable or unstated."""
+    shipped = _shipped_skill_count(root)
+    _text, updated = _count_rewrite(
+        readme, _STATED_COUNT, lambda match: _readme_count_agrees(match, shipped), f"all {shipped} skills"
+    )
+    return updated
+
+
+def _write_count(path, pattern, agrees, replacement):
+    text, updated = _count_rewrite(path, pattern, agrees, replacement)
+    if updated is None or updated == text:
+        return False
+    Path(path).write_bytes(updated.encode("utf-8"))
+    return True
+
+
+def write_guide_count(guide, root):
+    """Rewrite every disagreeing doctor count quote in guide to root's shipped count. Return True only when the file changes."""
+    shipped = _shipped_skill_count(root)
+    return _write_count(
+        guide, _QUOTED_COUNT, lambda match: _guide_count_agrees(match, shipped), f"{shipped}/{shipped} pstack-t3"
+    )
+
+
+def write_readme_count(readme, root):
+    """Rewrite every disagreeing stated skill count in readme to root's shipped count. Return True only when the file changes."""
+    shipped = _shipped_skill_count(root)
+    return _write_count(
+        readme, _STATED_COUNT, lambda match: _readme_count_agrees(match, shipped), f"all {shipped} skills"
+    )
 
 
 def guide_count_findings(guide, root):
-    """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
+    """Report doctor count quotes in guide that disagree with the shipped skill count under root.
 
     The shipped count is every SKILL.md entry directly in a directory of the
     tree. A quote is a pair of numbers with a slash between them and pstack-t3
-    after them, the shape link_health in scripts/install.py prints. A quote
+    after them, the shape link_health in scripts/_install/doctor.py prints. A quote
     whose two numbers differ, or whose first number differs from the shipped
     count, is a finding that names the guide, the line, the quoted count, and
     the shipped count. A guide that quotes no doctor count is one finding. A
@@ -134,7 +192,7 @@ def guide_count_findings(guide, root):
     for number, line in enumerate(text.splitlines(), 1):
         for match in _QUOTED_COUNT.finditer(line):
             quoted = True
-            if match.group(1) != match.group(2) or int(match.group(1)) != shipped:
+            if not _guide_count_agrees(match, shipped):
                 findings.append(
                     f"docs/guide.md:{number}: quotes the doctor count {match.group(1)}/{match.group(2)}, "
                     f"and the shipped skill count is {shipped}"
@@ -145,7 +203,7 @@ def guide_count_findings(guide, root):
 
 
 def readme_count_findings(readme, root):
-    """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
+    """Report stated skill counts in readme that disagree with the shipped skill count under root.
 
     The shipped count is every SKILL.md entry directly in a directory of
     the tree. A stated count is the digits between `all ` and ` skills`
@@ -167,7 +225,7 @@ def readme_count_findings(readme, root):
     for number, line in enumerate(text.splitlines(), 1):
         for match in _STATED_COUNT.finditer(line):
             stated = True
-            if int(match.group(1)) != shipped:
+            if not _readme_count_agrees(match, shipped):
                 findings.append(
                     f"README.md:{number}: states all {match.group(1)} skills, and the shipped skill count is {shipped}"
                 )

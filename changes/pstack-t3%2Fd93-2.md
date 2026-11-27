@@ -1,0 +1,2 @@
+- A default `scripts/build.py` build rewrites disagreeing `N/M pstack-t3` doctor count quotes in `docs/guide.md` and `all N skills` phrases in `README.md` to the shipped skill count, while an explicit `--out` keeps the guide check and leaves both files alone.
+- It leaves agreeing counts untouched without rewriting either file, and fails before replacing `skills/` when either file cannot be read or lacks a count.

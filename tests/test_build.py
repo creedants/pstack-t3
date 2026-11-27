@@ -13,6 +13,7 @@ isolation.install()
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -33,31 +34,13 @@ CASES = (
     ("t3/added/brigade/scripts/activity.py", "brigade/scripts/activity.py", 0o644),
     ("t3/added/brigade-admin/SKILL.md", "brigade-admin/SKILL.md", None),
     ("t3/added/landing/scripts/land.py", "landing/scripts/land.py", 0o644),
-    (
-        "vendor/pstack/skills/poteto-mode/scripts/watch-pr/watch-pr",
-        "poteto-mode/scripts/watch-pr/watch-pr",
-        0o755,
-    ),
+    ("vendor/pstack/skills/poteto-mode/scripts/watch-pr/watch-pr", "poteto-mode/scripts/watch-pr/watch-pr", 0o755),
     ("t3/scripts/roles.py", "pstack-runtime/scripts/roles.py", None),
     # Covers the 12 split files today.
-    *(
-        (
-            f"t3/scripts/_roles/{p.name}",
-            f"pstack-runtime/scripts/_roles/{p.name}",
-            None,
-        )
-        for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py"))
-    ),
-    (
-        "t3/overrides/poteto-mode/scripts/worktree-audit.sh",
-        "poteto-mode/scripts/worktree-audit.sh",
-        None,
-    ),
-    (
-        "vendor/pstack/skills/poteto-mode/scripts/bootstrap.ts",
-        "poteto-mode/scripts/bootstrap.ts",
-        0o644,
-    ),
+    *((f"t3/scripts/_roles/{p.name}", f"pstack-runtime/scripts/_roles/{p.name}", None)
+      for p in sorted((ROOT / "t3/scripts/_roles").glob("*.py"))),
+    ("t3/overrides/poteto-mode/scripts/worktree-audit.sh", "poteto-mode/scripts/worktree-audit.sh", None),
+    ("vendor/pstack/skills/poteto-mode/scripts/bootstrap.ts", "poteto-mode/scripts/bootstrap.ts", 0o644),
     ("t3/runtime.md", "pstack-runtime/SKILL.md", None),
 )
 
@@ -189,34 +172,25 @@ class OverrideLockTest(unittest.TestCase):
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
         self.lock_line("agents/persona.md", "agents/persona.md")
         self.write("vendor/pstack/agents/persona.md", "upstream persona changed\n")
-        self.assertEqual(
-            build.check_lock(False),
-            [
-                "t3/agents/persona.md: upstream changed since this persona was written; "
-                "review or re-port it, then --update-lock"
-            ],
-        )
+        self.assertEqual(build.check_lock(False), [
+            "t3/agents/persona.md: upstream changed since this persona was written; review or re-port it, then --update-lock",
+        ])
 
     def test_a_changed_vendored_override_keeps_its_skill_path_in_the_message(self):
         self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
         self.write("vendor/pstack/skills/alpha/SKILL.md", "upstream alpha\n")
         self.lock_line("skills/alpha/SKILL.md", "alpha/SKILL.md")
         self.write("vendor/pstack/skills/alpha/SKILL.md", "upstream alpha changed\n")
-        self.assertEqual(
-            build.check_lock(False),
-            [
-                "alpha/SKILL.md: upstream changed since this override was written; "
-                "review or re-port it, then --update-lock"
-            ],
-        )
+        self.assertEqual(build.check_lock(False), [
+            "alpha/SKILL.md: upstream changed since this override was written; review or re-port it, then --update-lock",
+        ])
 
     def test_a_skill_override_with_no_vendored_counterpart_reports_a_missing_lock_key_and_writes_null(self):
         self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
         self.write_lock({})
-        self.assertEqual(
-            build.check_lock(False),
-            ["alpha/SKILL.md: override not in overrides.lock.json (run build.py --update-lock after reviewing)"],
-        )
+        self.assertEqual(build.check_lock(False), [
+            "alpha/SKILL.md: override not in overrides.lock.json (run build.py --update-lock after reviewing)",
+        ])
         build.check_lock(True)
         self.assertEqual(json.loads(self.lock.read_text()), {"alpha/SKILL.md": None})
 
@@ -230,13 +204,9 @@ class OverrideLockTest(unittest.TestCase):
     def test_a_skill_override_with_an_old_digest_reports_drift_and_refreshes_to_null(self):
         self.write("t3/overrides/alpha/SKILL.md", "t3 alpha\n")
         self.write_lock({"alpha/SKILL.md": hashlib.sha256(b"an older upstream file\n").hexdigest()})
-        self.assertEqual(
-            build.check_lock(False),
-            [
-                "alpha/SKILL.md: upstream changed since this override was written; "
-                "review or re-port it, then --update-lock"
-            ],
-        )
+        self.assertEqual(build.check_lock(False), [
+            "alpha/SKILL.md: upstream changed since this override was written; review or re-port it, then --update-lock",
+        ])
         build.check_lock(True)
         self.assertEqual(json.loads(self.lock.read_text()), {"alpha/SKILL.md": None})
 
@@ -250,10 +220,9 @@ class OverrideLockTest(unittest.TestCase):
         self.write("t3/agents/persona.md", "t3 persona\n")
         self.assertEqual(build.check_lock(False), [])
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
-        self.assertEqual(
-            build.check_lock(False),
-            ["t3/agents/persona.md: persona not in overrides.lock.json (run build.py --update-lock after reviewing)"],
-        )
+        self.assertEqual(build.check_lock(False), [
+            "t3/agents/persona.md: persona not in overrides.lock.json (run build.py --update-lock after reviewing)",
+        ])
         build.check_lock(True)
         self.assertEqual(build.check_lock(False), [])
 
@@ -262,29 +231,20 @@ class OverrideLockTest(unittest.TestCase):
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
         self.lock_line("agents/persona.md", "agents/persona.md")
         (self.root / "vendor/pstack/agents/persona.md").unlink()
-        self.assertEqual(
-            build.check_lock(False),
-            [
-                "t3/agents/persona.md: upstream changed since this persona was written; "
-                "review or re-port it, then --update-lock"
-            ],
-        )
+        self.assertEqual(build.check_lock(False), [
+            "t3/agents/persona.md: upstream changed since this persona was written; review or re-port it, then --update-lock",
+        ])
 
     def test_a_locked_key_with_no_t3_file_keeps_the_locked_but_no_persona_or_override_sentence(self):
         self.write("vendor/pstack/agents/persona.md", "upstream persona\n")
-        self.write_lock(
-            {
-                "agents/persona.md": hashlib.sha256(b"upstream persona\n").hexdigest(),
-                "gone/SKILL.md": hashlib.sha256(b"nothing vendored\n").hexdigest(),
-            }
-        )
-        self.assertEqual(
-            build.check_lock(False),
-            [
-                "agents/persona.md: locked but no persona exists (run --update-lock)",
-                "gone/SKILL.md: locked but no override exists (run --update-lock)",
-            ],
-        )
+        self.write_lock({
+            "agents/persona.md": hashlib.sha256(b"upstream persona\n").hexdigest(),
+            "gone/SKILL.md": hashlib.sha256(b"nothing vendored\n").hexdigest(),
+        })
+        self.assertEqual(build.check_lock(False), [
+            "agents/persona.md: locked but no persona exists (run --update-lock)",
+            "gone/SKILL.md: locked but no override exists (run --update-lock)",
+        ])
 
     def test_a_persona_under_t3_overrides_is_rejected_by_the_replacement_list(self):
         self.write("t3/overrides/agents/persona.md", "t3 persona\n")
@@ -394,22 +354,69 @@ class TreeFilesTest(unittest.TestCase):
 
 
 class BuildReferenceTest(unittest.TestCase):
+    def _copy_repo(self, skip=None):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        copy = Path(tmp.name)
+        for rel in tree_files(ROOT):
+            if rel and (not skip or not rel.startswith(skip)) and (ROOT / rel).is_file():
+                (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(ROOT / rel, copy / rel)
+        return copy
+
+    def _build(self, copy, *args):
+        return subprocess.run([sys.executable, str(copy / "scripts/build.py"), *args], capture_output=True, text=True)
+
+    def _probe(self, copy):
+        probe = copy / "t3/added/probe-skill/SKILL.md"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("---\nname: probe-skill\ndescription: d\n---\n\n# P\n\nBody.\n")
+
     def test_default_build_writes_the_committed_command_line_reference_pages(self):
-        listed = tree_files(ROOT)
-        with tempfile.TemporaryDirectory() as directory:
-            copy = Path(directory)
-            for rel in listed:
-                if rel and not rel.startswith("docs/cli/") and (ROOT / rel).is_file():
-                    (copy / rel).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(ROOT / rel, copy / rel)
-            result = subprocess.run(
-                [sys.executable, str(copy / "scripts/build.py")],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            built = sorted(path.name for path in (copy / "docs/cli").iterdir())
-            self.assertEqual(built, sorted(path.name for path in (ROOT / "docs/cli").iterdir()))
-            for name in built:
-                with self.subTest(name):
-                    self.assertEqual((copy / "docs/cli" / name).read_text(), (ROOT / "docs/cli" / name).read_text())
+        copy = self._copy_repo("docs/cli/")
+        res = self._build(copy)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        built = sorted(p.name for p in (copy / "docs/cli").iterdir())
+        self.assertEqual(built, sorted(p.name for p in (ROOT / "docs/cli").iterdir()))
+        for name in built:
+            with self.subTest(name):
+                self.assertEqual((copy / "docs/cli" / name).read_text(), (ROOT / "docs/cli" / name).read_text())
+
+    def test_default_build_rewrites_stale_guide_and_readme_counts_from_shipped_skills(self):
+        copy = self._copy_repo()
+        n = sum(1 for _ in (copy / "skills").glob("*/SKILL.md"))
+        self._probe(copy)
+        res = self._build(copy)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        guide, readme = copy / "docs/guide.md", copy / "README.md"
+        g_text, r_text = guide.read_text(), readme.read_text()
+        self.assertIn(f"{n + 1}/{n + 1} pstack-t3", g_text)
+        self.assertNotIn(f"{n}/{n} pstack-t3", g_text)
+        self.assertIn(f"all {n + 1} skills", r_text)
+        self.assertNotIn(f"all {n} skills", r_text)
+        self.assertEqual((check.guide_count_findings(guide, copy / "skills"), check.readme_count_findings(readme, copy / "skills")), ([], []))
+
+    def test_default_build_fails_before_replacing_skills_when_guide_lacks_count(self):
+        copy = self._copy_repo()
+        guide, readme = copy / "docs/guide.md", copy / "README.md"
+        guide.write_text(re.sub(r"\d+/\d+ pstack-t3", "none", guide.read_text()))
+        readme.write_text(re.sub(r"\ball \d+ skills\b", "all 60 skills", readme.read_text()))
+        self._probe(copy)
+        res = self._build(copy)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("quotes no doctor count", res.stdout + res.stderr)
+        self.assertFalse((copy / "skills/probe-skill").exists())
+        self.assertIn("all 60 skills", readme.read_text())
+
+    def test_explicit_out_to_repo_skills_keeps_guide_check_and_leaves_docs_alone(self):
+        copy = self._copy_repo()
+        guide, readme = copy / "docs/guide.md", copy / "README.md"
+        g_before, r_before = guide.read_bytes(), readme.read_bytes()
+        self._probe(copy)
+        res = self._build(copy, "--out", str(copy / "skills"))
+        self.assertNotEqual(res.returncode, 0)
+        out = res.stdout + res.stderr
+        self.assertIn("quotes the doctor count", out)
+        self.assertIn("states all", out)
+        self.assertFalse((copy / "skills/probe-skill").exists())
+        self.assertEqual((guide.read_bytes(), readme.read_bytes()), (g_before, r_before))
