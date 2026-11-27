@@ -1,1 +1,0 @@
-- `roles.py check-brief` now checks placement below the persona through the last recognized mode-block line, including `Mode source:`, `Attempt:`, and `Waived by mode:` when present.

@@ -1,1 +1,0 @@
-- Move brigade’s built-in full-send reviewer seat from `codex/gpt-6.1-sol` to `codex/gpt-6.2-sol` at `high`. Update the full-send reference and the model-family example in `roles.md`.

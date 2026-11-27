@@ -1,1 +1,0 @@
-- `roles.py check-brief` no longer reports the placement diagnostic for a mode label quoted in the task text after the printed block.
