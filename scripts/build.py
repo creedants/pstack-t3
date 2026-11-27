@@ -219,22 +219,43 @@ def build(destination, update_lock=False, skip_lock=False):
     problems = [] if skip_lock else check_lock(update_lock)
     if problems:
         raise SystemExit("override drift:\n  " + "\n  ".join(problems))
+    writing_repo = destination == ROOT / "skills"
     with tempfile.TemporaryDirectory(prefix="pstack-t3-build-") as temporary:
         staged = Path(temporary) / "skills"
         render(staged)
         sys.path.insert(0, str(ROOT / "scripts"))
-        from check import badge_findings, check_tree
+        from check import (
+            badge_findings,
+            check_tree,
+            guide_count_findings,
+            minimum_version_findings,
+            readme_count_findings,
+            rewritten_guide_count,
+            rewritten_readme_count,
+            write_guide_count,
+            write_readme_count,
+        )
         from catalog import write
 
-        findings = check_tree(staged) + badge_findings(ROOT / "README.md", ROOT / "upstream.json")
+        findings = check_tree(staged, guide=not writing_repo) + badge_findings(ROOT / "README.md", ROOT / "upstream.json")
+        if writing_repo:
+            guide_path = ROOT / "docs/guide.md"
+            readme_path = ROOT / "README.md"
+            if rewritten_guide_count(guide_path, staged) is None:
+                findings.extend(guide_count_findings(guide_path, staged))
+            if rewritten_readme_count(readme_path, staged) is None:
+                findings.extend(readme_count_findings(readme_path, staged))
+            findings.extend(minimum_version_findings(readme_path, guide_path))
         if findings:
             raise SystemExit("check failed:\n  " + "\n  ".join(findings))
         replace_tree(staged, destination)
-    if destination == ROOT / "skills":
+    if writing_repo:
         import cli_reference
 
         write(destination)
         cli_reference.write()
+        write_guide_count(ROOT / "docs/guide.md", destination)
+        write_readme_count(ROOT / "README.md", destination)
     return destination
 
 

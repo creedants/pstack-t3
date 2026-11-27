@@ -109,11 +109,53 @@ _STATED_COUNT = re.compile(r"\ball (\d+) skills\b")
 
 
 def _shipped_skill_count(root):
-    return sum(1 for _skill in root.glob("*/SKILL.md"))
+    return sum(1 for _skill in Path(root).glob("*/SKILL.md"))
+
+
+def _count_rewrite(path, pattern, replacement):
+    text = _readme_text(Path(path))
+    if text is None:
+        return None, None
+    updated, count = pattern.subn(lambda _match: replacement, text)
+    return text, updated if count else None
+
+
+def rewritten_guide_count(guide, root):
+    """Return guide text with every doctor count quote set to root's shipped count, or None when unreadable or unquoted."""
+    shipped = _shipped_skill_count(root)
+    _text, updated = _count_rewrite(guide, _QUOTED_COUNT, f"{shipped}/{shipped} pstack-t3")
+    return updated
+
+
+def rewritten_readme_count(readme, root):
+    """Return README text with every stated skill count set to root's shipped count, or None when unreadable or unstated."""
+    shipped = _shipped_skill_count(root)
+    _text, updated = _count_rewrite(readme, _STATED_COUNT, f"all {shipped} skills")
+    return updated
+
+
+def _write_count(path, pattern, replacement):
+    text, updated = _count_rewrite(path, pattern, replacement)
+    if updated is None or updated == text:
+        return False
+    Path(path).write_bytes(updated.encode("utf-8"))
+    return True
+
+
+def write_guide_count(guide, root):
+    """Rewrite every doctor count quote in guide to root's shipped count. Return True only when the file changes."""
+    shipped = _shipped_skill_count(root)
+    return _write_count(guide, _QUOTED_COUNT, f"{shipped}/{shipped} pstack-t3")
+
+
+def write_readme_count(readme, root):
+    """Rewrite every stated skill count in readme to root's shipped count. Return True only when the file changes."""
+    shipped = _shipped_skill_count(root)
+    return _write_count(readme, _STATED_COUNT, f"all {shipped} skills")
 
 
 def guide_count_findings(guide, root):
-    """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
+    """check_tree calls this when guide is true in a bare CLI run and build.py --out. Default build.py calls it directly when the guide is unreadable or lacks a count.
 
     The shipped count is every SKILL.md entry directly in a directory of the
     tree. A quote is a pair of numbers with a slash between them and pstack-t3
@@ -145,7 +187,7 @@ def guide_count_findings(guide, root):
 
 
 def readme_count_findings(readme, root):
-    """check_tree calls this only with its guide flag true, which the build and a bare CLI run keep and an explicit tree argument clears.
+    """check_tree calls this when guide is true in a bare CLI run and build.py --out. Default build.py calls it directly when README.md is unreadable or lacks a count.
 
     The shipped count is every SKILL.md entry directly in a directory of
     the tree. A stated count is the digits between `all ` and ` skills`
