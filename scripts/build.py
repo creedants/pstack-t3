@@ -250,11 +250,12 @@ def build(destination=None, update_lock=False, skip_lock=False):
         if findings:
             raise SystemExit("check failed:\n  " + "\n  ".join(findings))
         replace_tree(staged, target)
-    if writing_repo:
+    if target == ROOT / "skills":
         import cli_reference
 
         write(target)
         cli_reference.write()
+    if writing_repo:
         write_guide_count(ROOT / "docs/guide.md", target)
         write_readme_count(ROOT / "README.md", target)
     return target
