@@ -41,7 +41,7 @@ MODES_UNCHANGED = {
     "brigade/SKILL.md": "brigade's mode lands in its own change",
     "brigade-admin/SKILL.md": "launches only standing threads, the admin and a coordinator the user asks for, which light mode keeps",
     "setup-pstack/SKILL.md": "the smoke test is kept, one per provider",
-    "poteto-help/SKILL.md": "names delegate_task to explain the persona and spawns nothing",
+    "poteto-help/SKILL.md": "names delegate_task to explain the persona, routes to reframe in its skill table, and spawns nothing",
     "why/SKILL.md": "runs inline and writes no brief, so no modes line applies",
     "poteto-mode/playbooks/autonomous-run.md": "the watcher is kept",
     "poteto-mode/playbooks/eval.md": "keeps arena and its judge, because comparing candidates is its purpose",
@@ -74,6 +74,17 @@ class ModesTest(unittest.TestCase):
         self.assertEqual([path for path in spawning if path not in MODE_POINTER_SITES and path not in MODES_UNCHANGED], [])
         self.assertEqual([path for path in MODES_UNCHANGED if not (skills / path).is_file()], [])
         self.assertEqual(set(MODE_POINTER_SITES) & set(MODES_UNCHANGED), set())
+
+    def test_poteto_help_routes_to_reframe_and_the_skill_ships(self):
+        text = (ROOT / "skills/poteto-help/SKILL.md").read_text()
+        rows = [
+            line for line in unfenced_lines(text)
+            if line.startswith("| ") and "../reframe/SKILL.md" in line
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("[`$reframe`](../reframe/SKILL.md)", rows[0])
+        skill = (ROOT / "skills/reframe/SKILL.md").read_text()
+        self.assertIn("first list the two or three problems it could be", skill)
 
     def test_every_runtime_link_names_a_runtime_heading(self):
         slugs = {heading_slug(line.lstrip("#").strip()) for line in unfenced_lines(self.runtime) if line.startswith("#")}

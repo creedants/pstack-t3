@@ -1,0 +1,7 @@
+- Sync the port to upstream pstack 0.15.48 at b7b93c36, which adds the `reframe` skill from upstream #1324 and the vague-description step from #1326.
+- Ship `reframe` unchanged from upstream. It teaches the expert words for what the operator is building, borrows terms from neighboring fields that solved the same shape of problem, checks every cited source, then rewrites the description. The build adds the runtime pointer and drops the `disable-model-invocation` frontmatter key, so the skill needs no override.
+- Add upstream's reframe row to the `poteto-help` skill table after `$sharpen`, with `$reframe` and a link to `../reframe/SKILL.md`. The rest of the port keeps its T3 text.
+- Update the doctor count in `docs/guide.md` and the skill count in `README.md` to 64, since the tree now ships one more skill.
+- Pin the new routing in `tests/pstack_t3/test_modes.py`. The test fails when the poteto-help row is missing or links a skill that does not ship, and when the #1326 vague-description step is dropped from the generated skill.
+- Verify with a clean rebuild that leaves no diff, `scripts/check.py` printing ok, and green runs of `tests.pstack_t3.test_modes`, `tests.test_build`, `tests.test_pstack_t3`, and `tests.test_check`.
+- Known limits: upstream's reframe text mentions no T3 mechanism, so the port has no hand-written deviation to track.
