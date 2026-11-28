@@ -100,7 +100,7 @@ def playbook_entries(skills):
     """Return one (title, file, summary) tuple per playbook in poteto-mode's Playbooks section, in list order.
 
     The section starts on the line after the first level-two heading whose text is Playbooks and ends before the next level-two heading. A level-three heading does not end it.
-    A "- **Title.** summary" bullet resolves to the skill-relative path GIVEN_FILE finds at its end, otherwise playbooks/<kebab(title)>.md, and keeps its text with the GIVEN_FILE match removed.
+    A "- **Title.** summary" bullet resolves to the skill-relative path GIVEN_FILE finds at its end, otherwise playbooks/<kebab(title)>.md, and its summary is the text after the title with the GIVEN_FILE match removed, stripped of surrounding whitespace.
     A comma-separated line of two or more capitalized titles (letters, digits, spaces, hyphens, optional trailing period) emits each title in order with playbooks/<kebab(title)>.md and a summary read from that file's leading bold lead, first intro paragraph, opening heading fallback, or empty string when missing.
     """
     return [
