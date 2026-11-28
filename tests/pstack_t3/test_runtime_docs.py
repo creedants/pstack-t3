@@ -115,3 +115,11 @@ class AuthorSkillDocTest(unittest.TestCase):
         self.assertIn("stays on the `show` seat, unless its child launches seats.", step2)
         self.assertIn("`--launches-seats`", step2)
         self.assertIn("(../pstack-runtime/SKILL.md#claude-haiku-55)", step2)
+
+
+class VocabularyDocTest(unittest.TestCase):
+    def test_runtime_lists_and_ships_vocabulary_on_demand_file(self):
+        built = ROOT / "skills/pstack-runtime/vocabulary.md"
+        self.assertTrue(built.is_file(), f"missing built runtime file: {built}")
+        on_demand = runtime_section("## On-demand files")
+        self.assertIn("| [vocabulary.md](vocabulary.md) |", on_demand)
