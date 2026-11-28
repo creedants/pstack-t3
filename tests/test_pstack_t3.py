@@ -46,7 +46,7 @@ def setUpModule():
 
 class PreviewToolDocTest(unittest.TestCase):
     def test_runtime_names_hover_drag_select_upload_and_dialog(self):
-        text = (ROOT / "t3/runtime.md").read_text()
+        text = (ROOT / "t3/added/pstack-runtime/vocabulary.md").read_text()
         row = next(line for line in text.splitlines() if "control-ui, browser MCP" in line)
         bullet = next(line for line in runtime_docs().splitlines() if line.startswith("- Web or Electron UI:"))
         for name in PREVIEW_TOOLS:

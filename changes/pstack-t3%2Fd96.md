@@ -1,0 +1,1 @@
+- Moved the Vocabulary table from `t3/runtime.md` into the on-demand runtime file `t3/added/pstack-runtime/vocabulary.md` and listed it under `## On-demand files`. Exempted `pstack-runtime/vocabulary.md` from Cursor-leftover checks in `scripts/_check/tree.py`.

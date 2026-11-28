@@ -33,10 +33,10 @@ class VisualReportsDocTest(unittest.TestCase):
         self.assertNotIn("html_", bullet)
 
     def test_vocabulary_row_points_at_the_section(self):
-        text = (ROOT / "t3/runtime.md").read_text()
+        text = added_text("pstack-runtime/vocabulary.md")
         row = next(line for line in text.splitlines() if line.startswith("| status page, dashboard, report table, chart |"))
         self.assertIn("`html_preview`, then `html_render`, inside a reply already due", row)
-        self.assertIn("[Visual reports](#visual-reports)", row)
+        self.assertIn("[Visual reports](SKILL.md#visual-reports)", row)
 
     def test_page_only_rides_a_reply_already_due(self):
         for sentence in (

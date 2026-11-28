@@ -211,7 +211,7 @@ def release_bullets(repo):
     for relative in order:
         bullets.extend((repo / relative).read_text().splitlines())
     return bullets
-RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md", "gate-review.md", "delegation.md", "modes.md", "isolation.md", "watching.md")
+RUNTIME_DOCS = ("SKILL.md", "threads.md", "host.md", "verification.md", "roles.md", "failures.md", "light.md", "gate-review.md", "delegation.md", "modes.md", "isolation.md", "watching.md", "vocabulary.md")
 def runtime_docs():
     """The RUNTIME_DOCS members joined in order, read from the built skills tree."""
     return "\n".join((ROOT / "skills/pstack-runtime" / name).read_text() for name in RUNTIME_DOCS)
