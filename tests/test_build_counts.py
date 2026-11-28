@@ -196,3 +196,23 @@ class BuildReferenceTest(unittest.TestCase):
         self.assertIn("states all", out)
         self.assertFalse((copy / "skills/probe-skill").exists())
         self.assertEqual((guide.read_bytes(), readme.read_bytes()), (g_before, r_before))
+
+    def test_explicit_out_to_repo_skills_with_agreeing_counts_regenerates_docs_and_leaves_guide_and_readme_untouched(self):
+        copy = self._copy_repo("docs/cli/")
+        (copy / "docs/skills.md").write_text("stale\n")
+        guide, readme = copy / "docs/guide.md", copy / "README.md"
+        g_before, r_before = guide.read_bytes(), readme.read_bytes()
+        stamp = 1_000_000
+        for path in (guide, readme):
+            os.utime(path, (stamp, stamp))
+        res = self._build(copy, "--out", str(copy / "skills"))
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual((copy / "docs/skills.md").read_text(), (ROOT / "docs/skills.md").read_text())
+        built = sorted(p.name for p in (copy / "docs/cli").iterdir())
+        self.assertEqual(built, sorted(p.name for p in (ROOT / "docs/cli").iterdir()))
+        for name in built:
+            with self.subTest(name):
+                self.assertEqual((copy / "docs/cli" / name).read_text(), (ROOT / "docs/cli" / name).read_text())
+        self.assertEqual((guide.read_bytes(), readme.read_bytes()), (g_before, r_before))
+        self.assertEqual((guide.stat().st_mtime_ns, readme.stat().st_mtime_ns), (stamp * 10**9, stamp * 10**9))
+
