@@ -75,6 +75,42 @@ class LightTableExemptionTest(unittest.TestCase):
             )
 
 
+class VocabularyExemptionTest(unittest.TestCase):
+    SKILL = LightTableExemptionTest.SKILL
+    VOCABULARY = (
+        "# Vocabulary\n\n"
+        "| pstack says | In T3 |\n"
+        "| --- | --- |\n"
+        '| background, `run_in_background` | `delegate_task` with `mode: "async"`. |\n'
+        '| `inherit-parent`, `auto` | `"inherit"`. |\n'
+        "| `/loop`, hourly tick | `schedule_task`. |\n"
+        "| ask the user (`AskQuestion`) | The host's question tool. |\n"
+    )
+
+    def test_cursor_mechanisms_in_vocabulary_md_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "pstack-runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "SKILL.md").write_text(self.SKILL)
+            (runtime / "vocabulary.md").write_text(self.VOCABULARY)
+            self.assertEqual(check.check_tree(root), [])
+
+    def test_forbidden_patterns_still_apply_to_other_runtime_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "pstack-runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "SKILL.md").write_text(self.SKILL)
+            (runtime / "other.md").write_text(self.VOCABULARY)
+            findings = check.check_tree(root)
+            for reason in ("Cursor Task flag", "Cursor alias", "Cursor /loop", "Cursor question tool"):
+                self.assertTrue(
+                    any("pstack-runtime/other.md" in finding and reason in finding for finding in findings),
+                    findings,
+                )
+
+
 
 class PlaybookBulletCheckTest(unittest.TestCase):
     def test_a_demo_skill_has_no_playbook_finding(self):

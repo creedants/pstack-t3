@@ -165,7 +165,7 @@ def check_tree(root, layout, guide=True):
         for tool in REQUIRED_TOOLS.get(rel_s, ()):
             if tool not in text:
                 findings.append(f"{rel_s}: missing {tool}")
-        patterns = [] if rel_s == "pstack-runtime/SKILL.md" else FORBIDDEN
+        patterns = [] if rel_s in ("pstack-runtime/SKILL.md", "pstack-runtime/vocabulary.md") else FORBIDDEN
         for number, line in enumerate(text.splitlines(), 1):
             for pattern, why in patterns:
                 if re.search(pattern, line):
