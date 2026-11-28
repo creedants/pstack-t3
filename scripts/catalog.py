@@ -101,7 +101,7 @@ def playbook_entries(skills):
 
     The section starts on the line after the first level-two heading whose text is Playbooks and ends before the next level-two heading. A level-three heading does not end it.
     A "- **Title.** summary" bullet resolves to the skill-relative path GIVEN_FILE finds at its end, otherwise playbooks/<kebab(title)>.md, and keeps its text with the GIVEN_FILE match removed.
-    A comma-separated title line emits each title in order with playbooks/<kebab(title)>.md and a summary read from that playbook file.
+    A comma-separated line of two or more capitalized titles (letters, digits, spaces, hyphens, optional trailing period) emits each title in order with playbooks/<kebab(title)>.md and a summary read from that file's leading bold lead, first intro paragraph, opening heading fallback, or empty string when missing.
     """
     return [
         (title, file, _playbook_summary(skills / "poteto-mode" / file) if summary is None else summary)
@@ -124,7 +124,7 @@ def missing_playbooks(skills):
     playbooks_dir = skills / "poteto-mode/playbooks"
     unnamed = (
         [
-            f"poteto-mode/playbooks/{path.name}: playbook file is not named in poteto-mode/SKILL.md"
+            f"poteto-mode/playbooks/{path.name}: playbook file is not listed under ## Playbooks in poteto-mode/SKILL.md"
             for path in sorted(playbooks_dir.glob("*.md"))
             if f"playbooks/{path.name}" not in named
         ]

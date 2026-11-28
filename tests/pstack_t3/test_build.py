@@ -81,7 +81,7 @@ class BuildTest(unittest.TestCase):
         for t, f, _ in entries:
             self.assertIn(f"[{t}](../skills/poteto-mode/{f})", sec)
 
-    def test_comma_list_and_bullet_entries_keep_order_summaries_and_pipe_escaping(self):
+    def test_comma_list_and_bullet_entries_keep_order_summaries_and_pipe_replacement(self):
         ptr = "[The runtime's Modes section](../../pstack-runtime/SKILL.md#modes)\n\n"
         body = "Match the task.\n\nAlpha, Beta, Gamma.\n\nUpstream removed one, kept:\n\n- **Delta.** Bullet | summary."
         root = self._poteto(body, {
@@ -105,7 +105,7 @@ class BuildTest(unittest.TestCase):
         root = self._poteto("Alpha, Ghost.", {"alpha.md": "### A\n\nOk.\n", "orphan.md": "### O\n\nOk.\n"})
         self.assertEqual(catalog.missing_playbooks(root), [
             'poteto-mode/SKILL.md: playbook "Ghost" resolves to playbooks/ghost.md, which does not exist',
-            "poteto-mode/playbooks/orphan.md: playbook file is not named in poteto-mode/SKILL.md",
+            "poteto-mode/playbooks/orphan.md: playbook file is not listed under ## Playbooks in poteto-mode/SKILL.md",
         ])
 
     def test_every_built_playbook_bullet_resolves_to_an_existing_file(self):
