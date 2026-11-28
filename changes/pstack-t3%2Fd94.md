@@ -1,0 +1,2 @@
+- `docs/skills.md` now lists all 23 `poteto-mode` playbooks under `## poteto-mode playbooks`, built from both the comma-separated list and bullet entries under `## Playbooks` in `skills/poteto-mode/SKILL.md`.
+- `scripts/check.py` now also reports any `*.md` file in `skills/poteto-mode/playbooks/` that no entry under `## Playbooks` in `skills/poteto-mode/SKILL.md` resolves to.

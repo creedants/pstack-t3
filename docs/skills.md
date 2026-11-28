@@ -119,4 +119,26 @@ Invoke any skill in a T3 composer with `$name`. `$poteto-mode` calls most of the
 
 | Playbook | For |
 | --- | --- |
+| [Investigation](../skills/poteto-mode/playbooks/investigation.md) | You own the answer. Plan, route, write. |
+| [Bug fix](../skills/poteto-mode/playbooks/bug-fix.md) | You own this task. Plan, review, verify. |
+| [Perf issue](../skills/poteto-mode/playbooks/perf-issue.md) | You own the measurement story. Plan, review, verify the numbers. |
+| [Hillclimb](../skills/poteto-mode/playbooks/hillclimb.md) | You own the metric and the experiment's integrity. Supervise and review. Delegate the attempts. |
+| [Runtime forensics](../skills/poteto-mode/playbooks/runtime-forensics.md) | You own the diagnosis. Instrument the live process, don't theorize from source. |
+| [Trace forensics](../skills/poteto-mode/playbooks/trace-forensics.md) | You own the diagnosis from the artifact. |
+| [Feature](../skills/poteto-mode/playbooks/feature.md) | You own the design. Plan, review, verify. |
+| [Refactoring](../skills/poteto-mode/playbooks/refactoring.md) | You own the contract. The structure changes. The behavior does not. |
+| [Prototype](../skills/poteto-mode/playbooks/prototype.md) | You own the design decision, not the code. The prototype is a throwaway instrument. The real build follows Feature. |
+| [Visual parity](../skills/poteto-mode/playbooks/visual-parity.md) | You own pixel-exact equivalence. The baseline is the spec. You do not touch it. |
+| [Authoring a skill](../skills/poteto-mode/playbooks/authoring-a-skill.md) | You own the skill's voice. |
+| [Eval](../skills/poteto-mode/playbooks/eval.md) | You own the experiment design. Plan, blind, run, synthesize. |
+| [Babysit](../skills/poteto-mode/playbooks/babysit.md) | You own the merge frontier. Declare a mode, clear one PR at a time, stop where the human's call begins. |
+| [Shipping](../skills/poteto-mode/playbooks/shipping.md) | You own what lands. Verify each PR independently, land only the verified run from the root, then keep your hands off the stack. |
+| [Autonomous run](../skills/poteto-mode/playbooks/autonomous-run.md) | You own the exit condition. Define done, then drive to it without stopping. |
+| [Autopilot-full](../skills/poteto-mode/playbooks/autopilot-full.md) | You own the verdicts, never the PRs. One owner carries each PR from build to merge, and nothing merges until your swarm, which never wrote the code, has proven the code that lands. |
+| [Autopilot-stack](../skills/poteto-mode/playbooks/autopilot-stack.md) | Run the Autopilot-full playbook, but do not merge. |
+| [Session pickup](../skills/poteto-mode/playbooks/session-pickup.md) | You own the resume point. Read the prior trail, don't redo it. |
+| [Pause safely](../skills/poteto-mode/playbooks/pause-safely.md) | You own a clean stop. Leave a checkpoint a cold-start agent can resume from. |
+| [Multi-phase plan](../skills/poteto-mode/playbooks/multi-phase-plan.md) | You own the plan, not the code. The plan is a checklist an owner runs box by box and the operator audits from the evidence. |
+| [Worktree cleanup](../skills/poteto-mode/playbooks/worktree-cleanup.md) | Worktree and simulator cleanup |
+| [Opening a PR](../skills/poteto-mode/playbooks/opening-a-pr.md) | Invoked at the end of every other playbook. |
 | [Orchestrate](../skills/poteto-mode/playbooks/orchestrate.md) | A standing project handed to one coordinator chat: multi-day, many stacked PRs, dozens of subagents, minimal human turns. |
