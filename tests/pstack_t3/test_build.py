@@ -19,6 +19,8 @@ sys.path.append(str(ROOT / "t3/scripts"))
 sys.path.append(str(ROOT / "scripts"))
 
 import tempfile
+import catalog  # noqa: E402
+import check  # noqa: E402
 from tests.pstack_t3.support import PLAYBOOK_FILES
 
 
@@ -37,7 +39,6 @@ class BuildTest(unittest.TestCase):
             self.assertEqual((base / "dest/old").read_text(), "old")
 
     def test_check_rejects_invalid_yaml_frontmatter(self):
-        import check  # noqa: E402
         if check.yaml is None:
             self.skipTest("PyYAML is not installed, so the fallback frontmatter reader in scripts/check.py cannot reject invalid YAML")
         with tempfile.TemporaryDirectory() as directory:
@@ -47,26 +48,67 @@ class BuildTest(unittest.TestCase):
             self.assertTrue(any("not valid YAML" in finding for finding in check.check_tree(directory)))
 
     def test_catalog_lists_every_skill_and_playbook(self):
-        import catalog
         text = catalog.render(ROOT / "skills")
         for skill_md in (ROOT / "skills").glob("*/SKILL.md"):
             self.assertIn(f"[`{skill_md.parent.name}`]", text)
         self.assertIn("(../skills/poteto-mode/playbooks/orchestrate.md)", text)
 
     def test_kebab_lowercases_and_hyphenates_three_playbook_titles(self):
-        import catalog
         self.assertEqual(catalog.kebab("Bug fix"), "bug-fix")
         self.assertEqual(catalog.kebab("Autopilot-full"), "autopilot-full")
         self.assertEqual(catalog.kebab("Opening a PR"), "opening-a-pr")
 
-    def test_catalog_extracts_only_the_orchestrate_bullet(self):
-        import catalog
-        resolved = {title: file for title, file, _ in catalog.playbook_entries(ROOT / "skills")}
-        self.assertEqual(resolved, {"Orchestrate": "playbooks/orchestrate.md"})
+    def _poteto(self, body, files):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        pb = root / "poteto-mode/playbooks"
+        pb.mkdir(parents=True)
+        (root / "poteto-mode/SKILL.md").write_text(f"---\nname: poteto-mode\ndescription: d\n---\n\n## Playbooks\n\n{body}\n")
+        for name, text in files.items():
+            (pb / name).write_text(text)
+        return root
+
+    def test_real_tree_produces_one_playbook_row_per_shipped_file(self):
+        entries = catalog.playbook_entries(ROOT / "skills")
+        shipped = sorted(f"playbooks/{p.name}" for p in (ROOT / "skills/poteto-mode/playbooks").glob("*.md"))
+        files = [f for _, f, _ in entries]
+        self.assertEqual((len(files), sorted(files)), (len(set(files)), shipped))
+        self.assertTrue(all(s.strip() for _, _, s in entries))
+        self.assertEqual([t for t, _, _ in entries][-2:], ["Opening a PR", "Orchestrate"])
         self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
+        sec = catalog.render(ROOT / "skills").split("## poteto-mode playbooks", 1)[1]
+        for t, f, _ in entries:
+            self.assertIn(f"[{t}](../skills/poteto-mode/{f})", sec)
+
+    def test_comma_list_and_bullet_entries_keep_order_summaries_and_pipe_escaping(self):
+        ptr = "[The runtime's Modes section](../../pstack-runtime/SKILL.md#modes)\n\n"
+        body = "Match the task.\n\nAlpha, Beta, Gamma.\n\nUpstream removed one, kept:\n\n- **Delta.** Bullet | summary."
+        root = self._poteto(body, {
+            "alpha.md": f"### Alpha\n\n{ptr}**Own A | B.** More.\n\n1. Step.\n",
+            "beta.md": "### Beta\n\nPlain intro\nline two.\n\n1. Step.\n",
+            "gamma.md": f"### Gamma heading\n\n{ptr}1. Step.\n",
+            "delta.md": "### Delta\n\n**Ignored.**\n\n1. Step.\n",
+        })
+        self.assertEqual(catalog.playbook_entries(root), [
+            ("Alpha", "playbooks/alpha.md", "Own A | B."),
+            ("Beta", "playbooks/beta.md", "Plain intro line two."),
+            ("Gamma", "playbooks/gamma.md", "Gamma heading"),
+            ("Delta", "playbooks/delta.md", "Bullet | summary."),
+        ])
+        rows = catalog.playbooks(root)
+        self.assertEqual([r.count("|") for r in rows], [3, 3, 3, 3])
+        self.assertIn("Own A / B.", rows[0])
+        self.assertIn("Bullet / summary.", rows[3])
+
+    def test_missing_playbooks_flags_a_missing_comma_list_entry_and_an_unnamed_playbook_file(self):
+        root = self._poteto("Alpha, Ghost.", {"alpha.md": "### A\n\nOk.\n", "orphan.md": "### O\n\nOk.\n"})
+        self.assertEqual(catalog.missing_playbooks(root), [
+            'poteto-mode/SKILL.md: playbook "Ghost" resolves to playbooks/ghost.md, which does not exist',
+            "poteto-mode/playbooks/orphan.md: playbook file is not named in poteto-mode/SKILL.md",
+        ])
 
     def test_every_built_playbook_bullet_resolves_to_an_existing_file(self):
-        import catalog
         for title, file, _ in catalog.playbook_entries(ROOT / "skills"):
             self.assertTrue((ROOT / "skills/poteto-mode" / file).is_file(), title)
         self.assertEqual(catalog.missing_playbooks(ROOT / "skills"), [])
@@ -76,7 +118,6 @@ class BuildTest(unittest.TestCase):
             self.assertTrue((ROOT / "skills/poteto-mode" / file).is_file(), title)
 
     def test_a_skill_with_no_playbooks_heading_returns_nothing(self):
-        import catalog
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             skill = root / "poteto-mode"
@@ -86,7 +127,6 @@ class BuildTest(unittest.TestCase):
             self.assertEqual(catalog.missing_playbooks(root), [])
 
     def test_playbooks_extra_does_not_open_the_section(self):
-        import catalog
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             skill = root / "poteto-mode"
@@ -96,8 +136,6 @@ class BuildTest(unittest.TestCase):
             self.assertEqual(catalog.missing_playbooks(root), [])
 
     def test_the_playbooks_section_keeps_catalog_bullets_and_reports_the_other_list_markers(self):
-        import check  # noqa: E402
-        import catalog
         front = "---\nname: poteto-mode\ndescription: d\n---\n"
         body = [
             "## Before",
@@ -185,7 +223,6 @@ class BuildTest(unittest.TestCase):
             self.assertIn(note, (out / "poteto-mode/SKILL.md").read_text())
 
     def test_check_flags_cursor_leftovers(self):
-        import check  # noqa: E402
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory) / "demo"
             skill.mkdir()
@@ -194,7 +231,6 @@ class BuildTest(unittest.TestCase):
         self.assertTrue(any("subagent_type" in finding for finding in findings))
 
     def test_check_requires_watch_tool_names_on_the_runtime_skill(self):
-        import check  # noqa: E402
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory) / "pstack-runtime"
             skill.mkdir()
@@ -210,7 +246,6 @@ class BuildTest(unittest.TestCase):
         self.assertFalse(any("missing watch" in finding or "missing unwatch" in finding for finding in findings))
 
     def test_check_requires_the_watch_tool_and_version_on_setup(self):
-        import check  # noqa: E402
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory) / "setup-pstack"
             skill.mkdir()
@@ -226,7 +261,6 @@ class BuildTest(unittest.TestCase):
         self.assertFalse(any("missing watch_pull_request" in finding or "missing T3 Code 0.1.3 or later" in finding for finding in findings))
 
     def test_check_rejects_the_cursor_xhigh_slug(self):
-        import check  # noqa: E402
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory) / "demo"
             skill.mkdir()
@@ -235,7 +269,6 @@ class BuildTest(unittest.TestCase):
         self.assertTrue(any("claude-opus-5-5-xhigh" in finding for finding in findings))
 
     def test_check_rejects_an_indented_catalog_heredoc_closer(self):
-        import check  # noqa: E402
         bad = "\n".join([
             "---",
             "name: demo",
@@ -294,7 +327,6 @@ class BuildTest(unittest.TestCase):
         self.assertFalse(any("heredoc closer" in finding for finding in findings))
 
     def test_check_scopes_the_catalog_heredoc_closer_to_its_body(self):
-        import check  # noqa: E402
         text = "\n".join([
             "---",
             "name: demo",
@@ -326,7 +358,6 @@ class BuildTest(unittest.TestCase):
         ])
 
     def light_findings(self, rel, body):
-        import check  # noqa: E402
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / rel
             path.parent.mkdir(parents=True)
@@ -368,7 +399,6 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(self.light_findings("demo/SKILL.md", pointer), [])
 
     def test_check_lets_the_runtime_hold_the_light_table(self):
-        import check  # noqa: E402
         body = "\n".join([
             "Call `watch_pull_request`. Call `unwatch_pull_request`.",
             "",
@@ -389,7 +419,6 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(findings, [])
 
     def test_check_accepts_an_unrelated_playbook_table(self):
-        import check  # noqa: E402
         with tempfile.TemporaryDirectory() as directory:
             skill = Path(directory) / "demo"
             skill.mkdir()
