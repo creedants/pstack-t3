@@ -1,0 +1,2 @@
+- `docs/skills.md` now lists all 23 `poteto-mode` playbooks under `## poteto-mode playbooks`, reading both comma-separated playbook lists and bullet entries in `skills/poteto-mode/SKILL.md`.
+- `scripts/check.py` now also reports any playbook file in `skills/poteto-mode/playbooks/` that is missing from `skills/poteto-mode/SKILL.md`.

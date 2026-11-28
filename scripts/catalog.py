@@ -18,8 +18,12 @@ GROUPS = [
     ("Principles", lambda name: name.startswith("principle-")),
 ]
 BULLET = re.compile(r"^- \*\*(.+?)\.\*\* (.+)$", re.M)
+COMMA_LIST = re.compile(r"^[A-Z][A-Za-z0-9 -]*(?:,\s*[A-Z][A-Za-z0-9 -]*)+\.?$")
 # A bullet gives its file as a backticked playbooks/<name>.md that ends the bullet, with or without a "File: " lead-in.
 GIVEN_FILE = re.compile(r"\s*(?:File: )?`(playbooks/[\w-]+\.md)`\.?$")
+MODES_POINTER = "[The runtime's Modes section]("
+LIST_OR_HEADING = re.compile(r"^(?:[-*+] |\d+\. |#)")
+BOLD_LEAD = re.compile(r"^\*\*(.+?)\*\*")
 
 
 def description(skill_md):
@@ -30,6 +34,34 @@ def description(skill_md):
 
 def kebab(title):
     return re.sub(r"[^a-z0-9 -]", "", title.lower()).replace(" ", "-")
+
+
+def _playbook_summary(path):
+    if not path.is_file():
+        return ""
+    paragraphs = []
+    current = []
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped:
+            current.append(stripped)
+        elif current:
+            paragraphs.append(" ".join(current))
+            current = []
+    if current:
+        paragraphs.append(" ".join(current))
+    heading = ""
+    for index, paragraph in enumerate(paragraphs):
+        if index == 0 and paragraph.startswith("#"):
+            heading = paragraph.lstrip("#").strip()
+            continue
+        if paragraph.startswith(MODES_POINTER):
+            continue
+        if LIST_OR_HEADING.match(paragraph):
+            break
+        bold = BOLD_LEAD.match(paragraph)
+        return bold.group(1).strip() if bold else paragraph.strip()
+    return heading
 
 
 def _scan_playbooks(text):
@@ -56,17 +88,25 @@ def _scan_playbooks(text):
             unparsed.append(
                 f'poteto-mode/SKILL.md:{number}: playbook bullet does not match "- **Title.** summary": {line.strip()[:120]}'
             )
+            continue
+        if COMMA_LIST.fullmatch(line):
+            for raw in line.rstrip(".").split(","):
+                title = raw.strip()
+                entries.append((title, f"playbooks/{kebab(title)}.md", None))
     return entries, unparsed
 
 
 def playbook_entries(skills):
-    """Return one (title, file, summary) tuple per "- **Title.** summary" line in poteto-mode's Playbooks section, in list order.
+    """Return one (title, file, summary) tuple per playbook in poteto-mode's Playbooks section, in list order.
 
     The section starts on the line after the first level-two heading whose text is Playbooks and ends before the next level-two heading. A level-three heading does not end it.
-    file is the skill-relative path GIVEN_FILE finds at the end of the bullet, otherwise playbooks/<kebab(title)>.md.
-    summary is the bullet's text after the title with the GIVEN_FILE match removed, stripped of surrounding whitespace.
+    A "- **Title.** summary" bullet resolves to the skill-relative path GIVEN_FILE finds at its end, otherwise playbooks/<kebab(title)>.md, and keeps its text with the GIVEN_FILE match removed.
+    A comma-separated title line emits each title in order with playbooks/<kebab(title)>.md and a summary read from that playbook file.
     """
-    return _scan_playbooks((skills / "poteto-mode/SKILL.md").read_text())[0]
+    return [
+        (title, file, _playbook_summary(skills / "poteto-mode" / file) if summary is None else summary)
+        for title, file, summary in _scan_playbooks((skills / "poteto-mode/SKILL.md").read_text())[0]
+    ]
 
 
 def playbooks(skills):
@@ -80,7 +120,18 @@ def missing_playbooks(skills):
         for title, file, _ in entries
         if not (skills / "poteto-mode" / file).is_file()
     ]
-    return unparsed + missing
+    named = {file for _, file, _ in entries}
+    playbooks_dir = skills / "poteto-mode/playbooks"
+    unnamed = (
+        [
+            f"poteto-mode/playbooks/{path.name}: playbook file is not named in poteto-mode/SKILL.md"
+            for path in sorted(playbooks_dir.glob("*.md"))
+            if f"playbooks/{path.name}" not in named
+        ]
+        if playbooks_dir.is_dir()
+        else []
+    )
+    return unparsed + missing + unnamed
 
 
 def render(skills):
